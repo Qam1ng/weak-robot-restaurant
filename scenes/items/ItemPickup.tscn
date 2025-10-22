@@ -1,0 +1,14 @@
+[gd_scene load_steps=2 format=3 uid="uid://b88kp0y3bul11"]
+
+[ext_resource type="Texture2D" uid="uid://cyk5nob824k77" path="res://data/art/Modern_Interiors_RPG_Maker_Version/RPG_MAKER_MV/Interiors/Theme_Sorter_MV/Kitchen_02.png" id="1_71355"]
+
+[node name="ItemPickup" type="Node2D"]
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture = ExtResource("1_71355")
+region_enabled = true
+region_rect = Rect2(287.19873, 478.78882, 48.103058, 42.33557)
+
+[node name="Area2D" type="Area2D" parent="."]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Area2D"]
