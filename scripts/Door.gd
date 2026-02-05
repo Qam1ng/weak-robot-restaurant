@@ -20,11 +20,36 @@ func _ready() -> void:
 	if is_instance_valid(trig):
 		trig.body_entered.connect(_on_body_entered)
 		trig.body_exited.connect(_on_body_exited)
-	# 初始化：只设状态 + idle，不播过渡
-	_apply_state_and_idle(false)
+	# 初始化：确保初始状态为“关闭”，并强制播放“idle_close”动画
+	is_open = false
+	_apply_state_and_idle(true) # 这里改为true，强制应用一次idle动画
+	
+	# Fix: Remove any wall tile behind the door that might block physics/navigation
+	_clear_wall_behind_door()
+	
 	print("[Door] ready; has anims:",
 		_has_anim(ANIM_OPEN_TRANS), _has_anim(ANIM_CLOSE_TRANS),
 		_has_anim(ANIM_IDLE_OPEN), _has_anim(ANIM_IDLE_CLOSE))
+
+func _clear_wall_behind_door():
+	# Attempt to find LayerWalls and clear the tile at this door's position
+	# The door is usually child of LayerDoors, which is child of TileMap
+	var layer_walls = get_node_or_null("../../LayerWalls")
+	if layer_walls and layer_walls is TileMapLayer:
+		var map_pos = layer_walls.local_to_map(layer_walls.to_local(global_position))
+		# Check if there is a tile
+		if layer_walls.get_cell_source_id(map_pos) != -1:
+			print("[Door] Found wall tile at ", map_pos, ". Removing to prevent blocking.")
+			layer_walls.set_cell(map_pos, -1) # Clear the cell
+	else:
+		# Try absolute path if relative fails
+		var root = get_tree().current_scene
+		layer_walls = root.find_child("LayerWalls", true, false)
+		if layer_walls and layer_walls is TileMapLayer:
+			var map_pos = layer_walls.local_to_map(layer_walls.to_local(global_position))
+			if layer_walls.get_cell_source_id(map_pos) != -1:
+				print("[Door] Found wall tile at ", map_pos, " (absolute search). Removing.")
+				layer_walls.set_cell(map_pos, -1)
 
 func _on_body_entered(n: Node) -> void:
 	if n.is_in_group("player"):
@@ -88,9 +113,9 @@ func _apply_state_and_play_transition() -> void:
 		if _has_anim(ANIM_IDLE_CLOSE):
 			spr.play(ANIM_IDLE_CLOSE)
 
-func _has_anim(name: String) -> bool:
+func _has_anim(anim_name: String) -> bool:
 	if not is_instance_valid(spr):
 		return false
 	if spr.sprite_frames == null:
 		return false
-	return spr.sprite_frames.has_animation(name)
+	return spr.sprite_frames.has_animation(anim_name)

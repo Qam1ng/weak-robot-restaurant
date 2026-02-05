@@ -6,10 +6,19 @@ extends CharacterBody2D
 
 @onready var anim: AnimatedSprite2D = $AnimatedSprite2D
 
+const InventoryScript = preload("res://scripts/Inventory.gd")
+var inventory: Inventory
+
 var last_dir: Vector2 = Vector2.DOWN
 
 func _ready() -> void:
 	add_to_group("player")  # 让门/物品的 Area2D 能识别你
+	
+	inventory = InventoryScript.new()
+	inventory.name = "Inventory"
+	inventory.capacity = 5 # Player has bigger bag
+	add_child(inventory)
+	
 	print("[HumanServer] ready OK; node=", name)
 
 func _physics_process(_dt: float) -> void:
@@ -60,6 +69,7 @@ func _input(event: InputEvent) -> void:
 		if bot != null:
 			# 只在机器人实现了接口方法时才调用，避免报错
 			if bot.has_method("receive_player_help"):
+				# 如果机器人有背包，直接尝试交换物品
 				bot.receive_player_help()
 				return
 

@@ -8,7 +8,7 @@ script = ExtResource("1_jk4cd")
 
 [node name="Sprite2D" type="Sprite2D" parent="."]
 texture = ExtResource("1_71355")
-region_rect = Rect2(291, 483, 42, 36)
+region_rect = Rect2(337.31635, 339.42242, 43.180847, 33.542297)
 
 [node name="Area2D" type="Area2D" parent="."]
 
