@@ -91,12 +91,12 @@ size = Vector2(37, 15)
 [node name="RobotServer" type="CharacterBody2D"]
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
-position = Vector2(0, 3)
+position = Vector2(0, -42)
 sprite_frames = SubResource("SpriteFrames_a4clb")
 animation = &"walk_up"
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]
-position = Vector2(0, 42)
+position = Vector2(0, 0)
 shape = SubResource("RectangleShape2D_2hw00")
 
 [node name="NavigationAgent2D" type="NavigationAgent2D" parent="."]

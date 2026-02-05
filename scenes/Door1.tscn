@@ -1,46 +1,46 @@
 [gd_scene load_steps=16 format=3 uid="uid://dpa8d1npd14pq"]
 
-[ext_resource type="Texture2D" uid="uid://bnebnk7jtyk8m" path="res://data/art/Modern_Interiors_RPG_Maker_Version/RPG_MAKER_MV/Animated_Objects/!$Doors2.png" id="1_jg4o1"]
+[ext_resource type="Texture2D" uid="uid://0iydtxd7mko1" path="res://data/art/Modern_Interiors_RPG_Maker_Version/RPG_MAKER_MV/Animated_Objects/!$Grocery_store_fridge_glass.png" id="1_jg4o1"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_hdowj"]
 atlas = ExtResource("1_jg4o1")
-region = Rect2(48, 432, 48, 143)
+region = Rect2(192, 288, 96, 96)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_e1c1a"]
 atlas = ExtResource("1_jg4o1")
-region = Rect2(48, 289, 48, 143)
+region = Rect2(192, 192, 96, 96)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_r4vip"]
 atlas = ExtResource("1_jg4o1")
-region = Rect2(48, 146, 48, 143)
+region = Rect2(192, 96, 96, 96)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_6hgqj"]
 atlas = ExtResource("1_jg4o1")
-region = Rect2(48, 3, 48, 143)
+region = Rect2(192, 0, 96, 96)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_nr2pl"]
 atlas = ExtResource("1_jg4o1")
-region = Rect2(48, 3, 48, 143)
+region = Rect2(192, 0, 96, 96)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_fumwf"]
 atlas = ExtResource("1_jg4o1")
-region = Rect2(48, 146, 48, 143)
+region = Rect2(192, 96, 96, 96)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_5jndi"]
 atlas = ExtResource("1_jg4o1")
-region = Rect2(48, 289, 48, 143)
+region = Rect2(192, 192, 96, 96)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_5sr68"]
 atlas = ExtResource("1_jg4o1")
-region = Rect2(48, 432, 48, 143)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_eyv6f"]
-atlas = ExtResource("1_jg4o1")
-region = Rect2(48, 3, 48, 143)
+region = Rect2(192, 288, 96, 96)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_w501s"]
 atlas = ExtResource("1_jg4o1")
-region = Rect2(48, 432, 48, 143)
+region = Rect2(192, 0, 96, 96)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_q56ix"]
+atlas = ExtResource("1_jg4o1")
+region = Rect2(192, 288, 96, 96)
 
 [sub_resource type="SpriteFrames" id="SpriteFrames_mg2as"]
 animations = [{
@@ -80,7 +80,7 @@ animations = [{
 }, {
 "frames": [{
 "duration": 1.0,
-"texture": SubResource("AtlasTexture_eyv6f")
+"texture": SubResource("AtlasTexture_w501s")
 }],
 "loop": true,
 "name": &"idle_close",
@@ -88,7 +88,7 @@ animations = [{
 }, {
 "frames": [{
 "duration": 1.0,
-"texture": SubResource("AtlasTexture_w501s")
+"texture": SubResource("AtlasTexture_q56ix")
 }],
 "loop": true,
 "name": &"idle_open",
@@ -109,8 +109,12 @@ size = Vector2(48, 8)
 [node name="Door" type="Node2D"]
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+position = Vector2(1.1920929e-07, 56)
+scale = Vector2(1.2916666, 1.8925554)
 sprite_frames = SubResource("SpriteFrames_mg2as")
-animation = &"idle_open"
+animation = &"door_close"
+frame = 3
+frame_progress = 1.0
 
 [node name="Area2D" type="Area2D" parent="."]
 

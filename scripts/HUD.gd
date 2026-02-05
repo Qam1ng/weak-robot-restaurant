@@ -1,36 +1,91 @@
 # scripts/HUD.gd
 extends CanvasLayer
 
-## 这个脚本需要被附加到你的 scenes/HUD.tscn 场景的根节点上。
-## 它的工作是在游戏开始时，向全局的 GameManager “注册”自己。
+## This script attaches to scenes/HUD.tscn root.
+## Registers itself to GameManager on start.
 
-# 确保你的 HUD.tscn 场景中有一个叫做 "InteractionLabel" 的 Label 节点
 @onready var interaction_label: Label = $InteractionLabel
 
+# Inventory UI Elements (Dynamically created if missing)
+var inventory_panel: PanelContainer
+var inventory_list: VBoxContainer
 
 func _ready():
-	# 1. 检查 GameManager 是否存在 (它已经被 Autoload 了)
 	if Engine.has_singleton("GameManager"):
-		# 2. 调用 GameManager 的注册函数，把自己 (self) 交给它
 		GameManager.register_hud(self)
 	else:
-		print_rich("[color=red]严重错误[/color]: GameManager 尚未被 Autoload！HUD 无法注册。")
+		pass
 
-	# 默认隐藏提示标签
 	if interaction_label:
 		interaction_label.hide()
+	
+	_setup_inventory_ui()
+	
+	# Connect to Robot Inventory after a brief delay
+	await get_tree().process_frame
+	var robots = get_tree().get_nodes_in_group("robot")
+	if robots.size() > 0:
+		var robot = robots[0]
+		var inv = robot.get_node_or_null("Inventory")
+		if inv:
+			inv.inventory_changed.connect(_on_robot_inventory_changed)
+			_on_robot_inventory_changed(inv.items) # Init
+		else:
+			print("[HUD] Robot found but no Inventory node.")
 	else:
-		# 确保 InteractionLabel 节点存在
-		print_rich("[color=red]HUD 错误[/color]: 找不到名为 'InteractionLabel' 的子节点。请在 HUD.tscn 中添加一个 Label 节点并将其重命名为 'InteractionLabel'。")
+		print("[HUD] No robot found in group 'robot'.")
 
+func _setup_inventory_ui():
+	# Create Panel Container for background
+	inventory_panel = PanelContainer.new()
+	inventory_panel.name = "InventoryPanel"
+	add_child(inventory_panel)
+	inventory_panel.position = Vector2(20, 60)
+	
+	# Add style
+	var style = StyleBoxFlat.new()
+	style.bg_color = Color(0, 0, 0, 0.5)
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	inventory_panel.add_theme_stylebox_override("panel", style)
+	
+	# Create VBox inside
+	inventory_list = VBoxContainer.new()
+	inventory_panel.add_child(inventory_list)
+	
+	var title = Label.new()
+	title.text = "ROBOT INVENTORY"
+	title.add_theme_color_override("font_color", Color.YELLOW)
+	inventory_list.add_child(title)
 
-## 这是 Carryable.gd 脚本将连接到的“统一函数”
-func on_interaction_prompt(show: bool, text: String):
+func _on_robot_inventory_changed(items: Array):
+	if not inventory_list: return
+	
+	# Clear old items (except title at index 0)
+	for i in range(inventory_list.get_child_count() - 1, 0, -1):
+		inventory_list.get_child(i).queue_free()
+		
+	if items.is_empty():
+		var l = Label.new()
+		l.text = "(Empty)"
+		l.add_theme_color_override("font_color", Color.GRAY)
+		inventory_list.add_child(l)
+	else:
+		for i in range(items.size()):
+			var item = items[i]
+			var l = Label.new()
+			var n = item.get("name", "Unknown")
+			# Stack visualization: index 0 is bottom, last index is top
+			l.text = "[%d] %s" % [i + 1, n]
+			inventory_list.add_child(l)
+
+func on_interaction_prompt(do_show: bool, text: String):
 	if not interaction_label:
-		print_rich("[color=red]HUD 错误[/color]: 尝试显示提示，但 'InteractionLabel' 不存在。")
-		return # 如果标签不存在，直接返回
+		return
 
-	if show:
+	if do_show:
 		interaction_label.text = text
 		interaction_label.show()
 	else:

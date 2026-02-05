@@ -1,5 +1,6 @@
-[gd_scene load_steps=19 format=3 uid="uid://cawc1ba8bb41f"]
+[gd_scene load_steps=21 format=3 uid="uid://cawc1ba8bb41f"]
 
+[ext_resource type="Script" uid="uid://ugil8a0tmkp6" path="res://scripts/Customer.gd" id="1_script"]
 [ext_resource type="Texture2D" uid="uid://cytgto0nsvdca" path="res://data/art/Modern_Interiors_RPG_Maker_Version/RPG_MAKER_MV/Characters/customers2.png" id="1_bov33"]
 [ext_resource type="Texture2D" uid="uid://cefsq5dvhup6t" path="res://data/art/Modern_Interiors_RPG_Maker_Version/RPG_MAKER_MV/Characters/!Characters_sit_1.png" id="2_wpj86"]
 
@@ -157,19 +158,94 @@ animations = [{
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_2a38h"]
 size = Vector2(37, 15)
 
+[sub_resource type="CircleShape2D" id="CircleShape2D_bov33"]
+radius = 64.0
+
 [node name="Customer" type="CharacterBody2D"]
+script = ExtResource("1_script")
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+position = Vector2(0, -42)
 sprite_frames = SubResource("SpriteFrames_dp3i5")
 animation = &"idle_down"
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]
-position = Vector2(0, 42)
 shape = SubResource("RectangleShape2D_2a38h")
 
 [node name="NavigationAgent2D" type="NavigationAgent2D" parent="."]
 
 [node name="Area2D" type="Area2D" parent="."]
-position = Vector2(0, 40)
 
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Area2D"]
+[node name="InteractiveShape2D" type="CollisionShape2D" parent="Area2D"]
+position = Vector2(0, -16)
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
+
+shape = SubResource("CircleShape2D_bov33")
