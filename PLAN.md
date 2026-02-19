@@ -293,3 +293,20 @@ Create `SurveyScreen.tscn` - Shown before game starts, 10-16 questions, 5-point 
 4. Settings panel
 5. Survey system
 
+Variables:
+
+IF/IFNOT_REJECT-COST
+    HUMAN SIDE
+    Participant(Server) Personality * 0.x;
+    WorkLoad =
+        Period of Day
+      + Customer Numbers
+      + Customer Request Type
+      + Steps to complete each task;
+    ROBOT SIDE
+    Robot's steps to complete current tasks
+
+
+NEW PIPELINE:
+
+CUSTOMER PUBLISH `TASKS`
