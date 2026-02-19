@@ -207,7 +207,7 @@ func _physics_process(delta):
 ---
 ---
 
-# English Version: Weak Robot Restaurant Improvement Plan
+# Weak Robot Restaurant Improvement Plan
 
 ## Issue 1: Navigation System Refactor - Grid-Based 4-Direction Movement
 
