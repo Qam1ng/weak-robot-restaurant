@@ -287,10 +287,9 @@ Create `SurveyScreen.tscn` - Shown before game starts, 10-16 questions, 5-point 
 
 ## Implementation Order
 
-1. Fix CustomerSpawner.gd duplicate code
-2. Navigation system refactor
-3. Dialogue UI
-4. Event system
-5. Settings panel
-6. Survey system
+1. Navigation system refactor
+2. Dialogue UI
+3. Event system
+4. Settings panel
+5. Survey system
 
