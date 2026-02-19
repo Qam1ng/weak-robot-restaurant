@@ -267,9 +267,9 @@ func _physics_process(delta):
 
 - **2.1 More Items**: Add `burger`, `soda`, `coffee`, `cake`
 - **2.2 Dialogue UI**: Create `DialogueBubble.tscn`, expand HUD
-- **2.3 Task Types**: `fetch_item`, `clean_table`, `refill_station`, `guide_customer`
+- **2.3 Task Types**: 1. Server's Own Tasks - `clean_table`, `refill_station`, 2. Delegaton Task - `fetch_food`, `remove_obstacle`, `charge_robot`
 - **2.4 Event System**: `EventManager.gd` for random events requiring delegation
-- **2.5 Scene Variants**: Multiple restaurant layouts
+- **2.5 Scene Variants**: More scene items for example if we need task `remove_obstacle` we will need `obstacles`, if we need task `charge_robot` we will need `charge station`
 
 ---
 
