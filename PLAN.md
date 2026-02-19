@@ -269,7 +269,7 @@ func _physics_process(delta):
 - **2.2 Dialogue UI**: Create `DialogueBubble.tscn`, expand HUD
 - **2.3 Task Types**: 1. Server's Own Tasks - `clean_table`, `refill_station`, 2. Delegaton Task - `fetch_food`, `remove_obstacle`, `charge_robot`
 - **2.4 Event System**: `EventManager.gd` for random events requiring delegation
-- **2.5 Scene Variants**: More scene items for example if we need task `remove_obstacle` we will need `obstacles`, if we need task `charge_robot` we will need `charge station`
+- **2.5 Scene Variants**: More scene items for example if we need task `remove_obstacle` we will need `obstacles`, if we need task `charge_robot` we will need `charge station` , random maps, random layouts(one single map for now).
 
 ---
 
@@ -281,7 +281,7 @@ Create `SettingsPanel.tscn` - Press ESC/F10 to open, includes sliders for time s
 
 ## Issue 4: Participant Survey (MBTI-style)
 
-Create `SurveyScreen.tscn` - Shown before game starts, 10-16 questions, 5-point Likert scale, saves to JSON
+Create `SurveyScreen.tscn` - Shown before game starts, 10-16 questions, 5-point Likert scale, saves to JSON. Not in Godot, but an extra web survey before enter game.
 
 ---
 
