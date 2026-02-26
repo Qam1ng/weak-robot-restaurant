@@ -118,13 +118,17 @@ func show_help_request(request: Dictionary) -> void:
 func _build_help_text(request: Dictionary) -> String:
 	var request_type = str(request.get("type", "HANDOFF"))
 	var escalation = int(request.get("escalation_count", 0))
+	var strategy = str(request.get("strategy", ""))
 	var payload: Dictionary = request.get("payload", {})
+	var utterance = str(request.get("utterance", ""))
+	if utterance == "":
+		utterance = "Can you help now?"
 
 	if request_type == "OPEN_DOOR":
-		return "Door is blocking robot progress.\nPlease go to the door and open it.\nEscalation: %d" % escalation
+		return "Strategy: %s\n%s\nEscalation: %d" % [strategy, utterance, escalation]
 
 	var item = str(payload.get("item_needed", "item"))
-	return "Robot asks for handoff help.\nPlease provide: %s\nEscalation: %d" % [item, escalation]
+	return "Strategy: %s\n%s\nNeed item: %s\nEscalation: %d" % [strategy, utterance, item, escalation]
 
 func _respond(response: String) -> void:
 	if _active_request_id == "":

@@ -17,10 +17,21 @@ const STATUS_COOLDOWN := "cooldown"
 const STATUS_ACCEPTED := "accepted"
 const STATUS_RESOLVED := "resolved"
 
+const PersuasionEngineScript = preload("res://scripts/PersuasionEngine.gd")
+
 var _requests_by_id: Dictionary = {}
 var _order: Array[String] = []
 var _next_id: int = 1
 var _beacon_request_id: String = ""
+var _interaction_model := {
+	"total": 0,
+	"accepted": 0,
+	"declined": 0,
+	"later": 0,
+	"avg_latency_ms": 0.0,
+	"annoyance": 0.0,
+	"acceptance_rate": 0.5
+}
 
 func create_request(request_type: String, robot: Node, payload: Dictionary = {}, options: Dictionary = {}) -> Dictionary:
 	if robot == null or not is_instance_valid(robot):
@@ -53,8 +64,21 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"final_response": "",
 		"resolution_path": "",
 		"require_beacon": require_beacon,
-		"beacon_position": beacon_pos
+		"beacon_position": beacon_pos,
+		"context_snapshot": {},
+		"strategy": "",
+		"strategy_scores": {},
+		"dialogue_intent": {},
+		"utterance": ""
 	}
+
+	var context = _build_context(robot, req, options)
+	req["context_snapshot"] = context
+	var persuasion = PersuasionEngineScript.generate_dialogue(request_type, context, int(req["escalation_count"]), payload)
+	req["strategy"] = persuasion.get("strategy", "")
+	req["strategy_scores"] = persuasion.get("strategy_scores", {})
+	req["dialogue_intent"] = persuasion.get("dialogue_intent", {})
+	req["utterance"] = persuasion.get("utterance", "")
 
 	_requests_by_id[request_id] = req
 	_order.append(request_id)
@@ -103,6 +127,21 @@ func mark_prompted(request_id: String) -> void:
 	var req: Dictionary = _requests_by_id.get(request_id, {})
 	if req.is_empty():
 		return
+	var robot = _robot_from_request(req)
+	if robot:
+		var context = _build_context(robot, req, {})
+		req["context_snapshot"] = context
+		var persuasion = PersuasionEngineScript.generate_dialogue(
+			str(req.get("type", TYPE_HANDOFF)),
+			context,
+			int(req.get("escalation_count", 0)),
+			req.get("payload", {})
+		)
+		req["strategy"] = persuasion.get("strategy", "")
+		req["strategy_scores"] = persuasion.get("strategy_scores", {})
+		req["dialogue_intent"] = persuasion.get("dialogue_intent", {})
+		req["utterance"] = persuasion.get("utterance", "")
+
 	req["last_prompt_ms"] = Time.get_ticks_msec()
 	req["updated_at_ms"] = req["last_prompt_ms"]
 	_requests_by_id[request_id] = req
@@ -116,6 +155,10 @@ func respond(request_id: String, response: String) -> Dictionary:
 		return _copy(req)
 
 	var now_ms := Time.get_ticks_msec()
+	var prompt_latency_ms := 0
+	if int(req.get("last_prompt_ms", 0)) > 0:
+		prompt_latency_ms = now_ms - int(req.get("last_prompt_ms", 0))
+	req["response_latency_ms"] = prompt_latency_ms
 	match response:
 		RESPONSE_ACCEPT:
 			req["status"] = STATUS_ACCEPTED
@@ -143,6 +186,7 @@ func respond(request_id: String, response: String) -> Dictionary:
 			return _copy(req)
 
 	_requests_by_id[request_id] = req
+	_update_interaction_model(response, prompt_latency_ms)
 	var copied := _copy(req)
 	print("[HelpRequest] Response ", response, " -> ", request_id, " status=", copied.get("status", ""))
 	request_updated.emit(copied)
@@ -163,6 +207,7 @@ func complete_request(request_id: String, resolution_path: String = "cooperative
 	req["resolution_path"] = resolution_path
 	req["updated_at_ms"] = Time.get_ticks_msec()
 	_requests_by_id[request_id] = req
+	_update_interaction_model(RESPONSE_ACCEPT, int(req.get("response_latency_ms", 0)))
 
 	_clear_beacon_if_matches(request_id)
 	var copied := _copy(req)
@@ -198,3 +243,86 @@ func _copy(req: Dictionary) -> Dictionary:
 	if req.is_empty():
 		return {}
 	return req.duplicate(true)
+
+func _robot_from_request(req: Dictionary) -> Node:
+	var iid := int(req.get("robot_instance_id", 0))
+	if iid <= 0:
+		return null
+	var obj = instance_from_id(iid)
+	if obj and is_instance_valid(obj):
+		return obj
+	return null
+
+func _build_context(robot: Node, req: Dictionary, options: Dictionary) -> Dictionary:
+	var robot_state := {
+		"battery_level": float(robot.get("battery_level")),
+		"battery_mode": str(robot.get("_battery_mode")),
+		"waiting_for_help": bool(robot.get("_waiting_for_help")),
+		"active_step": str(robot.get("_active_task_step"))
+	}
+	if robot_state["battery_level"] == 0.0 and robot.get("battery_level") == null:
+		robot_state["battery_level"] = 100.0
+	if robot_state["battery_mode"] == "" or robot_state["battery_mode"] == "Null":
+		robot_state["battery_mode"] = "normal"
+
+	var player_state := _sample_player_state()
+
+	var busyness := 0.5
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_busyness"):
+		busyness = float(game_mgr.get_busyness())
+
+	var payload: Dictionary = req.get("payload", {})
+	var door_blocked := bool(options.get("door_blocked", req.get("type", "") == TYPE_OPEN_DOOR))
+	var slack_ms := int(payload.get("slack_ms", 0))
+	var urgency := float(options.get("urgency", 0.5))
+	if slack_ms != 0:
+		urgency = clampf(1.0 - (float(slack_ms) / 90000.0), 0.0, 1.0)
+
+	return {
+		"robot": robot_state,
+		"player": player_state,
+		"environment": {
+			"urgency": urgency,
+			"busyness": busyness,
+			"door_blocked": door_blocked,
+			"slack_ms": slack_ms
+		},
+		"history": {
+			"acceptance_rate": float(_interaction_model.get("acceptance_rate", 0.5)),
+			"avg_latency_ms": float(_interaction_model.get("avg_latency_ms", 0.0)),
+			"annoyance": float(_interaction_model.get("annoyance", 0.0))
+		}
+	}
+
+func _sample_player_state() -> Dictionary:
+	var load := 0.5
+	var players := get_tree().get_nodes_in_group("player")
+	if not players.is_empty():
+		var player = players[0]
+		var inv = player.get_node_or_null("Inventory")
+		if inv:
+			var cap := maxf(float(inv.capacity), 1.0)
+			load = clampf(float(inv.items.size()) / cap, 0.0, 1.0)
+
+	return {
+		"load": load
+	}
+
+func _update_interaction_model(response: String, latency_ms: int) -> void:
+	_interaction_model["total"] = int(_interaction_model.get("total", 0)) + 1
+	if response == RESPONSE_ACCEPT:
+		_interaction_model["accepted"] = int(_interaction_model.get("accepted", 0)) + 1
+		_interaction_model["annoyance"] = maxf(0.0, float(_interaction_model.get("annoyance", 0.0)) - 0.12)
+	elif response == RESPONSE_DECLINE:
+		_interaction_model["declined"] = int(_interaction_model.get("declined", 0)) + 1
+		_interaction_model["annoyance"] = minf(1.0, float(_interaction_model.get("annoyance", 0.0)) + 0.18)
+	elif response == RESPONSE_LATER:
+		_interaction_model["later"] = int(_interaction_model.get("later", 0)) + 1
+		_interaction_model["annoyance"] = minf(1.0, float(_interaction_model.get("annoyance", 0.0)) + 0.08)
+
+	var total := maxf(float(_interaction_model["total"]), 1.0)
+	_interaction_model["acceptance_rate"] = float(_interaction_model.get("accepted", 0)) / total
+
+	var old_avg := float(_interaction_model.get("avg_latency_ms", 0.0))
+	_interaction_model["avg_latency_ms"] = ((old_avg * (total - 1.0)) + float(latency_ms)) / total

@@ -478,10 +478,12 @@ func _plan_pickup_step() -> void:
 	if _constraint_blocks_current_step():
 		_ensure_help_request(HELP_TYPE_OPEN_DOOR, {
 			"reason": "door_blocked_pickup",
-			"door_position": _get_door_position()
+			"door_position": _get_door_position(),
+			"slack_ms": int(_constraint_input.get("slack_ms", 0))
 		}, {
 			"require_beacon": true,
-			"cooldown_ms": 4500
+			"cooldown_ms": 4500,
+			"urgency": _estimate_help_urgency()
 		})
 		_try_speak_blocked_notice("Door is closed. Waiting for access before pickup.")
 		return
@@ -501,10 +503,12 @@ func _plan_deliver_step() -> void:
 	if _constraint_blocks_current_step():
 		_ensure_help_request(HELP_TYPE_OPEN_DOOR, {
 			"reason": "door_blocked_delivery",
-			"door_position": _get_door_position()
+			"door_position": _get_door_position(),
+			"slack_ms": int(_constraint_input.get("slack_ms", 0))
 		}, {
 			"require_beacon": true,
-			"cooldown_ms": 4500
+			"cooldown_ms": 4500,
+			"urgency": _estimate_help_urgency()
 		})
 		_try_speak_blocked_notice("Door is closed. Waiting for access before delivery.")
 		return
@@ -691,6 +695,18 @@ func _get_door_position() -> Vector2:
 		if d is Node2D:
 			return d.global_position
 	return global_position
+
+func _estimate_help_urgency() -> float:
+	var slack_ms := int(_constraint_input.get("slack_ms", 0))
+	var slack_urgency := 0.5
+	if slack_ms != 0:
+		slack_urgency = clampf(1.0 - (float(slack_ms) / 90000.0), 0.0, 1.0)
+	var battery_urgency := 0.0
+	if _battery_mode == BATTERY_MODE_EMERGENCY:
+		battery_urgency = 1.0
+	elif _battery_mode == BATTERY_MODE_CONSERVE:
+		battery_urgency = 0.6
+	return clampf(maxf(slack_urgency, battery_urgency), 0.0, 1.0)
 
 func _ensure_help_request(request_type: String, payload: Dictionary = {}, options: Dictionary = {}) -> void:
 	if _help_request_suppressed:
@@ -1101,11 +1117,13 @@ func set_waiting_for_help(waiting: bool, item_name: String):
 	# Hand-off help is created here (e.g. BT ask_help path).
 	_ensure_help_request(HELP_TYPE_HANDOFF, {
 		"item_needed": _help_item_needed,
-		"reason": "robot_stuck_or_pick_fail"
+		"reason": "robot_stuck_or_pick_fail",
+		"slack_ms": int(_constraint_input.get("slack_ms", 0))
 	}, {
 		"cooldown_ms": 3500,
 		"max_escalation": 2,
-		"require_beacon": false
+		"require_beacon": false,
+		"urgency": _estimate_help_urgency()
 	})
 
 func receive_player_help():
