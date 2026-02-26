@@ -74,6 +74,7 @@ var _returning_spare_key: bool = false
 const OPENAI_URL: String   = "https://api.openai.com/v1/chat/completions"
 const OPENAI_MODEL: String = "gpt-4o-mini"
 var OPENAI_KEY: String     = "" # Set via environment variable or config file
+const OPENAI_KEY_FILE := "res://secrets/openai_api_key.txt"
 @onready var http: HTTPRequest = $HTTPRequest
 
 # ---------- Custom BT Tasks ----------
@@ -227,6 +228,7 @@ class ActExecutePlan extends Core.Task:
 
 func _ready() -> void:
 	add_to_group("robot")
+	OPENAI_KEY = _load_openai_key()
 	
 	if not has_node("Inventory"):
 		inventory = InventoryScript.new()
@@ -289,6 +291,19 @@ func _ready() -> void:
 	# ---------- Discover Locations IMMEDIATELY ----------
 	_discover_locations()
 	print("[RobotServer] Ready with ", bt_runner.bb["locations"].size(), " locations")
+
+func _load_openai_key() -> String:
+	var env_key := OS.get_environment("OPENAI_API_KEY").strip_edges()
+	if env_key != "":
+		return env_key
+
+	var path := ProjectSettings.globalize_path(OPENAI_KEY_FILE)
+	if not FileAccess.file_exists(path):
+		return ""
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return ""
+	return file.get_as_text().strip_edges()
 
 func _discover_locations():
 	print("[RobotServer] Discovering locations...")

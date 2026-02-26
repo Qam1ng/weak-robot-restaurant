@@ -33,6 +33,11 @@ var _interaction_model := {
 	"acceptance_rate": 0.5
 }
 
+func _ready() -> void:
+	var dm = _dialogue_manager()
+	if dm and dm.has_signal("utterance_generated") and not dm.utterance_generated.is_connected(_on_utterance_generated):
+		dm.utterance_generated.connect(_on_utterance_generated)
+
 func create_request(request_type: String, robot: Node, payload: Dictionary = {}, options: Dictionary = {}) -> Dictionary:
 	if robot == null or not is_instance_valid(robot):
 		return {}
@@ -70,6 +75,7 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"strategy_scores": {},
 		"dialogue_intent": {},
 		"utterance": "",
+		"utterance_source": "template",
 		"last_response": "",
 		"experiment": {}
 	}
@@ -93,12 +99,14 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 	req["strategy_scores"] = persuasion.get("strategy_scores", {})
 	req["dialogue_intent"] = persuasion.get("dialogue_intent", {})
 	req["utterance"] = persuasion.get("utterance", "")
+	req["utterance_source"] = "template"
 
 	_requests_by_id[request_id] = req
 	_order.append(request_id)
 	_set_beacon_if_needed(req)
 	print("[HelpRequest] Created ", request_id, " type=", request_type)
 	_log_help_event("created", req)
+	_request_utterance_realization(req)
 
 	var copied := _copy(req)
 	request_created.emit(copied)
@@ -166,11 +174,13 @@ func mark_prompted(request_id: String) -> void:
 		req["strategy_scores"] = persuasion.get("strategy_scores", {})
 		req["dialogue_intent"] = persuasion.get("dialogue_intent", {})
 		req["utterance"] = persuasion.get("utterance", "")
+		req["utterance_source"] = "template"
 
 	req["last_prompt_ms"] = Time.get_ticks_msec()
 	req["updated_at_ms"] = req["last_prompt_ms"]
 	_requests_by_id[request_id] = req
 	_log_help_event("prompted", req)
+	_request_utterance_realization(req)
 	request_updated.emit(_copy(req))
 
 func respond(request_id: String, response: String) -> Dictionary:
@@ -375,6 +385,9 @@ func _episode_logger() -> Node:
 func _experiment_config() -> Node:
 	return get_node_or_null("/root/ExperimentConfig")
 
+func _dialogue_manager() -> Node:
+	return get_node_or_null("/root/DialogueManager")
+
 func _log_help_event(event_type: String, req: Dictionary, extra: Dictionary = {}) -> void:
 	var logger = _episode_logger()
 	if logger == null or not logger.has_method("log_help_request_event"):
@@ -383,3 +396,30 @@ func _log_help_event(event_type: String, req: Dictionary, extra: Dictionary = {}
 	if exp and exp.has_method("is_help_logging_enabled") and not bool(exp.is_help_logging_enabled()):
 		return
 	logger.log_help_request_event(event_type, req, extra)
+
+func _request_utterance_realization(req: Dictionary) -> void:
+	if req.is_empty():
+		return
+	if str(req.get("strategy", "")) == "control_neutral":
+		return
+	var dm = _dialogue_manager()
+	if dm == null or not dm.has_method("realize_help_utterance"):
+		return
+	dm.realize_help_utterance(req)
+
+func _on_utterance_generated(request_id: String, utterance: String, meta: Dictionary) -> void:
+	var req: Dictionary = _requests_by_id.get(request_id, {})
+	if req.is_empty():
+		return
+	if str(req.get("status", "")) == STATUS_RESOLVED:
+		return
+	if utterance == "":
+		_log_help_event("utterance_realization_failed", req, meta)
+		return
+
+	req["utterance"] = utterance
+	req["utterance_source"] = str(meta.get("provider", "llm"))
+	req["updated_at_ms"] = Time.get_ticks_msec()
+	_requests_by_id[request_id] = req
+	_log_help_event("utterance_realized", req, meta)
+	request_updated.emit(_copy(req))

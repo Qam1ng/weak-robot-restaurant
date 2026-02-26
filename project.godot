@@ -21,6 +21,7 @@ config/autoload_on_startup=true
 TaskBus="*res://scripts/TaskBus.gd"
 TaskBoard="*res://scripts/TaskBoard.gd"
 HelpRequestManager="*res://scripts/HelpRequestManager.gd"
+DialogueManager="*res://scripts/DialogueManager.gd"
 EpisodeLogger="*res://scripts/EpisodeLogger.gd"
 GameManager="*res://scripts/GameManager.gd"
 PlayerProfile="*res://scripts/PlayerProfile.gd"
@@ -34,6 +35,9 @@ forced_variant=""
 control_variant="B"
 replay_logging_enabled=true
 help_logging_enabled=true
+llm_utterance_enabled=true
+llm_model="gpt-4o-mini"
+llm_temperature=0.4
 
 [input]
 
