@@ -23,6 +23,7 @@ TaskBoard="*res://scripts/TaskBoard.gd"
 HelpRequestManager="*res://scripts/HelpRequestManager.gd"
 EpisodeLogger="*res://scripts/EpisodeLogger.gd"
 GameManager="*res://scripts/GameManager.gd"
+PlayerProfile="*res://scripts/PlayerProfile.gd"
 ExperimentConfig="*res://scripts/ExperimentConfig.gd"
 
 [experiment]

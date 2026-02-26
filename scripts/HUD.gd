@@ -8,13 +8,33 @@ extends CanvasLayer
 @onready var decline_btn: Button = $HelpRequestPanel/Margin/VBox/Buttons/Decline
 @onready var later_btn: Button = $HelpRequestPanel/Margin/VBox/Buttons/Later
 @onready var beacon_label: Label = $BeaconLabel
+@onready var mbti_panel: PanelContainer = $MBTIPanel
+@onready var mbti_progress: Label = $MBTIPanel/Margin/VBox/Progress
+@onready var mbti_question: Label = $MBTIPanel/Margin/VBox/Question
+@onready var mbti_option_a: Button = $MBTIPanel/Margin/VBox/Options/OptionA
+@onready var mbti_option_b: Button = $MBTIPanel/Margin/VBox/Options/OptionB
+@onready var mbti_result: Label = $MBTIPanel/Margin/VBox/Result
+@onready var mbti_confirm: Button = $MBTIPanel/Margin/VBox/Confirm
 
 var inventory_panel: PanelContainer
 var inventory_list: VBoxContainer
 var _active_request_id: String = ""
 var _active_request_type: String = ""
+var _mbti_questions: Array[Dictionary] = []
+var _mbti_index: int = 0
+var _mbti_scores := {
+	"E": 0,
+	"I": 0,
+	"S": 0,
+	"N": 0,
+	"T": 0,
+	"F": 0,
+	"J": 0,
+	"P": 0
+}
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	add_to_group("hud")
 
 	if interaction_label:
@@ -23,14 +43,20 @@ func _ready() -> void:
 		help_panel.hide()
 	if beacon_label:
 		beacon_label.hide()
+	if mbti_panel:
+		mbti_panel.hide()
 
 	accept_btn.pressed.connect(func(): _respond("accept"))
 	decline_btn.pressed.connect(func(): _respond("decline"))
 	later_btn.pressed.connect(func(): _respond("later"))
+	mbti_option_a.pressed.connect(func(): _choose_mbti("A"))
+	mbti_option_b.pressed.connect(func(): _choose_mbti("B"))
+	mbti_confirm.pressed.connect(_finish_mbti_and_start)
 
 	_setup_inventory_ui()
 	_connect_help_signals()
 	_connect_robot_inventory()
+	_setup_mbti_survey()
 
 func _connect_help_signals() -> void:
 	var help_mgr = get_node_or_null("/root/HelpRequestManager")
@@ -171,3 +197,122 @@ func _on_beacon_changed(active: bool, _position: Vector2, _request_id: String) -
 		beacon_label.show()
 	else:
 		beacon_label.hide()
+
+func _setup_mbti_survey() -> void:
+	_mbti_questions = [
+		{
+			"text": "At shift start, you are more likely to:",
+			"A": {"label": "Talk with teammates first", "trait": "E"},
+			"B": {"label": "Settle in quietly first", "trait": "I"}
+		},
+		{
+			"text": "When helping the robot, you trust:",
+			"A": {"label": "Concrete details and exact steps", "trait": "S"},
+			"B": {"label": "Big-picture intent and patterns", "trait": "N"}
+		},
+		{
+			"text": "If service pressure rises, you decide mainly by:",
+			"A": {"label": "Efficiency and objective impact", "trait": "T"},
+			"B": {"label": "How everyone feels and fairness", "trait": "F"}
+		},
+		{
+			"text": "Your work style is usually:",
+			"A": {"label": "Plan first, then execute", "trait": "J"},
+			"B": {"label": "Adapt as things happen", "trait": "P"}
+		},
+		{
+			"text": "In crowded periods, you prefer to:",
+			"A": {"label": "Coordinate actively with others", "trait": "E"},
+			"B": {"label": "Focus independently", "trait": "I"}
+		},
+		{
+			"text": "For a new situation, you first look for:",
+			"A": {"label": "Known examples and practical cues", "trait": "S"},
+			"B": {"label": "Possible alternatives and ideas", "trait": "N"}
+		},
+		{
+			"text": "When robot asks for help, what persuades you more?",
+			"A": {"label": "Strong evidence it is necessary", "trait": "T"},
+			"B": {"label": "A respectful and warm request", "trait": "F"}
+		},
+		{
+			"text": "During a long shift, you feel better with:",
+			"A": {"label": "Clear schedule and closure", "trait": "J"},
+			"B": {"label": "Flexible pace and options", "trait": "P"}
+		}
+	]
+
+	var profile = get_node_or_null("/root/PlayerProfile")
+	if profile and profile.has_method("has_mbti") and bool(profile.has_mbti()):
+		return
+
+	_mbti_index = 0
+	for k in _mbti_scores.keys():
+		_mbti_scores[k] = 0
+
+	get_tree().paused = true
+	mbti_panel.show()
+	mbti_result.hide()
+	mbti_confirm.hide()
+	mbti_option_a.show()
+	mbti_option_b.show()
+	_refresh_mbti_question()
+
+func _refresh_mbti_question() -> void:
+	if _mbti_index < 0 or _mbti_index >= _mbti_questions.size():
+		return
+	var q: Dictionary = _mbti_questions[_mbti_index]
+	mbti_progress.text = "Question %d / %d" % [_mbti_index + 1, _mbti_questions.size()]
+	mbti_question.text = str(q.get("text", ""))
+	var a: Dictionary = q.get("A", {})
+	var b: Dictionary = q.get("B", {})
+	mbti_option_a.text = str(a.get("label", "Option A"))
+	mbti_option_b.text = str(b.get("label", "Option B"))
+
+func _choose_mbti(option_key: String) -> void:
+	if _mbti_index < 0 or _mbti_index >= _mbti_questions.size():
+		return
+	var q: Dictionary = _mbti_questions[_mbti_index]
+	var option: Dictionary = q.get(option_key, {})
+	var trait_key := str(option.get("trait", ""))
+	if trait_key != "" and _mbti_scores.has(trait_key):
+		_mbti_scores[trait_key] = int(_mbti_scores[trait_key]) + 1
+	_mbti_index += 1
+
+	if _mbti_index >= _mbti_questions.size():
+		_show_mbti_result()
+	else:
+		_refresh_mbti_question()
+
+func _show_mbti_result() -> void:
+	var mbti = _compute_mbti_type()
+	var profile = get_node_or_null("/root/PlayerProfile")
+	if profile and profile.has_method("set_mbti"):
+		profile.set_mbti(mbti, _mbti_scores.duplicate(true), _mbti_questions.size())
+
+	mbti_progress.text = "Survey Complete"
+	mbti_question.text = "Your MBTI result: %s" % mbti
+	mbti_result.text = "This profile is now used by the persuasion strategy engine."
+	mbti_result.show()
+	mbti_option_a.hide()
+	mbti_option_b.hide()
+	mbti_confirm.show()
+
+func _compute_mbti_type() -> String:
+	var ei := "I"
+	if int(_mbti_scores["E"]) >= int(_mbti_scores["I"]):
+		ei = "E"
+	var sn := "N"
+	if int(_mbti_scores["S"]) >= int(_mbti_scores["N"]):
+		sn = "S"
+	var tf := "F"
+	if int(_mbti_scores["T"]) >= int(_mbti_scores["F"]):
+		tf = "T"
+	var jp := "P"
+	if int(_mbti_scores["J"]) >= int(_mbti_scores["P"]):
+		jp = "J"
+	return ei + sn + tf + jp
+
+func _finish_mbti_and_start() -> void:
+	mbti_panel.hide()
+	get_tree().paused = false

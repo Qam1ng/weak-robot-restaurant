@@ -297,6 +297,7 @@ func _build_context(robot: Node, req: Dictionary, options: Dictionary) -> Dictio
 		robot_state["battery_mode"] = "normal"
 
 	var player_state := _sample_player_state()
+	var personality := _sample_personality_profile()
 
 	var busyness := 0.5
 	var game_mgr = get_node_or_null("/root/GameManager")
@@ -313,6 +314,7 @@ func _build_context(robot: Node, req: Dictionary, options: Dictionary) -> Dictio
 	return {
 		"robot": robot_state,
 		"player": player_state,
+		"personality": personality,
 		"environment": {
 			"urgency": urgency,
 			"busyness": busyness,
@@ -338,6 +340,15 @@ func _sample_player_state() -> Dictionary:
 
 	return {
 		"load": load
+	}
+
+func _sample_personality_profile() -> Dictionary:
+	var profile = get_node_or_null("/root/PlayerProfile")
+	if profile and profile.has_method("get_profile"):
+		return profile.get_profile()
+	return {
+		"mbti_type": "",
+		"strategy_affinity": {}
 	}
 
 func _update_interaction_model(response: String, latency_ms: int) -> void:
