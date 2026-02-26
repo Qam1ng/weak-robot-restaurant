@@ -21,6 +21,7 @@ var inventory_list: VBoxContainer
 var _active_request_id: String = ""
 var _active_request_type: String = ""
 var _last_utterance_by_request: Dictionary = {}
+var _auto_open_in_flight: Dictionary = {}
 var _mbti_questions: Array[Dictionary] = []
 var _mbti_index: int = 0
 var _mbti_scores := {
@@ -338,11 +339,20 @@ func _auto_open_help_request(request: Dictionary) -> void:
 	var rid := str(request.get("id", ""))
 	if rid == "":
 		return
+	if bool(_auto_open_in_flight.get(rid, false)):
+		return
+	if rid == _active_request_id and help_panel.visible:
+		return
+
+	_auto_open_in_flight[rid] = true
+	_active_request_id = rid
+	_active_request_type = str(request.get("type", ""))
 	var help_mgr = get_node_or_null("/root/HelpRequestManager")
 	if help_mgr and help_mgr.has_method("mark_prompted"):
 		help_mgr.mark_prompted(rid)
 		request = help_mgr.get_request(rid)
 	show_help_request(request)
+	_auto_open_in_flight.erase(rid)
 
 func _maybe_show_help_bubble(request: Dictionary) -> void:
 	var rid := str(request.get("id", ""))
