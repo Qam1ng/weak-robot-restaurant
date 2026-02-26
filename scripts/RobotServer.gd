@@ -37,6 +37,8 @@ const STEP_PICKUP_FROM_KITCHEN := "PICKUP_FROM_KITCHEN"
 const STEP_DELIVER_AND_SERVE := "DELIVER_AND_SERVE"
 const HELP_TYPE_HANDOFF := "HANDOFF"
 const HELP_TYPE_OPEN_DOOR := "OPEN_DOOR"
+const CHARGING_MARKER := "RS1"
+const SPARE_KEY_MARKER := "SPARE_KEY"
 var _active_task_id: String = ""
 var _active_task_step: String = ""
 var _active_step_started: bool = false
@@ -719,7 +721,7 @@ func _update_agent_speed_by_battery_mode() -> void:
 	agent.max_speed = move_speed * speed_scale
 
 func _is_near_recharge_station() -> bool:
-	var station = bt_runner.bb.get("locations", {}).get("RS1", Vector2.ZERO)
+	var station = bt_runner.bb.get("locations", {}).get(CHARGING_MARKER, Vector2.ZERO)
 	if station == Vector2.ZERO:
 		return false
 	return global_position.distance_to(station) <= 36.0
@@ -773,7 +775,7 @@ func _start_autonomous_fallback() -> void:
 		return
 	_fallback_state = FALLBACK_TO_CHARGER
 	_waiting_for_help = false
-	_plan_navigate_to_location("RS1")
+	_plan_navigate_to_location(_spare_key_location_name())
 	speak("No further persuasion. Executing autonomous fallback.")
 
 func _tick_return_spare_key() -> void:
@@ -787,7 +789,7 @@ func _tick_return_spare_key() -> void:
 		speak("Spare key returned.")
 		return
 
-	var rs1: Vector2 = bt_runner.bb.get("locations", {}).get("RS1", Vector2.ZERO)
+	var rs1: Vector2 = _spare_key_location_position()
 	if rs1 == Vector2.ZERO:
 		_has_spare_key = false
 		return
@@ -799,7 +801,19 @@ func _tick_return_spare_key() -> void:
 
 	if bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty():
 		return
-	_plan_navigate_to_location("RS1")
+	_plan_navigate_to_location(_spare_key_location_name())
+
+func _spare_key_location_name() -> String:
+	var locations: Dictionary = bt_runner.bb.get("locations", {})
+	if locations.has(SPARE_KEY_MARKER):
+		return SPARE_KEY_MARKER
+	return CHARGING_MARKER
+
+func _spare_key_location_position() -> Vector2:
+	var locations: Dictionary = bt_runner.bb.get("locations", {})
+	if locations.has(SPARE_KEY_MARKER):
+		return locations.get(SPARE_KEY_MARKER, Vector2.ZERO)
+	return locations.get(CHARGING_MARKER, Vector2.ZERO)
 
 func _plan_navigate_to_location(location_name: String) -> void:
 	_set_step_plan([{"action": "navigate", "params": {"target": location_name}}])

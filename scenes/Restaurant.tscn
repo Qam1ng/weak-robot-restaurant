@@ -77,6 +77,25 @@ script = ExtResource("3_08he2")
 
 [node name="Hud" parent="." instance=ExtResource("11_hud")]
 
+[node name="ChargingStationRoom" type="Node2D" parent="."]
+position = Vector2(350, -410)
+
+[node name="RoomFill" type="Polygon2D" parent="ChargingStationRoom"]
+color = Color(0.117647, 0.227451, 0.219608, 0.529412)
+polygon = PackedVector2Array(-112, -92, 112, -92, 112, 92, -112, 92)
+
+[node name="RoomBorder" type="Line2D" parent="ChargingStationRoom"]
+default_color = Color(0.360784, 0.752941, 0.717647, 1)
+width = 3.0
+points = PackedVector2Array(-112, -92, 112, -92, 112, 92, -112, 92, -112, -92)
+
+[node name="ChargingSign" type="Label" parent="ChargingStationRoom"]
+offset_left = -64.0
+offset_top = -78.0
+offset_right = 140.0
+offset_bottom = -52.0
+text = "Charging Station"
+
 [node name="InteractiveItems" type="Node2D" parent="."]
 
 [node name="Item1" parent="InteractiveItems" instance=ExtResource("8_g484w")]
@@ -137,7 +156,10 @@ normal_spawn_interval_max = 30.0
 position = Vector2(-47, 333)
 
 [node name="RS1" type="Marker2D" parent="LocationMarkers" groups=["spawn"]]
-position = Vector2(100, -49)
+position = Vector2(350, -410)
+
+[node name="SPARE_KEY" type="Marker2D" parent="LocationMarkers" groups=["spawn"]]
+position = Vector2(392, -410)
 
 [node name="RG1" type="Marker2D" parent="LocationMarkers" groups=["serveposes"]]
 position = Vector2(-144, 36)
