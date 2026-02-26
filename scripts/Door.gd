@@ -15,6 +15,9 @@ const ANIM_IDLE_CLOSE  : String = "idle_close"
 var is_open: bool = false
 var player_in_range: bool = false
 var _beacon_active: bool = false
+@export var auto_close_delay_sec: float = 5.0
+var _auto_close_deadline_ms: int = 0
+var _bodies_in_trigger: Dictionary = {}
 
 func _ready() -> void:
 	add_to_group("door")
@@ -47,6 +50,8 @@ func _process(_dt: float) -> void:
 	else:
 		spr.modulate = Color(1, 1, 1, 1)
 
+	_tick_auto_close()
+
 func _clear_wall_behind_door():
 	# Attempt to find LayerWalls and clear the tile at this door's position
 	# The door is usually child of LayerDoors, which is child of TileMap
@@ -68,11 +73,13 @@ func _clear_wall_behind_door():
 				layer_walls.set_cell(map_pos, -1)
 
 func _on_body_entered(n: Node) -> void:
+	_bodies_in_trigger[n.get_instance_id()] = true
 	if n.is_in_group("player"):
 		player_in_range = true
 		print("[Door] player entered")
 
 func _on_body_exited(n: Node) -> void:
+	_bodies_in_trigger.erase(n.get_instance_id())
 	if n.is_in_group("player"):
 		player_in_range = false
 		print("[Door] player exited")
@@ -85,6 +92,10 @@ func _unhandled_input(event: InputEvent) -> void:
 func toggle() -> void:
 	var was_open := is_open
 	is_open = not is_open
+	if is_open:
+		_auto_close_deadline_ms = Time.get_ticks_msec() + int(maxf(0.8, auto_close_delay_sec) * 1000.0)
+	else:
+		_auto_close_deadline_ms = 0
 	print("[Door] toggle; was_open=", was_open, " -> is_open=", is_open)
 	# 切物理/导航 + 播放过渡动画
 	_apply_state_and_play_transition()
@@ -138,3 +149,16 @@ func _has_anim(anim_name: String) -> bool:
 
 func _on_beacon_changed(active: bool, _position: Vector2, _request_id: String) -> void:
 	_beacon_active = active
+
+func _tick_auto_close() -> void:
+	if not is_open:
+		return
+	if _auto_close_deadline_ms <= 0:
+		return
+	var now_ms := Time.get_ticks_msec()
+	if now_ms < _auto_close_deadline_ms:
+		return
+	if not _bodies_in_trigger.is_empty():
+		_auto_close_deadline_ms = now_ms + 800
+		return
+	toggle()
