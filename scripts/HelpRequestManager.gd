@@ -38,6 +38,22 @@ func _ready() -> void:
 	if dm and dm.has_signal("utterance_generated") and not dm.utterance_generated.is_connected(_on_utterance_generated):
 		dm.utterance_generated.connect(_on_utterance_generated)
 
+func _process(_dt: float) -> void:
+	var now_ms := Time.get_ticks_msec()
+	for request_id in _order:
+		var req: Dictionary = _requests_by_id.get(request_id, {})
+		if req.is_empty():
+			continue
+		if str(req.get("status", "")) != STATUS_COOLDOWN:
+			continue
+		if now_ms < int(req.get("cooldown_until_ms", 0)):
+			continue
+		req["status"] = STATUS_PENDING
+		req["updated_at_ms"] = now_ms
+		_requests_by_id[request_id] = req
+		_log_help_event("cooldown_expired", req)
+		request_updated.emit(_copy(req))
+
 func create_request(request_type: String, robot: Node, payload: Dictionary = {}, options: Dictionary = {}) -> Dictionary:
 	if robot == null or not is_instance_valid(robot):
 		return {}

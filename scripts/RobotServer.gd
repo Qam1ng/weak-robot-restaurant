@@ -1218,7 +1218,9 @@ func _update_anim(v: Vector2) -> void:
 
 func speak(text: String) -> void:
 	print("[Robot] Says: ", text)
-	# TODO: Bubble UI integration
+	var bubble_mgr = get_node_or_null("/root/BubbleManager")
+	if bubble_mgr and bubble_mgr.has_method("say"):
+		bubble_mgr.say(self, text, 2.6, Color(0.88, 0.96, 1.0, 1.0))
 
 # ---------- Interaction Interface ----------
 func needs_help() -> bool:

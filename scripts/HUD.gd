@@ -20,6 +20,7 @@ var inventory_panel: PanelContainer
 var inventory_list: VBoxContainer
 var _active_request_id: String = ""
 var _active_request_type: String = ""
+var _last_utterance_by_request: Dictionary = {}
 var _mbti_questions: Array[Dictionary] = []
 var _mbti_index: int = 0
 var _mbti_scores := {
@@ -64,6 +65,8 @@ func _connect_help_signals() -> void:
 		return
 	if not help_mgr.request_updated.is_connected(_on_help_request_updated):
 		help_mgr.request_updated.connect(_on_help_request_updated)
+	if not help_mgr.request_created.is_connected(_on_help_request_created):
+		help_mgr.request_created.connect(_on_help_request_created)
 	if not help_mgr.request_resolved.is_connected(_on_help_request_resolved):
 		help_mgr.request_resolved.connect(_on_help_request_resolved)
 	if not help_mgr.beacon_changed.is_connected(_on_beacon_changed):
@@ -140,6 +143,7 @@ func show_help_request(request: Dictionary) -> void:
 	help_title.text = "Robot Request (%s)" % _active_request_type
 	help_body.text = _build_help_text(request)
 	help_panel.show()
+	_maybe_show_help_bubble(request)
 
 func _build_help_text(request: Dictionary) -> String:
 	var request_type = str(request.get("type", "HANDOFF"))
@@ -168,16 +172,27 @@ func _on_help_request_updated(request: Dictionary) -> void:
 	if request.is_empty():
 		return
 	var rid = str(request.get("id", ""))
-	if rid != _active_request_id:
-		return
 
 	var status = str(request.get("status", ""))
 	if status == "accepted":
-		help_panel.hide()
+		if rid == _active_request_id:
+			help_panel.hide()
 	elif status == "cooldown":
-		help_panel.hide()
+		if rid == _active_request_id:
+			help_panel.hide()
 	elif status == "pending":
-		help_body.text = _build_help_text(request)
+		if rid != _active_request_id:
+			_auto_open_help_request(request)
+		else:
+			help_body.text = _build_help_text(request)
+			_maybe_show_help_bubble(request)
+
+func _on_help_request_created(request: Dictionary) -> void:
+	if request.is_empty():
+		return
+	if str(request.get("status", "")) != "pending":
+		return
+	_auto_open_help_request(request)
 
 func _on_help_request_resolved(request: Dictionary) -> void:
 	if request.is_empty():
@@ -316,3 +331,35 @@ func _compute_mbti_type() -> String:
 func _finish_mbti_and_start() -> void:
 	mbti_panel.hide()
 	get_tree().paused = false
+
+func _auto_open_help_request(request: Dictionary) -> void:
+	if mbti_panel and mbti_panel.visible:
+		return
+	var rid := str(request.get("id", ""))
+	if rid == "":
+		return
+	var help_mgr = get_node_or_null("/root/HelpRequestManager")
+	if help_mgr and help_mgr.has_method("mark_prompted"):
+		help_mgr.mark_prompted(rid)
+		request = help_mgr.get_request(rid)
+	show_help_request(request)
+
+func _maybe_show_help_bubble(request: Dictionary) -> void:
+	var rid := str(request.get("id", ""))
+	var utterance := str(request.get("utterance", "")).strip_edges()
+	if utterance == "":
+		return
+	var previous := str(_last_utterance_by_request.get(rid, ""))
+	if previous == utterance:
+		return
+	_last_utterance_by_request[rid] = utterance
+
+	var bubble_mgr = get_node_or_null("/root/BubbleManager")
+	if bubble_mgr == null or not bubble_mgr.has_method("say"):
+		return
+	var robots = get_tree().get_nodes_in_group("robot")
+	if robots.is_empty():
+		return
+	var robot = robots[0]
+	if robot is Node2D:
+		bubble_mgr.say(robot, utterance, 2.8, Color(0.94, 0.98, 1.0, 1.0))

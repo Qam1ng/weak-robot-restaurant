@@ -273,6 +273,9 @@ func _on_reached() -> void:
 		current_state = State.WAITING_FOR_FOOD
 		_task_deadline_ms = Time.get_ticks_msec() + int(maxf(1.0, patience_seconds) * 1000.0)
 		print("[Customer] Arrived at seat! Requesting: %s" % request_text)
+		var bubble_mgr = get_node_or_null("/root/BubbleManager")
+		if bubble_mgr and bubble_mgr.has_method("say"):
+			bubble_mgr.say(self, request_text, 3.0, Color(1.0, 0.96, 0.88, 1.0))
 		_post_taskboard_request()
 		emit_signal("request_emitted", self)
 		
