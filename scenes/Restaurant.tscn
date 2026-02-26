@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=4 uid="uid://cs4xyxmcxxpbv"]
+[gd_scene load_steps=17 format=4 uid="uid://cs4xyxmcxxpbv"]
 
 [ext_resource type="Script" uid="uid://crot3w45uar7g" path="res://scripts/RestaurantMain.gd" id="1_auto_nav"]
 [ext_resource type="TileSet" uid="uid://dxbl3ps3j0g44" path="res://data/RestaurantTileset.tres" id="1_pbh5m"]
@@ -12,6 +12,7 @@
 [ext_resource type="PackedScene" uid="uid://b88kp0y3bul11" path="res://scenes/items/ItemPickup.tscn" id="8_g484w"]
 [ext_resource type="Script" uid="uid://ugil8a0tmkp6" path="res://scripts/Customer.gd" id="9_ndmpn"]
 [ext_resource type="Script" uid="uid://b6veu2b0et8va" path="res://scripts/CustomerSpawner.gd" id="10_spawner"]
+[ext_resource type="PackedScene" uid="uid://c08sh3mhp68uh" path="res://scenes/HUD.tscn" id="11_hud"]
 
 [sub_resource type="NavigationPolygon" id="NavigationPolygon_e03td"]
 vertices = PackedVector2Array(-374, 326, 470, 326, 470, -144, 80, -144, 80, -256, 470, -256, 470, -518, -374, -518, -374, -256, -80, -256, -80, -144, -374, -144)
@@ -73,6 +74,8 @@ position = Vector2(99, -84)
 script = ExtResource("3_08he2")
 
 [node name="HTTPRequest" type="HTTPRequest" parent="Robot_A"]
+
+[node name="Hud" parent="." instance=ExtResource("11_hud")]
 
 [node name="InteractiveItems" type="Node2D" parent="."]
 

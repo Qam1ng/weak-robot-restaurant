@@ -67,6 +67,10 @@ func _input(event: InputEvent) -> void:
 		# ① 先尝试帮最近且“需要帮助”的机器人（完全不影响你原来的门/物品交互）
 		var bot: Node2D = _find_nearby_robot_needing_help()
 		if bot != null:
+			if bot.has_method("open_help_request_ui"):
+				var opened_ui = bool(bot.open_help_request_ui(self))
+				if opened_ui:
+					return
 			# 只在机器人实现了接口方法时才调用，避免报错
 			if bot.has_method("receive_player_help"):
 				# 如果机器人有背包，直接尝试交换物品

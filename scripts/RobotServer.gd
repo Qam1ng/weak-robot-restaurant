@@ -35,6 +35,8 @@ const TASK_TYPE_FULFILL_ORDER := "FULFILL_ORDER"
 const STEP_TAKE_ORDER := "TAKE_ORDER"
 const STEP_PICKUP_FROM_KITCHEN := "PICKUP_FROM_KITCHEN"
 const STEP_DELIVER_AND_SERVE := "DELIVER_AND_SERVE"
+const HELP_TYPE_HANDOFF := "HANDOFF"
+const HELP_TYPE_OPEN_DOOR := "OPEN_DOOR"
 var _active_task_id: String = ""
 var _active_task_step: String = ""
 var _active_step_started: bool = false
@@ -54,6 +56,9 @@ const BATTERY_MODE_EMERGENCY := "emergency"
 @export var battery_charge_per_sec: float = 14.0
 var _battery_mode: String = BATTERY_MODE_NORMAL
 var _constraint_input: Dictionary = {}
+var _active_help_request_id: String = ""
+var _active_help_request_type: String = ""
+var _help_request_suppressed: bool = false
 
 # ---------- OpenAI ----------
 const OPENAI_URL: String   = "https://api.openai.com/v1/chat/completions"
@@ -250,6 +255,12 @@ func _ready() -> void:
 		ray = get_node("RayCast2D")
 
 	http.request_completed.connect(_on_http_completed)
+	var help_mgr = _help_manager()
+	if help_mgr:
+		if not help_mgr.request_updated.is_connected(_on_help_request_updated):
+			help_mgr.request_updated.connect(_on_help_request_updated)
+		if not help_mgr.request_resolved.is_connected(_on_help_request_resolved):
+			help_mgr.request_resolved.connect(_on_help_request_resolved)
 
 	# ---------- BT Construction ----------
 	var exec_plan = ActExecutePlan.new()
@@ -350,6 +361,9 @@ func _extract_food_from_request(request: String) -> String:
 
 func _task_board() -> Node:
 	return get_node_or_null("/root/TaskBoard")
+
+func _help_manager() -> Node:
+	return get_node_or_null("/root/HelpRequestManager")
 
 func _try_claim_next_task() -> void:
 	var board = _task_board()
@@ -462,6 +476,13 @@ func _plan_take_order_step() -> void:
 
 func _plan_pickup_step() -> void:
 	if _constraint_blocks_current_step():
+		_ensure_help_request(HELP_TYPE_OPEN_DOOR, {
+			"reason": "door_blocked_pickup",
+			"door_position": _get_door_position()
+		}, {
+			"require_beacon": true,
+			"cooldown_ms": 4500
+		})
 		_try_speak_blocked_notice("Door is closed. Waiting for access before pickup.")
 		return
 
@@ -478,6 +499,13 @@ func _plan_pickup_step() -> void:
 
 func _plan_deliver_step() -> void:
 	if _constraint_blocks_current_step():
+		_ensure_help_request(HELP_TYPE_OPEN_DOOR, {
+			"reason": "door_blocked_delivery",
+			"door_position": _get_door_position()
+		}, {
+			"require_beacon": true,
+			"cooldown_ms": 4500
+		})
 		_try_speak_blocked_notice("Door is closed. Waiting for access before delivery.")
 		return
 
@@ -524,6 +552,7 @@ func _clear_active_task_runtime() -> void:
 	_active_step_started = false
 	_last_replan_ms = 0
 	bt_runner.bb.erase("target_customer")
+	_clear_help_request_runtime()
 
 func _try_speak_blocked_notice(text: String) -> void:
 	var now_ms := Time.get_ticks_msec()
@@ -539,6 +568,13 @@ func _set_step_plan(actions: Array) -> void:
 		return
 	bt_runner.bb["planned_actions"] = actions
 	_active_step_started = true
+	if _active_help_request_type == HELP_TYPE_OPEN_DOOR and _active_help_request_id != "":
+		var help_mgr = _help_manager()
+		if help_mgr and help_mgr.has_method("complete_request"):
+			help_mgr.complete_request(_active_help_request_id, "cooperative_open_door")
+		_active_help_request_id = ""
+		_active_help_request_type = ""
+		set_waiting_for_help(false, "")
 
 func _collect_constraint_input() -> Dictionary:
 	var now_ms := Time.get_ticks_msec()
@@ -648,6 +684,106 @@ func _is_near_recharge_station() -> bool:
 	if station == Vector2.ZERO:
 		return false
 	return global_position.distance_to(station) <= 36.0
+
+func _get_door_position() -> Vector2:
+	var doors = get_tree().get_nodes_in_group("door")
+	for d in doors:
+		if d is Node2D:
+			return d.global_position
+	return global_position
+
+func _ensure_help_request(request_type: String, payload: Dictionary = {}, options: Dictionary = {}) -> void:
+	if _help_request_suppressed:
+		return
+
+	var help_mgr = _help_manager()
+	if not help_mgr:
+		return
+
+	if _active_help_request_id != "":
+		var current = help_mgr.get_request(_active_help_request_id)
+		if not current.is_empty():
+			var status = str(current.get("status", ""))
+			if status != "resolved":
+				return
+
+	var req = help_mgr.create_request(request_type, self, payload, options)
+	if req.is_empty():
+		return
+
+	_active_help_request_id = str(req.get("id", ""))
+	_active_help_request_type = request_type
+	_waiting_for_help = true
+
+func open_help_request_ui(_player: Node) -> bool:
+	var help_mgr = _help_manager()
+	if not help_mgr:
+		return false
+
+	var req: Dictionary = {}
+	if _active_help_request_id != "":
+		req = help_mgr.get_request(_active_help_request_id)
+		if not req.is_empty() and str(req.get("status", "")) == "cooldown":
+			return false
+		if req.is_empty() or str(req.get("status", "")) == "resolved":
+			req = {}
+
+	if req.is_empty():
+		req = help_mgr.get_promptable_request_for_robot(self)
+		if req.is_empty():
+			return false
+		_active_help_request_id = str(req.get("id", ""))
+		_active_help_request_type = str(req.get("type", ""))
+
+	help_mgr.mark_prompted(_active_help_request_id)
+	_show_help_request_ui(req)
+	return true
+
+func _show_help_request_ui(request: Dictionary) -> void:
+	var huds = get_tree().get_nodes_in_group("hud")
+	if huds.is_empty():
+		return
+	var hud = huds[0]
+	if hud and hud.has_method("show_help_request"):
+		hud.show_help_request(request)
+
+func _on_help_request_updated(request: Dictionary) -> void:
+	if request.is_empty():
+		return
+	if int(request.get("robot_instance_id", 0)) != get_instance_id():
+		return
+
+	var req_id = str(request.get("id", ""))
+	var status = str(request.get("status", ""))
+	var final_response = str(request.get("final_response", ""))
+	_active_help_request_id = req_id
+	_active_help_request_type = str(request.get("type", ""))
+
+	if status == "accepted":
+		_help_request_suppressed = false
+		if _active_help_request_type == HELP_TYPE_OPEN_DOOR:
+			speak("Please open the door for me.")
+		else:
+			speak("Thanks. Please hand me the item.")
+	elif status == "resolved" and final_response == "decline":
+		_help_request_suppressed = true
+		set_waiting_for_help(false, "")
+
+func _on_help_request_resolved(request: Dictionary) -> void:
+	if request.is_empty():
+		return
+	if int(request.get("robot_instance_id", 0)) != get_instance_id():
+		return
+
+	var req_id = str(request.get("id", ""))
+	if _active_help_request_id == req_id:
+		_active_help_request_id = ""
+		_active_help_request_type = ""
+
+func _clear_help_request_runtime() -> void:
+	_active_help_request_id = ""
+	_active_help_request_type = ""
+	_help_request_suppressed = false
 
 func _on_agent_velocity_computed(safe_velocity: Vector2) -> void:
 	if _waiting_for_help:
@@ -956,11 +1092,38 @@ func needs_help() -> bool:
 func set_waiting_for_help(waiting: bool, item_name: String):
 	_waiting_for_help = waiting
 	_help_item_needed = item_name
+	if not waiting:
+		return
+
+	if _active_help_request_type == HELP_TYPE_OPEN_DOOR:
+		return
+
+	# Hand-off help is created here (e.g. BT ask_help path).
+	_ensure_help_request(HELP_TYPE_HANDOFF, {
+		"item_needed": _help_item_needed,
+		"reason": "robot_stuck_or_pick_fail"
+	}, {
+		"cooldown_ms": 3500,
+		"max_escalation": 2,
+		"require_beacon": false
+	})
 
 func receive_player_help():
 	if not _waiting_for_help:
 		speak("I don't need help right now.")
 		return
+
+	var help_mgr = _help_manager()
+	if help_mgr and _active_help_request_id != "":
+		var req = help_mgr.get_request(_active_help_request_id)
+		var req_status = str(req.get("status", ""))
+		var req_type = str(req.get("type", ""))
+		if req_type == HELP_TYPE_OPEN_DOOR:
+			speak("Please open the door first.")
+			return
+		if req_status != "accepted":
+			speak("Please choose Accept first.")
+			return
 		
 	print("[Robot] Player interacting...")
 	# Access player inventory (Hack: assume only 1 player for now)
@@ -993,6 +1156,10 @@ func receive_player_help():
 			
 			speak("Thanks for the " + item.get("name") + "!")
 			set_waiting_for_help(false, "")
+			if help_mgr and _active_help_request_id != "":
+				help_mgr.complete_request(_active_help_request_id, "cooperative_handoff")
+				_active_help_request_id = ""
+				_active_help_request_type = ""
 		else:
 			print("[Robot] Player inventory: ", p_inv.items) # Debug print
 			speak("I need a " + _help_item_needed + ". You don't seem to have it.")

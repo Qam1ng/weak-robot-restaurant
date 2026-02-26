@@ -1,3 +1,56 @@
-[gd_scene format=3 uid="uid://c08sh3mhp68uh"]
+[gd_scene load_steps=2 format=3 uid="uid://c08sh3mhp68uh"]
 
-[node name="Hud" type="Node2D"]
+[ext_resource type="Script" path="res://scripts/HUD.gd" id="1_hud_script"]
+
+[node name="Hud" type="CanvasLayer"]
+script = ExtResource("1_hud_script")
+layer = 10
+
+[node name="InteractionLabel" type="Label" parent="."]
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 500.0
+offset_bottom = 52.0
+text = "Interaction"
+
+[node name="BeaconLabel" type="Label" parent="."]
+offset_left = 20.0
+offset_top = 380.0
+offset_right = 640.0
+offset_bottom = 412.0
+text = "DOOR BEACON ACTIVE"
+
+[node name="HelpRequestPanel" type="PanelContainer" parent="."]
+offset_left = 660.0
+offset_top = 60.0
+offset_right = 1210.0
+offset_bottom = 330.0
+
+[node name="Margin" type="MarginContainer" parent="HelpRequestPanel"]
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="VBox" type="VBoxContainer" parent="HelpRequestPanel/Margin"]
+
+[node name="Title" type="Label" parent="HelpRequestPanel/Margin/VBox"]
+text = "Robot Request"
+
+[node name="Body" type="RichTextLabel" parent="HelpRequestPanel/Margin/VBox"]
+custom_minimum_size = Vector2(500, 150)
+bbcode_enabled = false
+fit_content = true
+scroll_active = false
+text = "Request body"
+
+[node name="Buttons" type="HBoxContainer" parent="HelpRequestPanel/Margin/VBox"]
+
+[node name="Accept" type="Button" parent="HelpRequestPanel/Margin/VBox/Buttons"]
+text = "Accept"
+
+[node name="Decline" type="Button" parent="HelpRequestPanel/Margin/VBox/Buttons"]
+text = "Decline"
+
+[node name="Later" type="Button" parent="HelpRequestPanel/Margin/VBox/Buttons"]
+text = "Later"

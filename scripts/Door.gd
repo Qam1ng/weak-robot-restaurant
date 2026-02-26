@@ -14,6 +14,7 @@ const ANIM_IDLE_CLOSE  : String = "idle_close"
 
 var is_open: bool = false
 var player_in_range: bool = false
+var _beacon_active: bool = false
 
 func _ready() -> void:
 	add_to_group("door")
@@ -32,6 +33,19 @@ func _ready() -> void:
 	print("[Door] ready; has anims:",
 		_has_anim(ANIM_OPEN_TRANS), _has_anim(ANIM_CLOSE_TRANS),
 		_has_anim(ANIM_IDLE_OPEN), _has_anim(ANIM_IDLE_CLOSE))
+
+	var help_mgr = get_node_or_null("/root/HelpRequestManager")
+	if help_mgr and not help_mgr.beacon_changed.is_connected(_on_beacon_changed):
+		help_mgr.beacon_changed.connect(_on_beacon_changed)
+
+func _process(_dt: float) -> void:
+	if not is_instance_valid(spr):
+		return
+	if _beacon_active:
+		var pulse = 0.65 + 0.35 * sin(Time.get_ticks_msec() / 220.0)
+		spr.modulate = Color(1.0, pulse, pulse, 1.0)
+	else:
+		spr.modulate = Color(1, 1, 1, 1)
 
 func _clear_wall_behind_door():
 	# Attempt to find LayerWalls and clear the tile at this door's position
@@ -121,3 +135,6 @@ func _has_anim(anim_name: String) -> bool:
 	if spr.sprite_frames == null:
 		return false
 	return spr.sprite_frames.has_animation(anim_name)
+
+func _on_beacon_changed(active: bool, _position: Vector2, _request_id: String) -> void:
+	_beacon_active = active
