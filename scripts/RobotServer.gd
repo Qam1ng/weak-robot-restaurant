@@ -30,6 +30,14 @@ var _help_item_needed: String = ""
 var _episode_active: bool = false
 var _current_food_item: String = ""
 
+# ---------- TaskBoard ----------
+const TASK_TYPE_FULFILL_ORDER := "FULFILL_ORDER"
+const STEP_TAKE_ORDER := "TAKE_ORDER"
+const STEP_PICKUP_FROM_KITCHEN := "PICKUP_FROM_KITCHEN"
+const STEP_DELIVER_AND_SERVE := "DELIVER_AND_SERVE"
+var _active_task_id: String = ""
+var _active_task_step: String = ""
+
 # ---------- OpenAI ----------
 const OPENAI_URL: String   = "https://api.openai.com/v1/chat/completions"
 const OPENAI_MODEL: String = "gpt-4o-mini"
@@ -224,8 +232,6 @@ func _ready() -> void:
 	else:
 		ray = get_node("RayCast2D")
 
-	_connect_all_customers()
-	get_tree().node_added.connect(_on_node_added)
 	http.request_completed.connect(_on_http_completed)
 
 	# ---------- BT Construction ----------
@@ -277,18 +283,23 @@ func _physics_process(_dt: float) -> void:
 		var logger = get_node_or_null("/root/EpisodeLogger")
 		if logger:
 			logger.log_position(global_position)
-		
-		# Check if plan completed (returned to spawn)
-		_check_episode_completion()
+
+	_check_episode_completion()
 
 func _check_episode_completion() -> void:
-	# Episode ends when plan is empty and robot is near spawn
-	if not bt_runner.bb.has("planned_actions"):
+	var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
+
+	# No active task: try to claim new work when idle.
+	if _active_task_id == "":
+		if not has_plan and not _waiting_for_help:
+			_try_claim_next_task()
 		return
-	
-	if bt_runner.bb["planned_actions"].is_empty():
-		# Plan completed successfully
-		_end_current_episode(true)
+
+	# Active task exists: wait until current step plan ends.
+	if has_plan or _waiting_for_help:
+		return
+
+	_on_active_step_finished()
 
 func _end_current_episode(success: bool, failure_reason: String = "") -> void:
 	if not _episode_active:
@@ -308,6 +319,163 @@ func _extract_food_from_request(request: String) -> String:
 		if food in request_lower:
 			return food
 	return "unknown"
+
+func _task_board() -> Node:
+	return get_node_or_null("/root/TaskBoard")
+
+func _try_claim_next_task() -> void:
+	var board = _task_board()
+	if not board:
+		return
+
+	var task = board.get_next_unassigned_task(TASK_TYPE_FULFILL_ORDER)
+	if task.is_empty():
+		return
+
+	var task_id = str(task.get("id", ""))
+	if task_id == "":
+		return
+
+	var claimed = board.claim_task(task_id, name)
+	if claimed.is_empty():
+		return
+
+	_start_claimed_task(claimed)
+
+func _start_claimed_task(task: Dictionary) -> void:
+	_active_task_id = str(task.get("id", ""))
+	_active_task_step = ""
+	if _active_task_id == "":
+		return
+
+	var payload: Dictionary = task.get("payload", {})
+	var customer = _resolve_customer_from_payload(payload)
+	if customer == null:
+		print("[RobotServer] Task ", _active_task_id, " has no valid customer. Skipping.")
+		var board = _task_board()
+		if board and board.has_method("complete_task"):
+			board.complete_task(_active_task_id)
+		_clear_active_task_runtime()
+		return
+
+	bt_runner.bb["target_customer"] = customer
+	_current_food_item = str(payload.get("food_item", "unknown"))
+	if _current_food_item == "":
+		_current_food_item = "unknown"
+
+	var customer_seat = str(payload.get("seat", ""))
+	var logger = get_node_or_null("/root/EpisodeLogger")
+	if logger:
+		logger.start_episode(_current_food_item, customer_seat, customer.global_position, global_position)
+		_episode_active = true
+
+	_plan_current_task_step()
+
+func _resolve_customer_from_payload(payload: Dictionary) -> Node2D:
+	var iid = int(payload.get("customer_instance_id", 0))
+	if iid > 0:
+		var obj = instance_from_id(iid)
+		if obj is Node2D and is_instance_valid(obj):
+			return obj
+	return null
+
+func _plan_current_task_step() -> void:
+	var board = _task_board()
+	if not board or _active_task_id == "":
+		return
+
+	_active_task_step = board.get_current_step_name(_active_task_id)
+	if _active_task_step == "":
+		_finish_active_task_if_needed()
+		return
+
+	match _active_task_step:
+		STEP_TAKE_ORDER:
+			_plan_take_order_step()
+		STEP_PICKUP_FROM_KITCHEN:
+			_plan_pickup_step()
+		STEP_DELIVER_AND_SERVE:
+			_plan_deliver_step()
+		_:
+			print("[RobotServer] Unknown task step: ", _active_task_step)
+
+func _plan_take_order_step() -> void:
+	var customer := bt_runner.bb.get("target_customer", null) as Node2D
+	if customer == null:
+		return
+
+	var serve_poses = get_tree().get_nodes_in_group("serveposes")
+	var nearest_pose: Node2D = null
+	var min_dist := INF
+	for pose in serve_poses:
+		if not (pose is Node2D):
+			continue
+		var d = pose.global_position.distance_to(customer.global_position)
+		if d < min_dist:
+			min_dist = d
+			nearest_pose = pose
+
+	if nearest_pose:
+		if not bt_runner.bb["locations"].has(nearest_pose.name):
+			bt_runner.bb["locations"][nearest_pose.name] = nearest_pose.global_position
+		bt_runner.bb["planned_actions"] = [
+			{"action": "navigate", "params": {"target": nearest_pose.name}}
+		]
+		speak("I'll take your order now.")
+
+func _plan_pickup_step() -> void:
+	var item_name := _current_food_item
+	if item_name == "" or not bt_runner.bb["locations"].has(item_name):
+		item_name = "pizza"
+
+	bt_runner.bb["item_name"] = item_name
+	bt_runner.bb["planned_actions"] = [
+		{"action": "navigate", "params": {"target": item_name}},
+		{"action": "pick", "params": {"item": item_name}}
+	]
+	speak("Heading to kitchen for " + item_name + ".")
+
+func _plan_deliver_step() -> void:
+	bt_runner.bb["planned_actions"] = [
+		{"action": "navigate", "params": {"target": "customer"}},
+		{"action": "drop", "params": {}},
+		{"action": "navigate", "params": {"target": "RS1"}}
+	]
+	speak("Delivering now.")
+
+func _on_active_step_finished() -> void:
+	var board = _task_board()
+	if not board or _active_task_id == "":
+		return
+
+	var expected_step := _active_task_step
+	if expected_step == "":
+		expected_step = board.get_current_step_name(_active_task_id)
+
+	var ok = board.complete_current_step(_active_task_id, expected_step)
+	if not ok:
+		print("[RobotServer] Failed to complete step for task: ", _active_task_id)
+		return
+
+	_finish_active_task_if_needed()
+	if _active_task_id != "":
+		_plan_current_task_step()
+
+func _finish_active_task_if_needed() -> void:
+	var board = _task_board()
+	if not board or _active_task_id == "":
+		return
+	if not board.is_task_completed(_active_task_id):
+		return
+
+	print("[RobotServer] Task completed: ", _active_task_id)
+	_end_current_episode(true)
+	_clear_active_task_runtime()
+
+func _clear_active_task_runtime() -> void:
+	_active_task_id = ""
+	_active_task_step = ""
+	bt_runner.bb.erase("target_customer")
 
 func _on_agent_velocity_computed(safe_velocity: Vector2) -> void:
 	if _waiting_for_help:

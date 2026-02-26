@@ -270,6 +270,7 @@ func _on_reached() -> void:
 
 		current_state = State.WAITING_FOR_FOOD
 		print("[Customer] Arrived at seat! Requesting: %s" % request_text)
+		_post_taskboard_request()
 		emit_signal("request_emitted", self)
 		
 	elif current_state == State.LEAVING:
@@ -279,6 +280,21 @@ func _on_reached() -> void:
 		print("[Customer] Left the restaurant.")
 		customer_left.emit(self)
 		queue_free()
+
+func _post_taskboard_request() -> void:
+	var task_board = get_node_or_null("/root/TaskBoard")
+	if not task_board:
+		print("[Customer] TaskBoard not found. Fallback to legacy signal only.")
+		return
+	if not task_board.has_method("create_fulfill_order"):
+		print("[Customer] TaskBoard missing create_fulfill_order().")
+		return
+
+	var task = task_board.create_fulfill_order(self)
+	if task.is_empty():
+		print("[Customer] Failed to create FULFILL_ORDER task.")
+		return
+	print("[Customer] Task created: ", task.get("id", "unknown"), " | state=", task.get("state", "unknown"))
 
 func _update_anim_by_velocity(v: Vector2) -> void:
 	var moving := v.length() > 1.0

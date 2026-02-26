@@ -19,6 +19,7 @@ config/autoload_on_startup=true
 [autoload]
 
 TaskBus="*res://scripts/TaskBus.gd"
+TaskBoard="*res://scripts/TaskBoard.gd"
 EpisodeLogger="*res://scripts/EpisodeLogger.gd"
 GameManager="*res://scripts/GameManager.gd"
 
