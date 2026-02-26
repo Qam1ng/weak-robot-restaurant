@@ -60,6 +60,16 @@ var _active_help_request_id: String = ""
 var _active_help_request_type: String = ""
 var _help_request_suppressed: bool = false
 
+# ---------- Autonomous Fallback (Spare Key) ----------
+const FALLBACK_NONE := ""
+const FALLBACK_TO_CHARGER := "to_charger"
+const FALLBACK_COLLECT_KEY := "collect_key"
+const FALLBACK_TO_DOOR := "to_door"
+var _fallback_state: String = FALLBACK_NONE
+var _fallback_wait_until_ms: int = 0
+var _has_spare_key: bool = false
+var _returning_spare_key: bool = false
+
 # ---------- OpenAI ----------
 const OPENAI_URL: String   = "https://api.openai.com/v1/chat/completions"
 const OPENAI_MODEL: String = "gpt-4o-mini"
@@ -320,8 +330,15 @@ func _check_episode_completion() -> void:
 	var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
 	_constraint_input = _collect_constraint_input()
 
+	if _fallback_state != FALLBACK_NONE:
+		_tick_autonomous_fallback(has_plan)
+		return
+
 	# No active task: try to claim new work when idle.
 	if _active_task_id == "":
+		if not has_plan and _has_spare_key:
+			_tick_return_spare_key()
+			return
 		if not has_plan and not _waiting_for_help:
 			_try_claim_next_task()
 		return
@@ -366,6 +383,9 @@ func _help_manager() -> Node:
 	return get_node_or_null("/root/HelpRequestManager")
 
 func _try_claim_next_task() -> void:
+	if _has_spare_key or _returning_spare_key or _fallback_state != FALLBACK_NONE:
+		return
+
 	var board = _task_board()
 	if not board:
 		return
@@ -708,6 +728,85 @@ func _estimate_help_urgency() -> float:
 		battery_urgency = 0.6
 	return clampf(maxf(slack_urgency, battery_urgency), 0.0, 1.0)
 
+func _tick_autonomous_fallback(has_plan: bool) -> void:
+	match _fallback_state:
+		FALLBACK_TO_CHARGER:
+			if has_plan:
+				return
+			_fallback_state = FALLBACK_COLLECT_KEY
+			_fallback_wait_until_ms = Time.get_ticks_msec() + 5000
+			speak("Retrieving spare key from charging station.")
+		FALLBACK_COLLECT_KEY:
+			if Time.get_ticks_msec() < _fallback_wait_until_ms:
+				return
+			_has_spare_key = true
+			_fallback_state = FALLBACK_TO_DOOR
+			_plan_navigate_to_position(_get_door_position(), "fallback_door")
+			speak("Spare key acquired. Heading to door.")
+		FALLBACK_TO_DOOR:
+			if has_plan:
+				return
+			_open_door_with_spare_key()
+			_fallback_state = FALLBACK_NONE
+			_active_step_started = false
+			speak("Door unlocked with spare key. Resuming task.")
+		_:
+			_fallback_state = FALLBACK_NONE
+
+func _start_autonomous_fallback() -> void:
+	if _fallback_state != FALLBACK_NONE:
+		return
+	_fallback_state = FALLBACK_TO_CHARGER
+	_waiting_for_help = false
+	_plan_navigate_to_location("RS1")
+	speak("No further persuasion. Executing autonomous fallback.")
+
+func _tick_return_spare_key() -> void:
+	if _fallback_state != FALLBACK_NONE:
+		return
+	if _returning_spare_key:
+		if Time.get_ticks_msec() < _fallback_wait_until_ms:
+			return
+		_has_spare_key = false
+		_returning_spare_key = false
+		speak("Spare key returned.")
+		return
+
+	var rs1: Vector2 = bt_runner.bb.get("locations", {}).get("RS1", Vector2.ZERO)
+	if rs1 == Vector2.ZERO:
+		_has_spare_key = false
+		return
+	if global_position.distance_to(rs1) <= 36.0:
+		_returning_spare_key = true
+		_fallback_wait_until_ms = Time.get_ticks_msec() + 2500
+		speak("Returning spare key at charging station.")
+		return
+
+	if bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty():
+		return
+	_plan_navigate_to_location("RS1")
+
+func _plan_navigate_to_location(location_name: String) -> void:
+	_set_step_plan([{"action": "navigate", "params": {"target": location_name}}])
+
+func _plan_navigate_to_position(pos: Vector2, key_prefix: String = "temp_nav") -> void:
+	var key = "%s_%d" % [key_prefix, Time.get_ticks_msec()]
+	bt_runner.bb["locations"][key] = pos
+	_set_step_plan([{"action": "navigate", "params": {"target": key}}])
+
+func _open_door_with_spare_key() -> void:
+	var doors = get_tree().get_nodes_in_group("door")
+	for d in doors:
+		if not (d is Node2D):
+			continue
+		if d.global_position.distance_to(global_position) > 120.0:
+			continue
+		if "is_open" in d and bool(d.is_open):
+			return
+		if d.has_method("toggle"):
+			d.toggle()
+			return
+
 func _ensure_help_request(request_type: String, payload: Dictionary = {}, options: Dictionary = {}) -> void:
 	if _help_request_suppressed:
 		return
@@ -792,9 +891,14 @@ func _on_help_request_resolved(request: Dictionary) -> void:
 		return
 
 	var req_id = str(request.get("id", ""))
+	var req_type = str(request.get("type", ""))
+	var final_response = str(request.get("final_response", ""))
 	if _active_help_request_id == req_id:
 		_active_help_request_id = ""
 		_active_help_request_type = ""
+
+	if req_type == HELP_TYPE_OPEN_DOOR and final_response == "decline":
+		_start_autonomous_fallback()
 
 func _clear_help_request_runtime() -> void:
 	_active_help_request_id = ""
