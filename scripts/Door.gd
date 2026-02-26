@@ -15,7 +15,7 @@ const ANIM_IDLE_CLOSE  : String = "idle_close"
 var is_open: bool = false
 var player_in_range: bool = false
 var _beacon_active: bool = false
-@export var auto_close_delay_sec: float = 5.0
+@export var auto_close_delay_sec: float = 30.0
 var _auto_close_deadline_ms: int = 0
 var _bodies_in_trigger: Dictionary = {}
 
