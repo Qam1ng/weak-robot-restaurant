@@ -37,6 +37,23 @@ const STEP_PICKUP_FROM_KITCHEN := "PICKUP_FROM_KITCHEN"
 const STEP_DELIVER_AND_SERVE := "DELIVER_AND_SERVE"
 var _active_task_id: String = ""
 var _active_task_step: String = ""
+var _active_step_started: bool = false
+var _last_replan_ms: int = 0
+var _last_blocked_notice_ms: int = 0
+
+# ---------- Unified Constraints ----------
+const BATTERY_MODE_NORMAL := "normal"
+const BATTERY_MODE_CONSERVE := "conserve"
+const BATTERY_MODE_EMERGENCY := "emergency"
+@export var battery_capacity: float = 100.0
+@export var battery_level: float = 100.0
+@export var battery_drain_move_per_sec: float = 1.2
+@export var battery_drain_idle_per_sec: float = 0.08
+@export var battery_conserve_threshold: float = 50.0
+@export var battery_emergency_threshold: float = 20.0
+@export var battery_charge_per_sec: float = 14.0
+var _battery_mode: String = BATTERY_MODE_NORMAL
+var _constraint_input: Dictionary = {}
 
 # ---------- OpenAI ----------
 const OPENAI_URL: String   = "https://api.openai.com/v1/chat/completions"
@@ -274,7 +291,9 @@ func _discover_locations():
 	
 	print("[RobotServer] Discovered ", bt_runner.bb["locations"].size(), " locations")
 
-func _physics_process(_dt: float) -> void:
+func _physics_process(dt: float) -> void:
+	_update_battery_and_mode(dt)
+
 	# Animation logic: based on current real velocity, not path preview
 	_update_anim(velocity)
 	
@@ -288,6 +307,7 @@ func _physics_process(_dt: float) -> void:
 
 func _check_episode_completion() -> void:
 	var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
+	_constraint_input = _collect_constraint_input()
 
 	# No active task: try to claim new work when idle.
 	if _active_task_id == "":
@@ -297,6 +317,14 @@ func _check_episode_completion() -> void:
 
 	# Active task exists: wait until current step plan ends.
 	if has_plan or _waiting_for_help:
+		return
+
+	# Step cannot start yet (e.g. blocked by door), keep waiting and re-check constraints.
+	if not _active_step_started:
+		var now_ms := Time.get_ticks_msec()
+		if now_ms - _last_replan_ms >= 300:
+			_last_replan_ms = now_ms
+			_plan_current_task_step()
 		return
 
 	_on_active_step_finished()
@@ -327,9 +355,15 @@ func _try_claim_next_task() -> void:
 	var board = _task_board()
 	if not board:
 		return
-
-	var task = board.get_next_unassigned_task(TASK_TYPE_FULFILL_ORDER)
+	var constraints = _collect_constraint_input()
+	var task = board.get_best_unassigned_task(TASK_TYPE_FULFILL_ORDER, constraints)
 	if task.is_empty():
+		return
+	
+	var task_slack_ms = int(task.get("deadline_ms", Time.get_ticks_msec()) - Time.get_ticks_msec())
+	var battery_mode = str(constraints.get("battery_mode", BATTERY_MODE_NORMAL))
+	if battery_mode == BATTERY_MODE_EMERGENCY and task_slack_ms > 20_000:
+		print("[RobotServer] Emergency battery; deferring new claim. slack_ms=", task_slack_ms)
 		return
 
 	var task_id = str(task.get("id", ""))
@@ -385,9 +419,12 @@ func _plan_current_task_step() -> void:
 		return
 
 	_active_task_step = board.get_current_step_name(_active_task_id)
+	_active_step_started = false
 	if _active_task_step == "":
 		_finish_active_task_if_needed()
 		return
+
+	_constraint_input = _collect_constraint_input()
 
 	match _active_task_step:
 		STEP_TAKE_ORDER:
@@ -418,29 +455,37 @@ func _plan_take_order_step() -> void:
 	if nearest_pose:
 		if not bt_runner.bb["locations"].has(nearest_pose.name):
 			bt_runner.bb["locations"][nearest_pose.name] = nearest_pose.global_position
-		bt_runner.bb["planned_actions"] = [
+		_set_step_plan([
 			{"action": "navigate", "params": {"target": nearest_pose.name}}
-		]
+		])
 		speak("I'll take your order now.")
 
 func _plan_pickup_step() -> void:
+	if _constraint_blocks_current_step():
+		_try_speak_blocked_notice("Door is closed. Waiting for access before pickup.")
+		return
+
 	var item_name := _current_food_item
 	if item_name == "" or not bt_runner.bb["locations"].has(item_name):
 		item_name = "pizza"
 
 	bt_runner.bb["item_name"] = item_name
-	bt_runner.bb["planned_actions"] = [
+	_set_step_plan([
 		{"action": "navigate", "params": {"target": item_name}},
 		{"action": "pick", "params": {"item": item_name}}
-	]
+	])
 	speak("Heading to kitchen for " + item_name + ".")
 
 func _plan_deliver_step() -> void:
-	bt_runner.bb["planned_actions"] = [
+	if _constraint_blocks_current_step():
+		_try_speak_blocked_notice("Door is closed. Waiting for access before delivery.")
+		return
+
+	_set_step_plan([
 		{"action": "navigate", "params": {"target": "customer"}},
 		{"action": "drop", "params": {}},
 		{"action": "navigate", "params": {"target": "RS1"}}
-	]
+	])
 	speak("Delivering now.")
 
 func _on_active_step_finished() -> void:
@@ -457,6 +502,7 @@ func _on_active_step_finished() -> void:
 		print("[RobotServer] Failed to complete step for task: ", _active_task_id)
 		return
 
+	_active_step_started = false
 	_finish_active_task_if_needed()
 	if _active_task_id != "":
 		_plan_current_task_step()
@@ -475,7 +521,133 @@ func _finish_active_task_if_needed() -> void:
 func _clear_active_task_runtime() -> void:
 	_active_task_id = ""
 	_active_task_step = ""
+	_active_step_started = false
+	_last_replan_ms = 0
 	bt_runner.bb.erase("target_customer")
+
+func _try_speak_blocked_notice(text: String) -> void:
+	var now_ms := Time.get_ticks_msec()
+	if now_ms - _last_blocked_notice_ms < 1500:
+		return
+	_last_blocked_notice_ms = now_ms
+	speak(text)
+
+func _set_step_plan(actions: Array) -> void:
+	if actions.is_empty():
+		bt_runner.bb["planned_actions"] = []
+		_active_step_started = false
+		return
+	bt_runner.bb["planned_actions"] = actions
+	_active_step_started = true
+
+func _collect_constraint_input() -> Dictionary:
+	var now_ms := Time.get_ticks_msec()
+	var door_open := _is_restricted_door_open()
+	var deadline_ms := 0
+	var slack_ms := 0
+	var board = _task_board()
+	if board and _active_task_id != "":
+		var task = board.get_task(_active_task_id)
+		if not task.is_empty():
+			deadline_ms = int(task.get("deadline_ms", 0))
+			slack_ms = int(task.get("deadline_ms", now_ms) - now_ms)
+
+	var input = {
+		"timestamp_ms": now_ms,
+		"battery_level": battery_level,
+		"battery_mode": _battery_mode,
+		"door_open": door_open,
+		"active_task_id": _active_task_id,
+		"active_step": _active_task_step,
+		"deadline_ms": deadline_ms,
+		"slack_ms": slack_ms,
+		"is_door_blocked": _is_step_blocked_by_door(_active_task_step, door_open),
+		"deadline_urgency_weight": 1.0
+	}
+
+	if _battery_mode == BATTERY_MODE_EMERGENCY:
+		input["deadline_urgency_weight"] = 0.7
+	elif _battery_mode == BATTERY_MODE_CONSERVE:
+		input["deadline_urgency_weight"] = 0.9
+
+	return input
+
+func _constraint_blocks_current_step() -> bool:
+	_constraint_input = _collect_constraint_input()
+	return bool(_constraint_input.get("is_door_blocked", false))
+
+func _is_step_blocked_by_door(step_name: String, door_open: bool) -> bool:
+	if door_open:
+		return false
+	if step_name != STEP_PICKUP_FROM_KITCHEN and step_name != STEP_DELIVER_AND_SERVE:
+		return false
+
+	var locations: Dictionary = bt_runner.bb.get("locations", {})
+	var item_pos: Vector2 = locations.get(_current_food_item, Vector2.ZERO)
+	var in_kitchen_target: bool = item_pos != Vector2.ZERO and item_pos.y < -150.0
+	var robot_in_kitchen: bool = global_position.y < -150.0
+
+	if step_name == STEP_PICKUP_FROM_KITCHEN:
+		# Need kitchen access.
+		return not robot_in_kitchen and in_kitchen_target
+	if step_name == STEP_DELIVER_AND_SERVE:
+		# Need to go from kitchen back to dining.
+		return robot_in_kitchen
+	return false
+
+func _is_restricted_door_open() -> bool:
+	var doors = get_tree().get_nodes_in_group("door")
+	for d in doors:
+		if "is_open" in d:
+			return bool(d.is_open)
+
+	var root = get_tree().current_scene
+	if not root:
+		return true
+	var door_node = root.find_child("Door", true, false)
+	if door_node and "is_open" in door_node:
+		return bool(door_node.is_open)
+	return true
+
+func _update_battery_and_mode(dt: float) -> void:
+	var moving := velocity.length() > 1.0
+	var drain_rate := battery_drain_idle_per_sec
+	if moving:
+		drain_rate = battery_drain_move_per_sec
+
+	battery_level -= drain_rate * dt
+	if _active_task_id == "" and _is_near_recharge_station():
+		battery_level += battery_charge_per_sec * dt
+
+	battery_level = clampf(battery_level, 0.0, battery_capacity)
+	_update_battery_mode()
+	_update_agent_speed_by_battery_mode()
+
+func _update_battery_mode() -> void:
+	var previous := _battery_mode
+	if battery_level <= battery_emergency_threshold:
+		_battery_mode = BATTERY_MODE_EMERGENCY
+	elif battery_level <= battery_conserve_threshold:
+		_battery_mode = BATTERY_MODE_CONSERVE
+	else:
+		_battery_mode = BATTERY_MODE_NORMAL
+
+	if previous != _battery_mode:
+		print("[RobotServer] Battery mode: ", previous, " -> ", _battery_mode, " (", int(battery_level), "%)")
+
+func _update_agent_speed_by_battery_mode() -> void:
+	var speed_scale := 1.0
+	if _battery_mode == BATTERY_MODE_CONSERVE:
+		speed_scale = 0.8
+	elif _battery_mode == BATTERY_MODE_EMERGENCY:
+		speed_scale = 0.6
+	agent.max_speed = move_speed * speed_scale
+
+func _is_near_recharge_station() -> bool:
+	var station = bt_runner.bb.get("locations", {}).get("RS1", Vector2.ZERO)
+	if station == Vector2.ZERO:
+		return false
+	return global_position.distance_to(station) <= 36.0
 
 func _on_agent_velocity_computed(safe_velocity: Vector2) -> void:
 	if _waiting_for_help:

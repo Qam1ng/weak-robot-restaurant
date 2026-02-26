@@ -12,6 +12,7 @@ signal customer_left(customer: Node)
 @export var move_speed: float = 110.0
 @export var eating_duration: float = 15.0
 @export var leave_delay: float = 3.0
+@export var patience_seconds: float = 90.0
 
 # ==================== 节点引用 ====================
 @onready var agent: NavigationAgent2D = $NavigationAgent2D
@@ -31,6 +32,7 @@ var _target_set: bool = false
 var _has_received_food: bool = false
 var _spawn_position: Vector2 = Vector2.ZERO
 var _final_target: Vector2 = Vector2.ZERO
+var _task_deadline_ms: int = 0
 
 # 座位信息
 var current_seat: String = ""
@@ -269,6 +271,7 @@ func _on_reached() -> void:
 			_update_anim_by_velocity(Vector2.ZERO)
 
 		current_state = State.WAITING_FOR_FOOD
+		_task_deadline_ms = Time.get_ticks_msec() + int(maxf(1.0, patience_seconds) * 1000.0)
 		print("[Customer] Arrived at seat! Requesting: %s" % request_text)
 		_post_taskboard_request()
 		emit_signal("request_emitted", self)
@@ -326,3 +329,8 @@ func force_leave() -> void:
 		return
 	print("[Customer] Forced to leave.")
 	_start_leaving()
+
+func get_task_deadline_ms() -> int:
+	if _task_deadline_ms <= 0:
+		return Time.get_ticks_msec() + int(maxf(1.0, patience_seconds) * 1000.0)
+	return _task_deadline_ms

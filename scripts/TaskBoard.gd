@@ -31,6 +31,9 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 	var task_id := _new_task_id()
 	var now_ms := Time.get_ticks_msec()
 	var food_item := _extract_food_from_request(request_text)
+	var deadline_ms := now_ms + 90_000
+	if customer.has_method("get_task_deadline_ms"):
+		deadline_ms = int(customer.get_task_deadline_ms())
 	var steps := [
 		{"name": STEP_TAKE_ORDER, "state": "pending"},
 		{"name": STEP_PICKUP_FROM_KITCHEN, "state": "pending"},
@@ -42,6 +45,7 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 		"type": TASK_FULFILL_ORDER,
 		"state": STATE_UNASSIGNED,
 		"created_at_ms": now_ms,
+		"deadline_ms": deadline_ms,
 		"claimed_at_ms": 0,
 		"completed_at_ms": 0,
 		"assigned_to": "",
@@ -74,6 +78,31 @@ func get_next_unassigned_task(task_type: String = "") -> Dictionary:
 			continue
 		return _copy_task(task)
 	return {}
+
+func get_best_unassigned_task(task_type: String = "", constraints: Dictionary = {}) -> Dictionary:
+	var now_ms := Time.get_ticks_msec()
+	var urgency_weight := float(constraints.get("deadline_urgency_weight", 1.0))
+	var best_score := INF
+	var best_task: Dictionary = {}
+
+	for task_id in _task_order:
+		var task = _tasks_by_id.get(task_id, {})
+		if task.is_empty():
+			continue
+		if task.get("state", "") != STATE_UNASSIGNED:
+			continue
+		if task_type != "" and task.get("type", "") != task_type:
+			continue
+
+		var slack_ms := _compute_slack_ms(task, now_ms)
+		var score := float(slack_ms) * urgency_weight
+		if score < best_score:
+			best_score = score
+			best_task = task
+
+	if best_task.is_empty():
+		return {}
+	return _copy_task(best_task)
 
 func claim_task(task_id: String, assignee: String) -> Dictionary:
 	var task = _tasks_by_id.get(task_id, {})
@@ -147,6 +176,12 @@ func is_task_completed(task_id: String) -> bool:
 		return false
 	return task.get("state", "") == STATE_COMPLETED
 
+func get_task_slack_ms(task_id: String) -> int:
+	var task = _tasks_by_id.get(task_id, {})
+	if task.is_empty():
+		return 0
+	return _compute_slack_ms(task, Time.get_ticks_msec())
+
 func complete_task(task_id: String) -> bool:
 	var task = _tasks_by_id.get(task_id, {})
 	if task.is_empty():
@@ -190,3 +225,7 @@ func _copy_task(task: Dictionary) -> Dictionary:
 	if task.is_empty():
 		return {}
 	return task.duplicate(true)
+
+func _compute_slack_ms(task: Dictionary, now_ms: int) -> int:
+	var deadline_ms := int(task.get("deadline_ms", now_ms))
+	return deadline_ms - now_ms

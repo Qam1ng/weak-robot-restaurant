@@ -16,6 +16,8 @@ var is_open: bool = false
 var player_in_range: bool = false
 
 func _ready() -> void:
+	add_to_group("door")
+
 	# 触发区
 	if is_instance_valid(trig):
 		trig.body_entered.connect(_on_body_entered)
