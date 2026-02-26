@@ -39,6 +39,7 @@ const HELP_TYPE_HANDOFF := "HANDOFF"
 const HELP_TYPE_OPEN_DOOR := "OPEN_DOOR"
 const CHARGING_MARKER := "RS1"
 const SPARE_KEY_MARKER := "SPARE_KEY"
+const DOOR_HELP_DISTANCE := 72.0
 var _active_task_id: String = ""
 var _active_task_step: String = ""
 var _active_step_started: bool = false
@@ -61,6 +62,7 @@ var _constraint_input: Dictionary = {}
 var _active_help_request_id: String = ""
 var _active_help_request_type: String = ""
 var _help_request_suppressed: bool = false
+var _door_stage_active: bool = false
 
 # ---------- Autonomous Fallback (Spare Key) ----------
 const FALLBACK_NONE := ""
@@ -513,6 +515,9 @@ func _plan_take_order_step() -> void:
 
 func _plan_pickup_step() -> void:
 	if _constraint_blocks_current_step():
+		if not _is_near_door_for_help():
+			_plan_stage_to_door()
+			return
 		_ensure_help_request(HELP_TYPE_OPEN_DOOR, {
 			"reason": "door_blocked_pickup",
 			"door_position": _get_door_position(),
@@ -538,6 +543,9 @@ func _plan_pickup_step() -> void:
 
 func _plan_deliver_step() -> void:
 	if _constraint_blocks_current_step():
+		if not _is_near_door_for_help():
+			_plan_stage_to_door()
+			return
 		_ensure_help_request(HELP_TYPE_OPEN_DOOR, {
 			"reason": "door_blocked_delivery",
 			"door_position": _get_door_position(),
@@ -558,6 +566,12 @@ func _plan_deliver_step() -> void:
 	speak("Delivering now.")
 
 func _on_active_step_finished() -> void:
+	if _door_stage_active:
+		_door_stage_active = false
+		_active_step_started = false
+		_plan_current_task_step()
+		return
+
 	var board = _task_board()
 	if not board or _active_task_id == "":
 		return
@@ -591,6 +605,7 @@ func _clear_active_task_runtime() -> void:
 	_active_task_id = ""
 	_active_task_step = ""
 	_active_step_started = false
+	_door_stage_active = false
 	_last_replan_ms = 0
 	bt_runner.bb.erase("target_customer")
 	_clear_help_request_runtime()
@@ -822,6 +837,19 @@ func _plan_navigate_to_position(pos: Vector2, key_prefix: String = "temp_nav") -
 	var key = "%s_%d" % [key_prefix, Time.get_ticks_msec()]
 	bt_runner.bb["locations"][key] = pos
 	_set_step_plan([{"action": "navigate", "params": {"target": key}}])
+
+func _plan_stage_to_door() -> void:
+	if _door_stage_active:
+		return
+	if _active_help_request_type == HELP_TYPE_OPEN_DOOR and _active_help_request_id != "":
+		return
+	var door_pos := _get_door_position()
+	_plan_navigate_to_position(door_pos, "door_stage")
+	_door_stage_active = true
+	_try_speak_blocked_notice("Door is closed. Moving to the doorway.")
+
+func _is_near_door_for_help() -> bool:
+	return global_position.distance_to(_get_door_position()) <= DOOR_HELP_DISTANCE
 
 func _open_door_with_spare_key() -> void:
 	var doors = get_tree().get_nodes_in_group("door")
