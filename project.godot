@@ -23,6 +23,16 @@ TaskBoard="*res://scripts/TaskBoard.gd"
 HelpRequestManager="*res://scripts/HelpRequestManager.gd"
 EpisodeLogger="*res://scripts/EpisodeLogger.gd"
 GameManager="*res://scripts/GameManager.gd"
+ExperimentConfig="*res://scripts/ExperimentConfig.gd"
+
+[experiment]
+
+ab_enabled=true
+ab_seed=17
+forced_variant=""
+control_variant="B"
+replay_logging_enabled=true
+help_logging_enabled=true
 
 [input]
 

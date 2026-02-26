@@ -69,12 +69,26 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"strategy": "",
 		"strategy_scores": {},
 		"dialogue_intent": {},
-		"utterance": ""
+		"utterance": "",
+		"last_response": "",
+		"experiment": {}
 	}
 
 	var context = _build_context(robot, req, options)
 	req["context_snapshot"] = context
+	var exp = _experiment_config()
+	var variant := "A"
+	if exp and exp.has_method("resolve_variant"):
+		variant = str(exp.resolve_variant(request_id))
+	var exp_snapshot := {}
+	if exp and exp.has_method("get_snapshot"):
+		exp_snapshot = exp.get_snapshot()
+	exp_snapshot["assigned_variant"] = variant
+	req["experiment"] = exp_snapshot
+
 	var persuasion = PersuasionEngineScript.generate_dialogue(request_type, context, int(req["escalation_count"]), payload)
+	if exp and exp.has_method("apply_dialogue_variant"):
+		persuasion = exp.apply_dialogue_variant(variant, request_type, persuasion, payload, int(req["escalation_count"]))
 	req["strategy"] = persuasion.get("strategy", "")
 	req["strategy_scores"] = persuasion.get("strategy_scores", {})
 	req["dialogue_intent"] = persuasion.get("dialogue_intent", {})
@@ -84,6 +98,7 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 	_order.append(request_id)
 	_set_beacon_if_needed(req)
 	print("[HelpRequest] Created ", request_id, " type=", request_type)
+	_log_help_event("created", req)
 
 	var copied := _copy(req)
 	request_created.emit(copied)
@@ -137,6 +152,16 @@ func mark_prompted(request_id: String) -> void:
 			int(req.get("escalation_count", 0)),
 			req.get("payload", {})
 		)
+		var exp = _experiment_config()
+		if exp and exp.has_method("apply_dialogue_variant"):
+			var variant := str(req.get("experiment", {}).get("assigned_variant", "A"))
+			persuasion = exp.apply_dialogue_variant(
+				variant,
+				str(req.get("type", TYPE_HANDOFF)),
+				persuasion,
+				req.get("payload", {}),
+				int(req.get("escalation_count", 0))
+			)
 		req["strategy"] = persuasion.get("strategy", "")
 		req["strategy_scores"] = persuasion.get("strategy_scores", {})
 		req["dialogue_intent"] = persuasion.get("dialogue_intent", {})
@@ -145,6 +170,7 @@ func mark_prompted(request_id: String) -> void:
 	req["last_prompt_ms"] = Time.get_ticks_msec()
 	req["updated_at_ms"] = req["last_prompt_ms"]
 	_requests_by_id[request_id] = req
+	_log_help_event("prompted", req)
 	request_updated.emit(_copy(req))
 
 func respond(request_id: String, response: String) -> Dictionary:
@@ -159,6 +185,7 @@ func respond(request_id: String, response: String) -> Dictionary:
 	if int(req.get("last_prompt_ms", 0)) > 0:
 		prompt_latency_ms = now_ms - int(req.get("last_prompt_ms", 0))
 	req["response_latency_ms"] = prompt_latency_ms
+	req["last_response"] = response
 	match response:
 		RESPONSE_ACCEPT:
 			req["status"] = STATUS_ACCEPTED
@@ -189,8 +216,10 @@ func respond(request_id: String, response: String) -> Dictionary:
 	_update_interaction_model(response, prompt_latency_ms)
 	var copied := _copy(req)
 	print("[HelpRequest] Response ", response, " -> ", request_id, " status=", copied.get("status", ""))
+	_log_help_event("responded", req, {"response": response})
 	request_updated.emit(copied)
 	if str(req.get("status", "")) == STATUS_RESOLVED:
+		_log_help_event("resolved", req)
 		request_resolved.emit(copied)
 	return copied
 
@@ -212,6 +241,8 @@ func complete_request(request_id: String, resolution_path: String = "cooperative
 	_clear_beacon_if_matches(request_id)
 	var copied := _copy(req)
 	print("[HelpRequest] Completed ", request_id, " path=", resolution_path)
+	_log_help_event("completed", req)
+	_log_help_event("resolved", req)
 	request_updated.emit(copied)
 	request_resolved.emit(copied)
 	return copied
@@ -326,3 +357,18 @@ func _update_interaction_model(response: String, latency_ms: int) -> void:
 
 	var old_avg := float(_interaction_model.get("avg_latency_ms", 0.0))
 	_interaction_model["avg_latency_ms"] = ((old_avg * (total - 1.0)) + float(latency_ms)) / total
+
+func _episode_logger() -> Node:
+	return get_node_or_null("/root/EpisodeLogger")
+
+func _experiment_config() -> Node:
+	return get_node_or_null("/root/ExperimentConfig")
+
+func _log_help_event(event_type: String, req: Dictionary, extra: Dictionary = {}) -> void:
+	var logger = _episode_logger()
+	if logger == null or not logger.has_method("log_help_request_event"):
+		return
+	var exp = _experiment_config()
+	if exp and exp.has_method("is_help_logging_enabled") and not bool(exp.is_help_logging_enabled()):
+		return
+	logger.log_help_request_event(event_type, req, extra)
