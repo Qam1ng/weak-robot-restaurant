@@ -35,16 +35,17 @@ const TASK_TYPE_FULFILL_ORDER := "FULFILL_ORDER"
 const STEP_TAKE_ORDER := "TAKE_ORDER"
 const STEP_PICKUP_FROM_KITCHEN := "PICKUP_FROM_KITCHEN"
 const STEP_DELIVER_AND_SERVE := "DELIVER_AND_SERVE"
+const TASK_STATE_IN_PROGRESS := "in_progress"
+const TASK_STATE_COMPLETED := "completed"
+const TASK_STATE_FAILED := "failed"
 const HELP_TYPE_HANDOFF := "HANDOFF"
-const HELP_TYPE_OPEN_DOOR := "OPEN_DOOR"
 const CHARGING_MARKER := "RS1"
-const SPARE_KEY_MARKER := "SPARE_KEY"
-const DOOR_HELP_DISTANCE := 72.0
+const EMERGENCY_RECHARGE_RESUME_LEVEL := 55.0
+const ROBOT_MAX_ACTIVE_TASKS := 1
 var _active_task_id: String = ""
 var _active_task_step: String = ""
 var _active_step_started: bool = false
 var _last_replan_ms: int = 0
-var _last_blocked_notice_ms: int = 0
 
 # ---------- Unified Constraints ----------
 const BATTERY_MODE_NORMAL := "normal"
@@ -62,24 +63,8 @@ var _constraint_input: Dictionary = {}
 var _active_help_request_id: String = ""
 var _active_help_request_type: String = ""
 var _help_request_suppressed: bool = false
-var _door_stage_active: bool = false
-
-# ---------- Autonomous Fallback (Spare Key) ----------
-const FALLBACK_NONE := ""
-const FALLBACK_TO_CHARGER := "to_charger"
-const FALLBACK_COLLECT_KEY := "collect_key"
-const FALLBACK_TO_DOOR := "to_door"
-var _fallback_state: String = FALLBACK_NONE
-var _fallback_wait_until_ms: int = 0
-var _has_spare_key: bool = false
-var _returning_spare_key: bool = false
-
-# ---------- OpenAI ----------
-const OPENAI_URL: String   = "https://api.openai.com/v1/chat/completions"
-const OPENAI_MODEL: String = "gpt-4o-mini"
-var OPENAI_KEY: String     = "" # Set via environment variable or config file
-const OPENAI_KEY_FILE := "res://secrets/openai_api_key.txt"
-@onready var http: HTTPRequest = $HTTPRequest
+var _recharge_override_active: bool = false
+var _last_recharge_notice_ms: int = 0
 
 # ---------- Custom BT Tasks ----------
 # Execute actions from "planned_actions" queue one by one
@@ -126,6 +111,7 @@ class ActExecutePlan extends Core.Task:
 			
 			# Action done, remove from queue
 			bb.planned_actions.pop_front()
+			bb["last_plan_failed"] = false
 			current_node = null
 			return Core.Status.RUNNING 
 			
@@ -133,7 +119,7 @@ class ActExecutePlan extends Core.Task:
 			var failed_action = bb.planned_actions[0]
 			var action_name = failed_action.get("action")
 			print("[BT] Action failed: ", action_name)
-			
+
 			# Fallback Logic for Navigate/Pick Failure (e.g., evasion timeout)
 			if action_name == "navigate" or action_name == "pick":
 				var help_reason = bb.get("help_reason", "unknown")
@@ -178,6 +164,7 @@ class ActExecutePlan extends Core.Task:
 					return Core.Status.RUNNING
 
 			# If not recoverable or unknown failure, abort plan
+			bb["last_plan_failed"] = true
 			bb.erase("planned_actions")
 			current_node = null
 			return Core.Status.FAILURE
@@ -232,7 +219,6 @@ class ActExecutePlan extends Core.Task:
 
 func _ready() -> void:
 	add_to_group("robot")
-	OPENAI_KEY = _load_openai_key()
 	
 	if not has_node("Inventory"):
 		inventory = InventoryScript.new()
@@ -270,7 +256,6 @@ func _ready() -> void:
 	else:
 		ray = get_node("RayCast2D")
 
-	http.request_completed.connect(_on_http_completed)
 	var help_mgr = _help_manager()
 	if help_mgr:
 		if not help_mgr.request_updated.is_connected(_on_help_request_updated):
@@ -288,6 +273,7 @@ func _ready() -> void:
 		"counter_pos": Vector2(500, 160), # Default
 		"carrying_item": false,
 		"planned_actions": [], # Queue of {action, params}
+		"last_plan_failed": false,
 		"locations": {} # Will be populated immediately
 	}
 	add_child(bt_runner)
@@ -295,19 +281,6 @@ func _ready() -> void:
 	# ---------- Discover Locations IMMEDIATELY ----------
 	_discover_locations()
 	print("[RobotServer] Ready with ", bt_runner.bb["locations"].size(), " locations")
-
-func _load_openai_key() -> String:
-	var env_key := OS.get_environment("OPENAI_API_KEY").strip_edges()
-	if env_key != "":
-		return env_key
-
-	var path := ProjectSettings.globalize_path(OPENAI_KEY_FILE)
-	if not FileAccess.file_exists(path):
-		return ""
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return ""
-	return file.get_as_text().strip_edges()
 
 func _discover_locations():
 	print("[RobotServer] Discovering locations...")
@@ -349,24 +322,32 @@ func _check_episode_completion() -> void:
 	var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
 	_constraint_input = _collect_constraint_input()
 
-	if _fallback_state != FALLBACK_NONE:
-		_tick_autonomous_fallback(has_plan)
+	if _tick_recharge_override(has_plan):
 		return
 
 	# No active task: try to claim new work when idle.
 	if _active_task_id == "":
-		if not has_plan and _has_spare_key:
-			_tick_return_spare_key()
-			return
 		if not has_plan and not _waiting_for_help:
 			_try_claim_next_task()
 		return
+
+	if _sync_active_task_state():
+		return
+
+	_tick_offer_take_order_handoff()
 
 	# Active task exists: wait until current step plan ends.
 	if has_plan or _waiting_for_help:
 		return
 
-	# Step cannot start yet (e.g. blocked by door), keep waiting and re-check constraints.
+	# Keep TaskBoard lifecycle consistent with execution outcome.
+	# If BT reported failure for this step, never advance step state.
+	if bool(bt_runner.bb.get("last_plan_failed", false)):
+		bt_runner.bb["last_plan_failed"] = false
+		_active_step_started = false
+		return
+
+	# Step cannot start yet, keep waiting and re-check constraints.
 	if not _active_step_started:
 		var now_ms := Time.get_ticks_msec()
 		if now_ms - _last_replan_ms >= 300:
@@ -375,6 +356,34 @@ func _check_episode_completion() -> void:
 		return
 
 	_on_active_step_finished()
+
+func _sync_active_task_state() -> bool:
+	if _active_task_id == "":
+		return false
+	var board = _task_board()
+	if board == null:
+		return false
+	var task: Dictionary = board.get_task(_active_task_id)
+	if task.is_empty():
+		_end_current_episode(false, "task_missing")
+		_clear_active_task_runtime()
+		return true
+
+	var state := str(task.get("state", ""))
+	if state == TASK_STATE_FAILED:
+		var reason := str(task.get("failure_reason", "task_failed"))
+		_end_current_episode(false, reason)
+		_clear_active_task_runtime()
+		return true
+	if state == TASK_STATE_COMPLETED:
+		_end_current_episode(true)
+		_clear_active_task_runtime()
+		return true
+	if state != TASK_STATE_IN_PROGRESS:
+		_end_current_episode(false, "task_invalid_state:" + state)
+		_clear_active_task_runtime()
+		return true
+	return false
 
 func _end_current_episode(success: bool, failure_reason: String = "") -> void:
 	if not _episode_active:
@@ -387,14 +396,6 @@ func _end_current_episode(success: bool, failure_reason: String = "") -> void:
 	_episode_active = false
 	_current_food_item = ""
 
-func _extract_food_from_request(request: String) -> String:
-	var request_lower = request.to_lower()
-	var foods = ["pizza", "hotdog", "skewers", "sandwich"]
-	for food in foods:
-		if food in request_lower:
-			return food
-	return "unknown"
-
 func _task_board() -> Node:
 	return get_node_or_null("/root/TaskBoard")
 
@@ -402,8 +403,17 @@ func _help_manager() -> Node:
 	return get_node_or_null("/root/HelpRequestManager")
 
 func _try_claim_next_task() -> void:
-	if _has_spare_key or _returning_spare_key or _fallback_state != FALLBACK_NONE:
+	if _active_task_id != "" and ROBOT_MAX_ACTIVE_TASKS <= 1:
 		return
+
+	# Conserve mode: while idle, prefer charging before taking new tasks.
+	if _battery_mode == BATTERY_MODE_CONSERVE:
+		if _is_near_recharge_station():
+			return
+		if battery_level <= battery_conserve_threshold + 5.0:
+			_plan_navigate_to_location(CHARGING_MARKER)
+			_try_speak_recharge_notice("Battery low. Recharging before next task.")
+			return
 
 	var board = _task_board()
 	if not board:
@@ -428,6 +438,34 @@ func _try_claim_next_task() -> void:
 		return
 
 	_start_claimed_task(claimed)
+
+func _tick_offer_take_order_handoff() -> void:
+	if _active_task_id == "":
+		return
+	if _active_help_request_id != "":
+		return
+	if _waiting_for_help:
+		return
+	var board = _task_board()
+	if board == null or not board.has_method("get_best_handoff_candidate_for_player"):
+		return
+	var candidate: Dictionary = board.get_best_handoff_candidate_for_player()
+	if candidate.is_empty():
+		return
+	var candidate_id := str(candidate.get("id", ""))
+	if candidate_id == "":
+		return
+	_ensure_help_request(HELP_TYPE_HANDOFF, {
+		"handoff_mode": "TAKEOVER_TASK",
+		"task_id": candidate_id,
+		"item_needed": str(candidate.get("payload", {}).get("food_item", "item")),
+		"reason": "robot_busy_take_order_handoff",
+		"slack_ms": int(board.get_task_slack_ms(candidate_id))
+	}, {
+		"cooldown_ms": 3000,
+		"max_escalation": 2,
+		"urgency": clampf(1.0 - float(board.get_task_slack_ms(candidate_id)) / 90000.0, 0.1, 1.0)
+	})
 
 func _start_claimed_task(task: Dictionary) -> void:
 	_active_task_id = str(task.get("id", ""))
@@ -514,22 +552,6 @@ func _plan_take_order_step() -> void:
 		speak("I'll take your order now.")
 
 func _plan_pickup_step() -> void:
-	if _constraint_blocks_current_step():
-		if not _is_near_door_for_help():
-			_plan_stage_to_door()
-			return
-		_ensure_help_request(HELP_TYPE_OPEN_DOOR, {
-			"reason": "door_blocked_pickup",
-			"door_position": _get_door_position(),
-			"slack_ms": int(_constraint_input.get("slack_ms", 0))
-		}, {
-			"require_beacon": true,
-			"cooldown_ms": 4500,
-			"urgency": _estimate_help_urgency()
-		})
-		_try_speak_blocked_notice("Door is closed. Waiting for access before pickup.")
-		return
-
 	var item_name := _current_food_item
 	if item_name == "" or not bt_runner.bb["locations"].has(item_name):
 		item_name = "pizza"
@@ -542,22 +564,6 @@ func _plan_pickup_step() -> void:
 	speak("Heading to kitchen for " + item_name + ".")
 
 func _plan_deliver_step() -> void:
-	if _constraint_blocks_current_step():
-		if not _is_near_door_for_help():
-			_plan_stage_to_door()
-			return
-		_ensure_help_request(HELP_TYPE_OPEN_DOOR, {
-			"reason": "door_blocked_delivery",
-			"door_position": _get_door_position(),
-			"slack_ms": int(_constraint_input.get("slack_ms", 0))
-		}, {
-			"require_beacon": true,
-			"cooldown_ms": 4500,
-			"urgency": _estimate_help_urgency()
-		})
-		_try_speak_blocked_notice("Door is closed. Waiting for access before delivery.")
-		return
-
 	_set_step_plan([
 		{"action": "navigate", "params": {"target": "customer"}},
 		{"action": "drop", "params": {}},
@@ -566,12 +572,6 @@ func _plan_deliver_step() -> void:
 	speak("Delivering now.")
 
 func _on_active_step_finished() -> void:
-	if _door_stage_active:
-		_door_stage_active = false
-		_active_step_started = false
-		_plan_current_task_step()
-		return
-
 	var board = _task_board()
 	if not board or _active_task_id == "":
 		return
@@ -605,36 +605,24 @@ func _clear_active_task_runtime() -> void:
 	_active_task_id = ""
 	_active_task_step = ""
 	_active_step_started = false
-	_door_stage_active = false
 	_last_replan_ms = 0
+	_recharge_override_active = false
 	bt_runner.bb.erase("target_customer")
+	bt_runner.bb["last_plan_failed"] = false
 	_clear_help_request_runtime()
-
-func _try_speak_blocked_notice(text: String) -> void:
-	var now_ms := Time.get_ticks_msec()
-	if now_ms - _last_blocked_notice_ms < 1500:
-		return
-	_last_blocked_notice_ms = now_ms
-	speak(text)
 
 func _set_step_plan(actions: Array) -> void:
 	if actions.is_empty():
 		bt_runner.bb["planned_actions"] = []
 		_active_step_started = false
+		bt_runner.bb["last_plan_failed"] = false
 		return
 	bt_runner.bb["planned_actions"] = actions
 	_active_step_started = true
-	if _active_help_request_type == HELP_TYPE_OPEN_DOOR and _active_help_request_id != "":
-		var help_mgr = _help_manager()
-		if help_mgr and help_mgr.has_method("complete_request"):
-			help_mgr.complete_request(_active_help_request_id, "cooperative_open_door")
-		_active_help_request_id = ""
-		_active_help_request_type = ""
-		set_waiting_for_help(false, "")
+	bt_runner.bb["last_plan_failed"] = false
 
 func _collect_constraint_input() -> Dictionary:
 	var now_ms := Time.get_ticks_msec()
-	var door_open := _is_restricted_door_open()
 	var deadline_ms := 0
 	var slack_ms := 0
 	var board = _task_board()
@@ -648,12 +636,10 @@ func _collect_constraint_input() -> Dictionary:
 		"timestamp_ms": now_ms,
 		"battery_level": battery_level,
 		"battery_mode": _battery_mode,
-		"door_open": door_open,
 		"active_task_id": _active_task_id,
 		"active_step": _active_task_step,
 		"deadline_ms": deadline_ms,
 		"slack_ms": slack_ms,
-		"is_door_blocked": _is_step_blocked_by_door(_active_task_step, door_open),
 		"deadline_urgency_weight": 1.0
 	}
 
@@ -664,43 +650,6 @@ func _collect_constraint_input() -> Dictionary:
 
 	return input
 
-func _constraint_blocks_current_step() -> bool:
-	_constraint_input = _collect_constraint_input()
-	return bool(_constraint_input.get("is_door_blocked", false))
-
-func _is_step_blocked_by_door(step_name: String, door_open: bool) -> bool:
-	if door_open:
-		return false
-	if step_name != STEP_PICKUP_FROM_KITCHEN and step_name != STEP_DELIVER_AND_SERVE:
-		return false
-
-	var locations: Dictionary = bt_runner.bb.get("locations", {})
-	var item_pos: Vector2 = locations.get(_current_food_item, Vector2.ZERO)
-	var in_kitchen_target: bool = item_pos != Vector2.ZERO and item_pos.y < -150.0
-	var robot_in_kitchen: bool = global_position.y < -150.0
-
-	if step_name == STEP_PICKUP_FROM_KITCHEN:
-		# Need kitchen access.
-		return not robot_in_kitchen and in_kitchen_target
-	if step_name == STEP_DELIVER_AND_SERVE:
-		# Need to go from kitchen back to dining.
-		return robot_in_kitchen
-	return false
-
-func _is_restricted_door_open() -> bool:
-	var doors = get_tree().get_nodes_in_group("door")
-	for d in doors:
-		if "is_open" in d:
-			return bool(d.is_open)
-
-	var root = get_tree().current_scene
-	if not root:
-		return true
-	var door_node = root.find_child("Door", true, false)
-	if door_node and "is_open" in door_node:
-		return bool(door_node.is_open)
-	return true
-
 func _update_battery_and_mode(dt: float) -> void:
 	var moving := velocity.length() > 1.0
 	var drain_rate := battery_drain_idle_per_sec
@@ -708,7 +657,8 @@ func _update_battery_and_mode(dt: float) -> void:
 		drain_rate = battery_drain_move_per_sec
 
 	battery_level -= drain_rate * dt
-	if _active_task_id == "" and _is_near_recharge_station():
+	# Charge whenever robot is inside recharge zone, even with an active task/recharge override.
+	if _is_near_recharge_station():
 		battery_level += battery_charge_per_sec * dt
 
 	battery_level = clampf(battery_level, 0.0, battery_capacity)
@@ -726,6 +676,9 @@ func _update_battery_mode() -> void:
 
 	if previous != _battery_mode:
 		print("[RobotServer] Battery mode: ", previous, " -> ", _battery_mode, " (", int(battery_level), "%)")
+		# Emergency mode should immediately interrupt execution and recharge.
+		if _battery_mode == BATTERY_MODE_EMERGENCY:
+			_activate_recharge_override("Battery critical. Recharging now.")
 
 func _update_agent_speed_by_battery_mode() -> void:
 	var speed_scale := 1.0
@@ -741,13 +694,6 @@ func _is_near_recharge_station() -> bool:
 		return false
 	return global_position.distance_to(station) <= 36.0
 
-func _get_door_position() -> Vector2:
-	var doors = get_tree().get_nodes_in_group("door")
-	for d in doors:
-		if d is Node2D:
-			return d.global_position
-	return global_position
-
 func _estimate_help_urgency() -> float:
 	var slack_ms := int(_constraint_input.get("slack_ms", 0))
 	var slack_urgency := 0.5
@@ -760,76 +706,6 @@ func _estimate_help_urgency() -> float:
 		battery_urgency = 0.6
 	return clampf(maxf(slack_urgency, battery_urgency), 0.0, 1.0)
 
-func _tick_autonomous_fallback(has_plan: bool) -> void:
-	match _fallback_state:
-		FALLBACK_TO_CHARGER:
-			if has_plan:
-				return
-			_fallback_state = FALLBACK_COLLECT_KEY
-			_fallback_wait_until_ms = Time.get_ticks_msec() + 5000
-			speak("Retrieving spare key from charging station.")
-		FALLBACK_COLLECT_KEY:
-			if Time.get_ticks_msec() < _fallback_wait_until_ms:
-				return
-			_has_spare_key = true
-			_fallback_state = FALLBACK_TO_DOOR
-			_plan_navigate_to_position(_get_door_position(), "fallback_door")
-			speak("Spare key acquired. Heading to door.")
-		FALLBACK_TO_DOOR:
-			if has_plan:
-				return
-			_open_door_with_spare_key()
-			_fallback_state = FALLBACK_NONE
-			_active_step_started = false
-			speak("Door unlocked with spare key. Resuming task.")
-		_:
-			_fallback_state = FALLBACK_NONE
-
-func _start_autonomous_fallback() -> void:
-	if _fallback_state != FALLBACK_NONE:
-		return
-	_fallback_state = FALLBACK_TO_CHARGER
-	_waiting_for_help = false
-	_plan_navigate_to_location(_spare_key_location_name())
-	speak("No further persuasion. Executing autonomous fallback.")
-
-func _tick_return_spare_key() -> void:
-	if _fallback_state != FALLBACK_NONE:
-		return
-	if _returning_spare_key:
-		if Time.get_ticks_msec() < _fallback_wait_until_ms:
-			return
-		_has_spare_key = false
-		_returning_spare_key = false
-		speak("Spare key returned.")
-		return
-
-	var rs1: Vector2 = _spare_key_location_position()
-	if rs1 == Vector2.ZERO:
-		_has_spare_key = false
-		return
-	if global_position.distance_to(rs1) <= 36.0:
-		_returning_spare_key = true
-		_fallback_wait_until_ms = Time.get_ticks_msec() + 2500
-		speak("Returning spare key at charging station.")
-		return
-
-	if bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty():
-		return
-	_plan_navigate_to_location(_spare_key_location_name())
-
-func _spare_key_location_name() -> String:
-	var locations: Dictionary = bt_runner.bb.get("locations", {})
-	if locations.has(SPARE_KEY_MARKER):
-		return SPARE_KEY_MARKER
-	return CHARGING_MARKER
-
-func _spare_key_location_position() -> Vector2:
-	var locations: Dictionary = bt_runner.bb.get("locations", {})
-	if locations.has(SPARE_KEY_MARKER):
-		return locations.get(SPARE_KEY_MARKER, Vector2.ZERO)
-	return locations.get(CHARGING_MARKER, Vector2.ZERO)
-
 func _plan_navigate_to_location(location_name: String) -> void:
 	_set_step_plan([{"action": "navigate", "params": {"target": location_name}}])
 
@@ -838,31 +714,51 @@ func _plan_navigate_to_position(pos: Vector2, key_prefix: String = "temp_nav") -
 	bt_runner.bb["locations"][key] = pos
 	_set_step_plan([{"action": "navigate", "params": {"target": key}}])
 
-func _plan_stage_to_door() -> void:
-	if _door_stage_active:
+func _activate_recharge_override(notice: String = "") -> void:
+	if _recharge_override_active:
 		return
-	if _active_help_request_type == HELP_TYPE_OPEN_DOOR and _active_help_request_id != "":
+	_recharge_override_active = true
+	_waiting_for_help = false
+	bt_runner.bb["planned_actions"] = []
+	_active_step_started = false
+	_plan_navigate_to_location(CHARGING_MARKER)
+	_try_speak_recharge_notice(notice)
+
+func _tick_recharge_override(has_plan: bool) -> bool:
+	# Enter override proactively on emergency battery.
+	if _battery_mode == BATTERY_MODE_EMERGENCY and not _recharge_override_active:
+		_activate_recharge_override("Battery critical. Recharging now.")
+		return true
+
+	if not _recharge_override_active:
+		return false
+
+	if _is_near_recharge_station():
+		# Pause work while charging until safe level.
+		if battery_level >= maxf(EMERGENCY_RECHARGE_RESUME_LEVEL, battery_conserve_threshold + 5.0):
+			_recharge_override_active = false
+			_active_step_started = false
+			if _active_task_id != "":
+				_try_speak_recharge_notice("Battery stabilized. Resuming task.")
+				_plan_current_task_step()
+			else:
+				_try_speak_recharge_notice("Battery stabilized. Ready for new tasks.")
+			return false
+		bt_runner.bb["planned_actions"] = []
+		return true
+
+	if not has_plan:
+		_plan_navigate_to_location(CHARGING_MARKER)
+	return true
+
+func _try_speak_recharge_notice(text: String) -> void:
+	if text.strip_edges() == "":
 		return
-	var door_pos := _get_door_position()
-	_plan_navigate_to_position(door_pos, "door_stage")
-	_door_stage_active = true
-	_try_speak_blocked_notice("Door is closed. Moving to the doorway.")
-
-func _is_near_door_for_help() -> bool:
-	return global_position.distance_to(_get_door_position()) <= DOOR_HELP_DISTANCE
-
-func _open_door_with_spare_key() -> void:
-	var doors = get_tree().get_nodes_in_group("door")
-	for d in doors:
-		if not (d is Node2D):
-			continue
-		if d.global_position.distance_to(global_position) > 120.0:
-			continue
-		if "is_open" in d and bool(d.is_open):
-			return
-		if d.has_method("toggle"):
-			d.toggle()
-			return
+	var now_ms := Time.get_ticks_msec()
+	if now_ms - _last_recharge_notice_ms < 1800:
+		return
+	_last_recharge_notice_ms = now_ms
+	speak(text)
 
 func _ensure_help_request(request_type: String, payload: Dictionary = {}, options: Dictionary = {}) -> void:
 	if _help_request_suppressed:
@@ -933,13 +829,76 @@ func _on_help_request_updated(request: Dictionary) -> void:
 
 	if status == "accepted":
 		_help_request_suppressed = false
-		if _active_help_request_type == HELP_TYPE_OPEN_DOOR:
-			speak("Please open the door for me.")
-		else:
-			speak("Thanks. Please hand me the item.")
+		_apply_handoff_accept(request)
 	elif status == "resolved" and final_response == "decline":
 		_help_request_suppressed = true
 		set_waiting_for_help(false, "")
+
+func _apply_handoff_accept(request: Dictionary) -> void:
+	var payload: Dictionary = request.get("payload", {})
+	var mode := str(payload.get("handoff_mode", "TAKEOVER_TASK"))
+	var task_id := str(payload.get("task_id", _active_task_id))
+	if task_id == "":
+		return
+	var board = _task_board()
+	if board == null:
+		return
+
+	if mode == "TAKEOVER_ITEM":
+		_transfer_item_to_player_for_handoff(payload)
+
+	var updated: Dictionary = {}
+	var task_snapshot: Dictionary = board.get_task(task_id) if board.has_method("get_task") else {}
+	var task_state := str(task_snapshot.get("state", ""))
+	if task_state == "unassigned" and board.has_method("claim_task"):
+		updated = board.claim_task(task_id, "player")
+	elif board.has_method("reassign_task"):
+		updated = board.reassign_task(task_id, "player")
+	if updated.is_empty():
+		return
+
+	if task_id == _active_task_id:
+		_end_current_episode(false, "task_handoff_to_player")
+		_clear_active_task_runtime()
+		bt_runner.bb["planned_actions"] = []
+		_active_step_started = false
+
+	set_waiting_for_help(false, "")
+	speak("Task handoff accepted. You take over this order.")
+	var help_mgr = _help_manager()
+	if help_mgr and _active_help_request_id != "":
+		help_mgr.complete_request(_active_help_request_id, "cooperative_handoff_task_transfer")
+	_active_help_request_id = ""
+	_active_help_request_type = ""
+
+func _transfer_item_to_player_for_handoff(payload: Dictionary) -> void:
+	if inventory == null or inventory.items.is_empty():
+		return
+	var players := get_tree().get_nodes_in_group("player")
+	if players.is_empty():
+		return
+	var player = players[0]
+	if not (player is Node2D):
+		return
+	if global_position.distance_to((player as Node2D).global_position) > 130.0:
+		return
+	var p_inv = player.get_node_or_null("Inventory")
+	if p_inv == null:
+		return
+	var preferred := str(payload.get("item_needed", "")).strip_edges()
+	var idx := -1
+	if preferred != "":
+		idx = inventory.find_item(preferred)
+	if idx == -1:
+		idx = inventory.items.size() - 1
+	if idx < 0 or idx >= inventory.items.size():
+		return
+	var item: Dictionary = inventory.items.pop_at(idx)
+	inventory.emit_signal("inventory_changed", inventory.items)
+	if inventory.items.is_empty():
+		bt_runner.bb["carrying_item"] = false
+	var item_name := str(item.get("name", "item"))
+	p_inv.add_item(item_name, item.get("atlas", null), item.get("region", Rect2i()))
 
 func _on_help_request_resolved(request: Dictionary) -> void:
 	if request.is_empty():
@@ -948,14 +907,9 @@ func _on_help_request_resolved(request: Dictionary) -> void:
 		return
 
 	var req_id = str(request.get("id", ""))
-	var req_type = str(request.get("type", ""))
-	var final_response = str(request.get("final_response", ""))
 	if _active_help_request_id == req_id:
 		_active_help_request_id = ""
 		_active_help_request_type = ""
-
-	if req_type == HELP_TYPE_OPEN_DOOR and final_response == "decline":
-		_start_autonomous_fallback()
 
 func _clear_help_request_runtime() -> void:
 	_active_help_request_id = ""
@@ -976,274 +930,6 @@ func _on_agent_velocity_computed(safe_velocity: Vector2) -> void:
 		_moving = true
 		velocity = safe_velocity
 	move_and_slide()
-
-func _connect_all_customers() -> void:
-	var customers: Array = get_tree().get_nodes_in_group("customer")
-	for c in customers:
-		_connect_customer(c)
-
-func _on_node_added(n: Node) -> void:
-	# 延迟检查，因为 node_added 信号在 _ready() 之前触发
-	# 此时节点还没有被添加到 "customer" 组
-	call_deferred("_try_connect_customer", n)
-
-func _try_connect_customer(n: Node) -> void:
-	if not is_instance_valid(n):
-		return
-	if n.is_in_group("customer"):
-		_connect_customer(n)
-	elif n is CharacterBody2D and n.has_signal("request_emitted"):
-		# 备用检查：如果节点有 request_emitted 信号，也连接
-		_connect_customer(n)
-
-func _connect_customer(c: Node) -> void:
-	if c.has_signal("request_emitted"):
-		if not c.request_emitted.is_connected(_on_customer_request):
-			c.request_emitted.connect(_on_customer_request, CONNECT_DEFERRED)
-
-func _on_customer_request(customer: Node) -> void:
-	print("[RobotServer] Received request from customer: ", customer.name)
-	bt_runner.bb["target_customer"] = customer as Node2D
-	
-	# Get the actual request text from the customer
-	var actual_request = customer.request_text if "request_text" in customer else "Can I order a pizza?"
-	print("[RobotServer] Customer request: ", actual_request)
-	
-	# Extract food item from request for episode tracking
-	_current_food_item = _extract_food_from_request(actual_request)
-	
-	# Start episode logging
-	var customer_seat = ""
-	if "current_seat" in customer:
-		customer_seat = customer.current_seat
-	
-	if Engine.has_singleton("EpisodeLogger") or has_node("/root/EpisodeLogger"):
-		var logger = get_node_or_null("/root/EpisodeLogger")
-		if logger:
-			logger.start_episode(_current_food_item, customer_seat, customer.global_position, global_position)
-			_episode_active = true
-	
-	# 1. Find nearest "serveposes" marker to customer (Approach Goal)
-	var serve_poses = get_tree().get_nodes_in_group("serveposes")
-	var nearest_pose: Node2D = null
-	var min_dist = INF
-	
-	for pose in serve_poses:
-		var d = pose.global_position.distance_to(customer.global_position)
-		if d < min_dist:
-			min_dist = d
-			nearest_pose = pose
-			
-	if nearest_pose:
-		print("[RobotServer] Will approach customer at: ", nearest_pose.name)
-		# Set initial plan to just go to the customer
-		var approach_plan = [
-			{"action": "navigate", "params": {"target": nearest_pose.name}}
-		]
-		
-		# Ensure the pose is in known locations (it should be if discovered)
-		if not bt_runner.bb["locations"].has(nearest_pose.name):
-			bt_runner.bb["locations"][nearest_pose.name] = nearest_pose.global_position
-			
-		bt_runner.bb["planned_actions"] = approach_plan
-		
-		# Trigger LLM with actual customer request
-		_call_openai_for_task(actual_request, true) 
-	else:
-		# Fallback if no serve pose found
-		_call_openai_for_task(actual_request, false)
-
-var _pending_request_text: String = ""  # Store request for mock fallback
-
-func _call_openai_for_task(request_text: String, append_plan: bool = false) -> void:
-	_pending_request_text = request_text  # Store for mock fallback
-	
-	if OPENAI_KEY == "":
-		push_error("OPENAI_API_KEY not set.")
-		_mock_llm_response(append_plan)
-		return
-
-	# Construct context from available locations
-	var loc_keys = []
-	if bt_runner.bb.has("locations"):
-		loc_keys = bt_runner.bb["locations"].keys()
-	var locations_str = ", ".join(loc_keys)
-
-	var sys: String = """
-You are a robot waiter. Parse the user request into a JSON plan.
-Known Locations: [%s]
-Available Atomic Actions:
-1. navigate(target): target must be one of the Known Locations or "customer"
-2. pick(item): item name as string
-3. drop(): no params
-
-Output JSON format:
-{
-  "reply": "Short text to customer",
-  "plan": [
-    {"action": "navigate", "params": {"target": "exact_location_name"}},
-    {"action": "pick", "params": {"item": "pizza"}},
-    ...
-  ]
-}
-""" % locations_str
-	var user_text: String = "Customer Request: " + request_text
-
-	var payload: Dictionary = {
-		"model": OPENAI_MODEL,
-		"response_format": {"type": "json_object"},
-		"messages": [
-			{"role":"system", "content": sys},
-			{"role":"user", "content": user_text}
-		],
-		"temperature": 0.0
-	}
-
-	var headers: PackedStringArray = PackedStringArray([
-		"Content-Type: application/json",
-		"Authorization: " + "Bearer " + OPENAI_KEY
-	])
-	
-	# Note: We can't easily pass 'append_plan' through the HTTP callback in Godot 4 without a custom object or lambda binding.
-	# But we can check if 'planned_actions' is not empty in _on_http_completed.
-	# For simplicity here, we'll assume we always APPEND if the robot is currently busy (approaching).
-	
-	var err: int = http.request(OPENAI_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(payload))
-	if err != OK:
-		push_error("HTTP request failed: " + str(err))
-		_mock_llm_response(append_plan)
-
-func _mock_llm_response(append: bool = false) -> void:
-	print("[RobotServer] Using Mock LLM Response for: ", _pending_request_text)
-	
-	# Parse the food type from the request
-	var food_item = "pizza"  # default
-	var request_lower = _pending_request_text.to_lower()
-	
-	if "hotdog" in request_lower:
-		food_item = "hotdog"
-	elif "skewers" in request_lower:
-		food_item = "skewers"
-	elif "sandwich" in request_lower:
-		food_item = "sandwich"
-	elif "pizza" in request_lower:
-		food_item = "pizza"
-	
-	print("[RobotServer] Parsed food item: ", food_item)
-	
-	# Build COMPLETE plan: navigate -> pick -> deliver to customer -> drop -> return to spawn
-	var plan = [
-		{"action": "navigate", "params": {"target": food_item}}, 
-		{"action": "pick", "params": {"item": food_item}},
-		{"action": "navigate", "params": {"target": "customer"}},
-		{"action": "drop", "params": {}},
-		{"action": "navigate", "params": {"target": "RS1"}}  # Return to robot spawn
-	]
-	_apply_plan(plan, "Okay, getting your " + food_item + "!", append)
-
-func _on_http_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
-	if code < 200 or code >= 300:
-		push_error("OpenAI HTTP status: " + str(code))
-		print(body.get_string_from_utf8())
-		_mock_llm_response(true) # Default to append on fail?
-		return
-
-	var txt: String = body.get_string_from_utf8()
-	var top: Dictionary = JSON.parse_string(txt)
-	
-	var choices: Array = top.get("choices", [])
-	if choices.is_empty():
-		_mock_llm_response(true)
-		return
-		
-	var content_str: String = choices[0].get("message", {}).get("content", "")
-	var response_obj: Dictionary = JSON.parse_string(content_str)
-	
-	var reply = response_obj.get("reply", "...")
-	var plan = response_obj.get("plan", [])
-	
-	print("[RobotServer] LLM Plan: ", plan)
-	
-	# We append if we are currently running an approach plan
-	# A simple heuristic: if planned_actions has items, we append.
-	var current_plan = bt_runner.bb.get("planned_actions", [])
-	var should_append = not current_plan.is_empty()
-	_apply_plan(plan, reply, should_append)
-
-func _apply_plan(plan: Array, reply: String, append: bool):
-	if reply != "":
-		speak(reply)
-	
-	# Ensure plan is complete: must have navigate->pick->navigate to customer->drop->return to spawn
-	var complete_plan = _ensure_complete_plan(plan)
-	
-	if append:
-		bt_runner.bb["planned_actions"].append_array(complete_plan)
-	else:
-		bt_runner.bb["planned_actions"] = complete_plan
-	
-	print("[RobotServer] Final plan: ", bt_runner.bb["planned_actions"])
-
-func _ensure_complete_plan(plan: Array) -> Array:
-	# First pass: find what item is being picked
-	var picked_item = ""
-	var navigate_to_item_idx = -1
-	var pick_action_idx = -1
-	
-	for i in range(plan.size()):
-		var action = plan[i]
-		var action_name = action.get("action", "")
-		var params = action.get("params", {})
-		
-		if action_name == "pick":
-			picked_item = params.get("item", "")
-			pick_action_idx = i
-		elif action_name == "navigate":
-			var target = params.get("target", "")
-			# Check if this is the navigate-to-item (before pick)
-			if target != "customer" and target != "RS1" and pick_action_idx == -1:
-				navigate_to_item_idx = i
-	
-	# Fix: Ensure navigate target matches pick item
-	var result = plan.duplicate(true)
-	if picked_item != "" and navigate_to_item_idx >= 0:
-		var nav_target = result[navigate_to_item_idx].get("params", {}).get("target", "")
-		if nav_target != picked_item:
-			print("[RobotServer] FIXING: navigate target '", nav_target, "' -> '", picked_item, "'")
-			result[navigate_to_item_idx]["params"]["target"] = picked_item
-	
-	# Second pass: check for missing steps
-	var has_navigate_to_customer = false
-	var has_drop = false
-	var has_return_to_spawn = false
-	
-	for action in result:
-		var action_name = action.get("action", "")
-		var params = action.get("params", {})
-		
-		if action_name == "navigate":
-			var target = params.get("target", "")
-			if target == "customer":
-				has_navigate_to_customer = true
-			elif target == "RS1":
-				has_return_to_spawn = true
-		elif action_name == "drop":
-			has_drop = true
-	
-	# Add missing steps
-	if picked_item != "" and not has_navigate_to_customer:
-		result.append({"action": "navigate", "params": {"target": "customer"}})
-		print("[RobotServer] Auto-added: navigate to customer")
-	
-	if picked_item != "" and not has_drop:
-		result.append({"action": "drop", "params": {}})
-		print("[RobotServer] Auto-added: drop")
-	
-	if not has_return_to_spawn:
-		result.append({"action": "navigate", "params": {"target": "RS1"}})
-		print("[RobotServer] Auto-added: return to spawn RS1")
-	
-	return result
 
 func _update_anim(v: Vector2) -> void:
 	var moving := v.length() > 1.0
@@ -1274,75 +960,29 @@ func set_waiting_for_help(waiting: bool, item_name: String):
 	if not waiting:
 		return
 
-	if _active_help_request_type == HELP_TYPE_OPEN_DOOR:
+	if _help_item_needed.strip_edges() == "":
 		return
+
+	var handoff_mode := "TAKEOVER_TASK"
+	if _active_task_step == STEP_DELIVER_AND_SERVE and inventory and not inventory.items.is_empty():
+		handoff_mode = "TAKEOVER_ITEM"
 
 	# Hand-off help is created here (e.g. BT ask_help path).
 	_ensure_help_request(HELP_TYPE_HANDOFF, {
+		"handoff_mode": handoff_mode,
+		"task_id": _active_task_id,
 		"item_needed": _help_item_needed,
 		"reason": "robot_stuck_or_pick_fail",
 		"slack_ms": int(_constraint_input.get("slack_ms", 0))
 	}, {
 		"cooldown_ms": 3500,
 		"max_escalation": 2,
-		"require_beacon": false,
 		"urgency": _estimate_help_urgency()
 	})
 
 func receive_player_help():
-	if not _waiting_for_help:
-		speak("I don't need help right now.")
-		return
+	# Deprecated: handoff is now explicit task reassignment to player.
+	return
 
-	var help_mgr = _help_manager()
-	if help_mgr and _active_help_request_id != "":
-		var req = help_mgr.get_request(_active_help_request_id)
-		var req_status = str(req.get("status", ""))
-		var req_type = str(req.get("type", ""))
-		if req_type == HELP_TYPE_OPEN_DOOR:
-			speak("Please open the door first.")
-			return
-		if req_status != "accepted":
-			speak("Please choose Accept first.")
-			return
-		
-	print("[Robot] Player interacting...")
-	# Access player inventory (Hack: assume only 1 player for now)
-	var players = get_tree().get_nodes_in_group("player")
-	if players.size() == 0: return
-	var player = players[0]
-	
-	# Check if player has inventory node
-	var p_inv = player.get_node_or_null("Inventory")
-	if p_inv:
-		# Logic: Does player have the item we need?
-		var found_idx = -1
-		
-		# Use the robust find_item method (case-insensitive partial match)
-		if _help_item_needed == "" or _help_item_needed == "item":
-			if not p_inv.items.is_empty(): 
-				found_idx = p_inv.items.size() - 1 # Take last item
-		else:
-			found_idx = p_inv.find_item(_help_item_needed)
-		
-		if found_idx != -1:
-			# Transfer item
-			var item = p_inv.items.pop_at(found_idx) # Remove from player
-			p_inv.emit_signal("inventory_changed", p_inv.items)
-			
-			inventory.add_item(item.get("name"), item.get("atlas"), item.get("region"))
-			
-			# Update BT Blackboard
-			bt_runner.bb["carrying_item"] = true
-			
-			speak("Thanks for the " + item.get("name") + "!")
-			set_waiting_for_help(false, "")
-			if help_mgr and _active_help_request_id != "":
-				help_mgr.complete_request(_active_help_request_id, "cooperative_handoff")
-				_active_help_request_id = ""
-				_active_help_request_type = ""
-		else:
-			print("[Robot] Player inventory: ", p_inv.items) # Debug print
-			speak("I need a " + _help_item_needed + ". You don't seem to have it.")
-	else:
-		speak("You have no inventory!")
+func on_player_interact(player: Node) -> void:
+	return

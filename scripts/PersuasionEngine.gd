@@ -45,7 +45,6 @@ static func _score(strategy: String, context: Dictionary) -> float:
 
 	var urgency := float(env.get("urgency", 0.5))
 	var busyness := float(env.get("busyness", 0.5))
-	var door_blocked := bool(env.get("door_blocked", false))
 	var player_load := float(player.get("load", 0.5))
 	var acceptance_rate := float(history.get("acceptance_rate", 0.5))
 	var annoyance := float(history.get("annoyance", 0.0))
@@ -62,7 +61,7 @@ static func _score(strategy: String, context: Dictionary) -> float:
 
 	match strategy:
 		STRATEGY_SCARCITY:
-			return 2.2 * urgency + 1.8 * battery_pressure + (0.8 if door_blocked else 0.0) - 0.5 * player_load + 0.9 * personality_boost
+			return 2.2 * urgency + 1.8 * battery_pressure - 0.5 * player_load + 0.9 * personality_boost
 		STRATEGY_AUTHORITY:
 			return 1.7 * urgency + 1.2 * busyness + 1.0 * battery_pressure - 0.4 * player_load + 0.9 * personality_boost
 		STRATEGY_COMMITMENT:
@@ -95,8 +94,6 @@ static func _build_intent(request_type: String, strategy: String, context: Dicti
 		urgency_level = "low"
 
 	var evidence := []
-	if context.get("environment", {}).get("door_blocked", false):
-		evidence.append("door_blocked")
 	var slack_ms := int(context.get("environment", {}).get("slack_ms", 0))
 	if slack_ms != 0:
 		evidence.append("slack_ms:%d" % slack_ms)
@@ -129,21 +126,6 @@ static func _render_template(intent: Dictionary, payload: Dictionary) -> String:
 	elif escalation == 1:
 		intro = "Following up on my previous request. "
 
-	if request_type == "OPEN_DOOR":
-		match strategy:
-			STRATEGY_AUTHORITY:
-				return intro + "Service protocol requires the door to be opened now to avoid queue failure."
-			STRATEGY_SOCIAL_PROOF:
-				return intro + "During peak service we always open this door immediately to keep everyone on time."
-			STRATEGY_LIKING:
-				return intro + "Could you help me by opening this door? I appreciate your support."
-			STRATEGY_RECIPROCITY:
-				return intro + "If you open the door now, I can clear this bottleneck for both of us."
-			STRATEGY_COMMITMENT:
-				return intro + "You have helped keep service smooth before; can you open this door again?"
-			_:
-				return intro + "I only have a short window left. Please open the door now."
-
 	match strategy:
 		STRATEGY_AUTHORITY:
 			return intro + "Priority order handling requires immediate handoff of %s." % item
@@ -159,6 +141,4 @@ static func _render_template(intent: Dictionary, payload: Dictionary) -> String:
 			return intro + "I may miss the service window without %s. Please hand it over now." % item
 
 static func _default_cta(request_type: String, payload: Dictionary) -> String:
-	if request_type == "OPEN_DOOR":
-		return "Open the restricted door."
 	return "Provide requested item: %s" % str(payload.get("item_needed", "item"))

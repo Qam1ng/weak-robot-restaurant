@@ -3,15 +3,19 @@ extends Node
 signal task_created(task: Dictionary)
 signal task_updated(task: Dictionary)
 signal task_completed(task: Dictionary)
+signal task_failed(task: Dictionary)
 
 const TASK_FULFILL_ORDER := "FULFILL_ORDER"
 const STATE_UNASSIGNED := "unassigned"
 const STATE_IN_PROGRESS := "in_progress"
 const STATE_COMPLETED := "completed"
+const STATE_FAILED := "failed"
 
 const STEP_TAKE_ORDER := "TAKE_ORDER"
 const STEP_PICKUP_FROM_KITCHEN := "PICKUP_FROM_KITCHEN"
 const STEP_DELIVER_AND_SERVE := "DELIVER_AND_SERVE"
+const TAKE_ORDER_WINDOW_MS := 60_000
+const SERVE_WINDOW_MS := 90_000
 
 var _tasks_by_id: Dictionary = {}
 var _task_order: Array[String] = []
@@ -31,9 +35,7 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 	var task_id := _new_task_id()
 	var now_ms := Time.get_ticks_msec()
 	var food_item := _extract_food_from_request(request_text)
-	var deadline_ms := now_ms + 90_000
-	if customer.has_method("get_task_deadline_ms"):
-		deadline_ms = int(customer.get_task_deadline_ms())
+	var deadline_ms := now_ms + TAKE_ORDER_WINDOW_MS
 	var steps := [
 		{"name": STEP_TAKE_ORDER, "state": "pending"},
 		{"name": STEP_PICKUP_FROM_KITCHEN, "state": "pending"},
@@ -55,7 +57,9 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 			"request_text": request_text,
 			"food_item": food_item,
 			"seat": seat,
-			"customer_instance_id": customer.get_instance_id()
+			"customer_instance_id": customer.get_instance_id(),
+			"take_order_deadline_ms": now_ms + TAKE_ORDER_WINDOW_MS,
+			"serve_deadline_ms": now_ms + SERVE_WINDOW_MS
 		}
 	}
 
@@ -156,6 +160,9 @@ func complete_current_step(task_id: String, expected_step_name: String = "") -> 
 	steps[idx] = step
 	task["steps"] = steps
 	task["current_step_index"] = idx + 1
+	if actual_step_name == STEP_TAKE_ORDER:
+		var payload: Dictionary = task.get("payload", {})
+		task["deadline_ms"] = int(payload.get("serve_deadline_ms", Time.get_ticks_msec() + SERVE_WINDOW_MS))
 
 	if int(task["current_step_index"]) >= steps.size():
 		task["state"] = STATE_COMPLETED
@@ -169,6 +176,83 @@ func complete_current_step(task_id: String, expected_step_name: String = "") -> 
 		task_completed.emit(copied)
 
 	return true
+
+func reassign_task(task_id: String, assignee: String) -> Dictionary:
+	var task = _tasks_by_id.get(task_id, {})
+	if task.is_empty():
+		return {}
+	if str(task.get("state", "")) != STATE_IN_PROGRESS:
+		return {}
+	task["assigned_to"] = assignee
+	task["reassigned_at_ms"] = Time.get_ticks_msec()
+	_tasks_by_id[task_id] = task
+	var copied := _copy_task(task)
+	task_updated.emit(copied)
+	return copied
+
+func get_in_progress_tasks_for_assignee(assignee: String) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for task_id in _task_order:
+		var task: Dictionary = _tasks_by_id.get(task_id, {})
+		if task.is_empty():
+			continue
+		if str(task.get("state", "")) != STATE_IN_PROGRESS:
+			continue
+		if str(task.get("assigned_to", "")) != assignee:
+			continue
+		out.append(_copy_task(task))
+	return out
+
+func get_in_progress_task_for_customer(customer_instance_id: int, assignee: String = "") -> Dictionary:
+	if customer_instance_id <= 0:
+		return {}
+	for task_id in _task_order:
+		var task: Dictionary = _tasks_by_id.get(task_id, {})
+		if task.is_empty():
+			continue
+		if str(task.get("state", "")) != STATE_IN_PROGRESS:
+			continue
+		if assignee != "" and str(task.get("assigned_to", "")) != assignee:
+			continue
+		var payload: Dictionary = task.get("payload", {})
+		if int(payload.get("customer_instance_id", 0)) == customer_instance_id:
+			return _copy_task(task)
+	return {}
+
+func get_open_task_for_customer(customer_instance_id: int) -> Dictionary:
+	if customer_instance_id <= 0:
+		return {}
+	for task_id in _task_order:
+		var task: Dictionary = _tasks_by_id.get(task_id, {})
+		if task.is_empty():
+			continue
+		var state := str(task.get("state", ""))
+		if state == STATE_COMPLETED or state == STATE_FAILED:
+			continue
+		var payload: Dictionary = task.get("payload", {})
+		if int(payload.get("customer_instance_id", 0)) == customer_instance_id:
+			return _copy_task(task)
+	return {}
+
+func get_best_handoff_candidate_for_player() -> Dictionary:
+	var best: Dictionary = {}
+	var best_slack := INF
+	for task_id in _task_order:
+		var task: Dictionary = _tasks_by_id.get(task_id, {})
+		if task.is_empty():
+			continue
+		if str(task.get("state", "")) != STATE_UNASSIGNED:
+			continue
+		var step_name := get_current_step_name(str(task.get("id", "")))
+		if step_name != STEP_TAKE_ORDER:
+			continue
+		var slack := _compute_slack_ms(task, Time.get_ticks_msec())
+		if slack < best_slack:
+			best_slack = slack
+			best = task
+	if best.is_empty():
+		return {}
+	return _copy_task(best)
 
 func is_task_completed(task_id: String) -> bool:
 	var task = _tasks_by_id.get(task_id, {})
@@ -203,6 +287,43 @@ func complete_task(task_id: String) -> bool:
 	task_completed.emit(copied)
 	return true
 
+func fail_task(task_id: String, reason: String = "unknown_failure") -> bool:
+	var task = _tasks_by_id.get(task_id, {})
+	if task.is_empty():
+		return false
+	var state := str(task.get("state", ""))
+	if state == STATE_COMPLETED or state == STATE_FAILED:
+		return false
+
+	task["state"] = STATE_FAILED
+	task["failed_at_ms"] = Time.get_ticks_msec()
+	task["failure_reason"] = reason
+	_tasks_by_id[task_id] = task
+
+	var copied := _copy_task(task)
+	task_updated.emit(copied)
+	task_failed.emit(copied)
+	_log_task_failure(copied)
+	return true
+
+func fail_task_by_customer(customer_instance_id: int, reason: String = "customer_left") -> bool:
+	if customer_instance_id <= 0:
+		return false
+	var changed := false
+	for task_id in _task_order:
+		var task: Dictionary = _tasks_by_id.get(task_id, {})
+		if task.is_empty():
+			continue
+		var payload: Dictionary = task.get("payload", {})
+		if int(payload.get("customer_instance_id", 0)) != customer_instance_id:
+			continue
+		var state := str(task.get("state", ""))
+		if state == STATE_COMPLETED or state == STATE_FAILED:
+			continue
+		if fail_task(task_id, reason):
+			changed = true
+	return changed
+
 func _new_task_id() -> String:
 	var id := "task_%06d" % _next_id
 	_next_id += 1
@@ -229,3 +350,20 @@ func _copy_task(task: Dictionary) -> Dictionary:
 func _compute_slack_ms(task: Dictionary, now_ms: int) -> int:
 	var deadline_ms := int(task.get("deadline_ms", now_ms))
 	return deadline_ms - now_ms
+
+func _log_task_failure(task: Dictionary) -> void:
+	var logger = get_node_or_null("/root/EpisodeLogger")
+	if logger == null:
+		return
+	if logger.has_method("log_replay_event"):
+		logger.log_replay_event("task_failed", {
+			"task_id": str(task.get("id", "")),
+			"reason": str(task.get("failure_reason", "")),
+			"state": str(task.get("state", "")),
+			"payload": task.get("payload", {})
+		})
+	if logger.has_method("log_event"):
+		logger.log_event("task_failed", {
+			"task_id": str(task.get("id", "")),
+			"reason": str(task.get("failure_reason", ""))
+		})

@@ -69,8 +69,6 @@ func _neutral_utterance(request_type: String, payload: Dictionary, escalation_co
 	var prefix := ""
 	if escalation_count >= 1:
 		prefix = "Reminder: "
-	if request_type == "OPEN_DOOR":
-		return prefix + "Please open the door when you are available."
 	var item := str(payload.get("item_needed", "item"))
 	return prefix + "Please help with %s when you are available." % item
 

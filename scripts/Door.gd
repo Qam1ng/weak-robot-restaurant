@@ -14,10 +14,6 @@ const ANIM_IDLE_CLOSE  : String = "idle_close"
 
 var is_open: bool = false
 var player_in_range: bool = false
-var _beacon_active: bool = false
-@export var auto_close_delay_sec: float = 30.0
-var _auto_close_deadline_ms: int = 0
-var _bodies_in_trigger: Dictionary = {}
 
 func _ready() -> void:
 	add_to_group("door")
@@ -26,9 +22,9 @@ func _ready() -> void:
 	if is_instance_valid(trig):
 		trig.body_entered.connect(_on_body_entered)
 		trig.body_exited.connect(_on_body_exited)
-	# 初始化：确保初始状态为“关闭”，并强制播放“idle_close”动画
-	is_open = false
-	_apply_state_and_idle(true) # 这里改为true，强制应用一次idle动画
+	# 初始化：默认常开（仅手动 E 才会切换）
+	is_open = true
+	_apply_state_and_idle(true)
 	
 	# Fix: Remove any wall tile behind the door that might block physics/navigation
 	_clear_wall_behind_door()
@@ -37,20 +33,8 @@ func _ready() -> void:
 		_has_anim(ANIM_OPEN_TRANS), _has_anim(ANIM_CLOSE_TRANS),
 		_has_anim(ANIM_IDLE_OPEN), _has_anim(ANIM_IDLE_CLOSE))
 
-	var help_mgr = get_node_or_null("/root/HelpRequestManager")
-	if help_mgr and not help_mgr.beacon_changed.is_connected(_on_beacon_changed):
-		help_mgr.beacon_changed.connect(_on_beacon_changed)
-
 func _process(_dt: float) -> void:
-	if not is_instance_valid(spr):
-		return
-	if _beacon_active:
-		var pulse = 0.65 + 0.35 * sin(Time.get_ticks_msec() / 220.0)
-		spr.modulate = Color(1.0, pulse, pulse, 1.0)
-	else:
-		spr.modulate = Color(1, 1, 1, 1)
-
-	_tick_auto_close()
+	return
 
 func _clear_wall_behind_door():
 	# Attempt to find LayerWalls and clear the tile at this door's position
@@ -73,13 +57,11 @@ func _clear_wall_behind_door():
 				layer_walls.set_cell(map_pos, -1)
 
 func _on_body_entered(n: Node) -> void:
-	_bodies_in_trigger[n.get_instance_id()] = true
 	if n.is_in_group("player"):
 		player_in_range = true
 		print("[Door] player entered")
 
 func _on_body_exited(n: Node) -> void:
-	_bodies_in_trigger.erase(n.get_instance_id())
 	if n.is_in_group("player"):
 		player_in_range = false
 		print("[Door] player exited")
@@ -92,10 +74,6 @@ func _unhandled_input(event: InputEvent) -> void:
 func toggle() -> void:
 	var was_open := is_open
 	is_open = not is_open
-	if is_open:
-		_auto_close_deadline_ms = Time.get_ticks_msec() + int(maxf(0.8, auto_close_delay_sec) * 1000.0)
-	else:
-		_auto_close_deadline_ms = 0
 	print("[Door] toggle; was_open=", was_open, " -> is_open=", is_open)
 	# 切物理/导航 + 播放过渡动画
 	_apply_state_and_play_transition()
@@ -146,19 +124,3 @@ func _has_anim(anim_name: String) -> bool:
 	if spr.sprite_frames == null:
 		return false
 	return spr.sprite_frames.has_animation(anim_name)
-
-func _on_beacon_changed(active: bool, _position: Vector2, _request_id: String) -> void:
-	_beacon_active = active
-
-func _tick_auto_close() -> void:
-	if not is_open:
-		return
-	if _auto_close_deadline_ms <= 0:
-		return
-	var now_ms := Time.get_ticks_msec()
-	if now_ms < _auto_close_deadline_ms:
-		return
-	if not _bodies_in_trigger.is_empty():
-		_auto_close_deadline_ms = now_ms + 800
-		return
-	toggle()

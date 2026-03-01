@@ -63,47 +63,36 @@ func _update_animation(input_dir: Vector2) -> void:
 func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("interact"):
 		print("[HumanServer] interact pressed (E/Space)")
-
-		# ① 先尝试帮最近且“需要帮助”的机器人（完全不影响你原来的门/物品交互）
-		var bot: Node2D = _find_nearby_robot_needing_help()
-		if bot != null:
-			if bot.has_method("open_help_request_ui"):
-				var opened_ui = bool(bot.open_help_request_ui(self))
-				if opened_ui:
-					return
-			# 只在机器人实现了接口方法时才调用，避免报错
-			if bot.has_method("receive_player_help"):
-				# 如果机器人有背包，直接尝试交换物品
-				bot.receive_player_help()
-				return
-
-		# ② 如果附近没有需要帮助的机器人，保持原有逻辑：广播给 interaction 组（门、物品等）
+		if _try_progress_player_task_by_interact():
+			return
+		# E key is reserved for world interactions (door/items) only.
 		get_tree().call_group("interaction", "on_player_interact", self)
 
-# —— 私有：查找半径内最近且“需要帮助”的机器人 ——
-# 约定：机器人节点属于 "robot" 组；并实现无参方法：
-#   func needs_help() -> bool
-#   func receive_player_help() -> void
-func _find_nearby_robot_needing_help() -> Node2D:
-	var best: Node2D = null
-	var best_d: float = 1e30
+func _try_progress_player_task_by_interact() -> bool:
+	var board = get_node_or_null("/root/TaskBoard")
+	if board == null or not board.has_method("get_in_progress_tasks_for_assignee"):
+		return false
+	var tasks: Array[Dictionary] = board.get_in_progress_tasks_for_assignee("player")
+	if tasks.is_empty():
+		return false
 
-	# 官方推荐：通过分组获取节点列表
-	var robots: Array = get_tree().get_nodes_in_group("robot")
-	for n in robots:
-		# 只对实现了 needs_help() 的对象做判断，防御式检查
-		if not n.has_method("needs_help"):
+	# Kitchen pickup: press E in kitchen to collect requested food for current pickup step.
+	if global_position.y >= -150.0:
+		return false
+	for task in tasks:
+		var task_id := str(task.get("id", ""))
+		var step_name := str(board.get_current_step_name(task_id))
+		if step_name != "PICKUP_FROM_KITCHEN":
 			continue
-		var needs: bool = n.needs_help()
-		if not needs:
+		var payload: Dictionary = task.get("payload", {})
+		var item_name := str(payload.get("food_item", "")).strip_edges()
+		if item_name == "" or item_name == "unknown":
+			item_name = "pizza"
+		if inventory.find_item(item_name) != -1:
 			continue
-
-		# 计算距离并择最近
-		#（has_method/分组写法符合 Godot 文档建议）
-		var d: float = global_position.distance_to(n.global_position)
-		if d < interact_radius:
-			if d < best_d:
-				best_d = d
-				best = n as Node2D
-
-	return best
+		if inventory.add_item(item_name, null, Rect2i()):
+			board.complete_current_step(task_id, "PICKUP_FROM_KITCHEN")
+			print("[HumanServer] Picked assigned order item in kitchen: ", item_name, " task=", task_id)
+			return true
+		return false
+	return false

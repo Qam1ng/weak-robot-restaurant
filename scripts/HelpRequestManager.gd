@@ -3,14 +3,13 @@ extends Node
 signal request_created(request: Dictionary)
 signal request_updated(request: Dictionary)
 signal request_resolved(request: Dictionary)
-signal beacon_changed(active: bool, position: Vector2, request_id: String)
 
 const RESPONSE_ACCEPT := "accept"
 const RESPONSE_DECLINE := "decline"
 const RESPONSE_LATER := "later"
 
 const TYPE_HANDOFF := "HANDOFF"
-const TYPE_OPEN_DOOR := "OPEN_DOOR"
+const HANDOFF_ACCEPT_DISTANCE := 120.0
 
 const STATUS_PENDING := "pending"
 const STATUS_COOLDOWN := "cooldown"
@@ -22,7 +21,6 @@ const PersuasionEngineScript = preload("res://scripts/PersuasionEngine.gd")
 var _requests_by_id: Dictionary = {}
 var _order: Array[String] = []
 var _next_id: int = 1
-var _beacon_request_id: String = ""
 var _interaction_model := {
 	"total": 0,
 	"accepted": 0,
@@ -65,8 +63,6 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 	var max_escalation := int(options.get("max_escalation", 2))
 	var cooldown_ms := int(options.get("cooldown_ms", 4000))
 	var urgency := float(options.get("urgency", 0.5))
-	var require_beacon := bool(options.get("require_beacon", request_type == TYPE_OPEN_DOOR))
-	var beacon_pos: Vector2 = payload.get("door_position", Vector2.ZERO)
 
 	var req := {
 		"id": request_id,
@@ -84,8 +80,6 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"urgency": urgency,
 		"final_response": "",
 		"resolution_path": "",
-		"require_beacon": require_beacon,
-		"beacon_position": beacon_pos,
 		"context_snapshot": {},
 		"strategy": "",
 		"strategy_scores": {},
@@ -119,7 +113,6 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 
 	_requests_by_id[request_id] = req
 	_order.append(request_id)
-	_set_beacon_if_needed(req)
 	print("[HelpRequest] Created ", request_id, " type=", request_type)
 	_log_help_event("created", req)
 	_request_utterance_realization(req)
@@ -206,6 +199,15 @@ func respond(request_id: String, response: String) -> Dictionary:
 	if str(req.get("status", "")) == STATUS_RESOLVED:
 		return _copy(req)
 
+	# Enforce in-person acceptance for HANDOFF requests.
+	if response == RESPONSE_ACCEPT and str(req.get("type", "")) == TYPE_HANDOFF:
+		if not _is_player_near_robot(req, HANDOFF_ACCEPT_DISTANCE):
+			print("[HelpRequest] Accept blocked (not near robot) -> ", request_id)
+			_log_help_event("accept_blocked_not_near", req, {
+				"required_distance": HANDOFF_ACCEPT_DISTANCE
+			})
+			return _copy(req)
+
 	var now_ms := Time.get_ticks_msec()
 	var prompt_latency_ms := 0
 	if int(req.get("last_prompt_ms", 0)) > 0:
@@ -222,7 +224,6 @@ func respond(request_id: String, response: String) -> Dictionary:
 			req["final_response"] = RESPONSE_DECLINE
 			req["resolution_path"] = "declined"
 			req["updated_at_ms"] = now_ms
-			_clear_beacon_if_matches(request_id)
 		RESPONSE_LATER:
 			var escalation := int(req.get("escalation_count", 0)) + 1
 			req["escalation_count"] = escalation
@@ -231,7 +232,6 @@ func respond(request_id: String, response: String) -> Dictionary:
 				req["status"] = STATUS_RESOLVED
 				req["final_response"] = RESPONSE_DECLINE
 				req["resolution_path"] = "later_threshold_decline"
-				_clear_beacon_if_matches(request_id)
 			else:
 				req["status"] = STATUS_COOLDOWN
 				req["cooldown_until_ms"] = now_ms + int(req.get("cooldown_ms", 4000))
@@ -264,7 +264,6 @@ func complete_request(request_id: String, resolution_path: String = "cooperative
 	_requests_by_id[request_id] = req
 	_update_interaction_model(RESPONSE_ACCEPT, int(req.get("response_latency_ms", 0)))
 
-	_clear_beacon_if_matches(request_id)
 	var copied := _copy(req)
 	print("[HelpRequest] Completed ", request_id, " path=", resolution_path)
 	_log_help_event("completed", req)
@@ -273,28 +272,6 @@ func complete_request(request_id: String, resolution_path: String = "cooperative
 	request_resolved.emit(copied)
 	return copied
 
-func is_beacon_active() -> bool:
-	return _beacon_request_id != ""
-
-func get_beacon_position() -> Vector2:
-	if _beacon_request_id == "":
-		return Vector2.ZERO
-	var req: Dictionary = _requests_by_id.get(_beacon_request_id, {})
-	if req.is_empty():
-		return Vector2.ZERO
-	return req.get("beacon_position", Vector2.ZERO)
-
-func _set_beacon_if_needed(req: Dictionary) -> void:
-	if not bool(req.get("require_beacon", false)):
-		return
-	_beacon_request_id = str(req.get("id", ""))
-	beacon_changed.emit(true, req.get("beacon_position", Vector2.ZERO), _beacon_request_id)
-
-func _clear_beacon_if_matches(request_id: String) -> void:
-	if _beacon_request_id != request_id:
-		return
-	_beacon_request_id = ""
-	beacon_changed.emit(false, Vector2.ZERO, "")
 
 func _copy(req: Dictionary) -> Dictionary:
 	if req.is_empty():
@@ -331,7 +308,6 @@ func _build_context(robot: Node, req: Dictionary, options: Dictionary) -> Dictio
 		busyness = float(game_mgr.get_busyness())
 
 	var payload: Dictionary = req.get("payload", {})
-	var door_blocked := bool(options.get("door_blocked", req.get("type", "") == TYPE_OPEN_DOOR))
 	var slack_ms := int(payload.get("slack_ms", 0))
 	var urgency := float(options.get("urgency", 0.5))
 	if slack_ms != 0:
@@ -344,7 +320,6 @@ func _build_context(robot: Node, req: Dictionary, options: Dictionary) -> Dictio
 		"environment": {
 			"urgency": urgency,
 			"busyness": busyness,
-			"door_blocked": door_blocked,
 			"slack_ms": slack_ms
 		},
 		"history": {
@@ -376,6 +351,20 @@ func _sample_personality_profile() -> Dictionary:
 		"mbti_type": "",
 		"strategy_affinity": {}
 	}
+
+func _is_player_near_robot(req: Dictionary, max_distance: float) -> bool:
+	var robot_obj = _robot_from_request(req)
+	if robot_obj == null or not (robot_obj is Node2D):
+		return false
+	var players := get_tree().get_nodes_in_group("player")
+	if players.is_empty():
+		return false
+	var player_obj = players[0]
+	if not (player_obj is Node2D):
+		return false
+	var robot_node := robot_obj as Node2D
+	var player_node := player_obj as Node2D
+	return robot_node.global_position.distance_to(player_node.global_position) <= max_distance
 
 func _update_interaction_model(response: String, latency_ms: int) -> void:
 	_interaction_model["total"] = int(_interaction_model.get("total", 0)) + 1

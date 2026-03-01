@@ -1,4 +1,4 @@
-[gd_scene load_steps=17 format=4 uid="uid://cs4xyxmcxxpbv"]
+[gd_scene load_steps=19 format=4 uid="uid://cs4xyxmcxxpbv"]
 
 [ext_resource type="Script" uid="uid://crot3w45uar7g" path="res://scripts/RestaurantMain.gd" id="1_auto_nav"]
 [ext_resource type="TileSet" uid="uid://dxbl3ps3j0g44" path="res://data/RestaurantTileset.tres" id="1_pbh5m"]
@@ -15,9 +15,19 @@
 [ext_resource type="PackedScene" uid="uid://c08sh3mhp68uh" path="res://scenes/HUD.tscn" id="11_hud"]
 
 [sub_resource type="NavigationPolygon" id="NavigationPolygon_e03td"]
-vertices = PackedVector2Array(-374, 326, 470, 326, 470, -144, 80, -144, 80, -256, 470, -256, 470, -518, -374, -518, -374, -256, -80, -256, -80, -144, -374, -144)
-polygons = Array[PackedInt32Array]([PackedInt32Array(0, 1, 2, 3, 10, 11), PackedInt32Array(3, 4, 9, 10), PackedInt32Array(4, 5, 6, 7, 8, 9)])
-outlines = Array[PackedVector2Array]([PackedVector2Array(-374, 326, 470, 326, 470, -144, 80, -144, 80, -256, 470, -256, 470, -518, -374, -518, -374, -256, -80, -256, -80, -144, -374, -144)])
+vertices = PackedVector2Array(-374, 326, 470, 326, 470, -144, -374, -144)
+polygons = Array[PackedInt32Array]([PackedInt32Array(0, 1, 2, 3)])
+outlines = Array[PackedVector2Array]([PackedVector2Array(-374, 326, 470, 326, 470, -144, -374, -144)])
+
+[sub_resource type="NavigationPolygon" id="NavigationPolygon_door_corridor"]
+vertices = PackedVector2Array(-80, -144, 80, -144, 80, -256, -80, -256)
+polygons = Array[PackedInt32Array]([PackedInt32Array(0, 1, 2, 3)])
+outlines = Array[PackedVector2Array]([PackedVector2Array(-80, -144, 80, -144, 80, -256, -80, -256)])
+
+[sub_resource type="NavigationPolygon" id="NavigationPolygon_kitchen"]
+vertices = PackedVector2Array(-374, -256, 470, -256, 470, -518, -374, -518)
+polygons = Array[PackedInt32Array]([PackedInt32Array(0, 1, 2, 3)])
+outlines = Array[PackedVector2Array]([PackedVector2Array(-374, -256, 470, -256, 470, -518, -374, -518)])
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_ndmpn"]
 size = Vector2(40, 96)
@@ -63,6 +73,14 @@ tile_set = ExtResource("1_pbh5m")
 visible = false
 navigation_polygon = SubResource("NavigationPolygon_e03td")
 
+[node name="NavigationDoorCorridor" type="NavigationRegion2D" parent="."]
+visible = false
+navigation_polygon = SubResource("NavigationPolygon_door_corridor")
+
+[node name="NavigationKitchen" type="NavigationRegion2D" parent="."]
+visible = false
+navigation_polygon = SubResource("NavigationPolygon_kitchen")
+
 [node name="Player" parent="." instance=ExtResource("2_30ysf")]
 position = Vector2(-216, -120)
 
@@ -78,23 +96,32 @@ script = ExtResource("3_08he2")
 [node name="Hud" parent="." instance=ExtResource("11_hud")]
 
 [node name="ChargingStationRoom" type="Node2D" parent="."]
-position = Vector2(350, -410)
+position = Vector2(312, -382)
 
 [node name="RoomFill" type="Polygon2D" parent="ChargingStationRoom"]
 color = Color(0.117647, 0.227451, 0.219608, 0.529412)
-polygon = PackedVector2Array(-112, -92, 112, -92, 112, 92, -112, 92)
+polygon = PackedVector2Array(-60, -78, 60, -78, 60, 78, -60, 78)
 
 [node name="RoomBorder" type="Line2D" parent="ChargingStationRoom"]
 default_color = Color(0.360784, 0.752941, 0.717647, 1)
 width = 3.0
-points = PackedVector2Array(-112, -92, 112, -92, 112, 92, -112, 92, -112, -92)
+points = PackedVector2Array(-60, -78, 60, -78, 60, 78, -60, 78, -60, -78)
 
-[node name="ChargingSign" type="Label" parent="ChargingStationRoom"]
-offset_left = -64.0
-offset_top = -78.0
-offset_right = 140.0
-offset_bottom = -52.0
-text = "Charging Station"
+[node name="ChargerA" type="Polygon2D" parent="ChargingStationRoom"]
+color = Color(0.2, 0.57, 0.69, 0.95)
+polygon = PackedVector2Array(-40, -118, -8, -118, -8, -68, -40, -68)
+
+[node name="ChargerAHead" type="Polygon2D" parent="ChargingStationRoom"]
+color = Color(0.68, 0.92, 1, 1)
+polygon = PackedVector2Array(-35, -126, -13, -126, -13, -118, -35, -118)
+
+[node name="ChargingAbbr" type="Label" parent="ChargingStationRoom"]
+offset_left = -6.0
+offset_top = -118.0
+offset_right = 30.0
+offset_bottom = -96.0
+text = "CP"
+
 
 [node name="InteractiveItems" type="Node2D" parent="."]
 
@@ -123,23 +150,23 @@ shape = SubResource("RectangleShape2D_0lfbe")
 [node name="Item3" parent="InteractiveItems" instance=ExtResource("8_g484w")]
 
 [node name="Sprite2D" parent="InteractiveItems/Item3" index="0"]
-position = Vector2(224, -160)
+position = Vector2(224, -392)
 region_enabled = true
 region_rect = Rect2(339.27673, 339.0842, 39.710968, 33.927826)
 
 [node name="CollisionShape2D" parent="InteractiveItems/Item3/Area2D" index="0"]
-position = Vector2(224, -128)
+position = Vector2(224, -360)
 shape = SubResource("RectangleShape2D_ndmpn")
 
 [node name="Item4" parent="InteractiveItems" instance=ExtResource("8_g484w")]
 
 [node name="Sprite2D" parent="InteractiveItems/Item4" index="0"]
-position = Vector2(344, -160)
+position = Vector2(344, -392)
 region_enabled = true
 region_rect = Rect2(292.07703, 52.558144, 39.9646, 31.655136)
 
 [node name="CollisionShape2D" parent="InteractiveItems/Item4/Area2D" index="0"]
-position = Vector2(344, -128)
+position = Vector2(344, -360)
 shape = SubResource("RectangleShape2D_ndmpn")
 
 [node name="CustomerSpawner" type="Node" parent="."]
@@ -156,10 +183,7 @@ normal_spawn_interval_max = 30.0
 position = Vector2(-47, 333)
 
 [node name="RS1" type="Marker2D" parent="LocationMarkers" groups=["spawn"]]
-position = Vector2(350, -410)
-
-[node name="SPARE_KEY" type="Marker2D" parent="LocationMarkers" groups=["spawn"]]
-position = Vector2(392, -410)
+position = Vector2(312, -382)
 
 [node name="RG1" type="Marker2D" parent="LocationMarkers" groups=["serveposes"]]
 position = Vector2(-144, 36)
@@ -201,10 +225,10 @@ position = Vector2(-328, 262)
 position = Vector2(264, 216)
 
 [node name="sandwich" type="Marker2D" parent="LocationMarkers" groups=["items"]]
-position = Vector2(344, -96)
+position = Vector2(344, -328)
 
 [node name="skewers" type="Marker2D" parent="LocationMarkers" groups=["items"]]
-position = Vector2(224, -96)
+position = Vector2(224, -328)
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]

@@ -1,0 +1,49 @@
+Godot Engine v4.6.stable.official.89cea1439 - https://godotengine.org
+
+ERROR: Condition "ret != noErr" is true. Returning: ""
+   at: get_system_ca_certificates (platform/macos/os_macos.mm:1014)
+[DialogueManager] Ready with API key from local secret source.
+[EpisodeLogger] Ready. Data dir: /Users/wang/Desktop/weak-robot-restaurant/Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes/
+[GameManager] Initializing...
+[TimeManager] Started at Day 1, 08:00 (morning)
+[GameManager] Ready. Time: Day 1, 08:00
+[ExperimentConfig] Ready: { "ab_enabled": true, "ab_seed": 17, "forced_variant": "", "control_variant": "B", "replay_logging_enabled": true, "help_logging_enabled": true, "llm_utterance_enabled": true, "llm_model": "gpt-4o-mini", "llm_temperature": 0.4 }
+[Door] ready; has anims:truetruetruetrue
+[HumanServer] ready OK; node=Player
+[Restaurant] Set Item1 display_name to 'hotdog'
+[Restaurant] Set Item2 display_name to 'pizza'
+[Restaurant] Set Item3 display_name to 'skewers'
+[Restaurant] Set Item4 display_name to 'sandwich'
+[Restaurant] Discovering ALL locations at startup...
+  -> CS1 at (-47.0, 333.0)
+  -> RS1 at (312.0, -382.0)
+  -> RG1 at (-144.0, 36.0)
+  -> RG2 at (240.0, 192.0)
+  -> RG3 at (384.0, 178.0)
+  -> RG4 at (-46.0, 33.0)
+  -> RG5 at (384.0, 33.0)
+  -> RG6 at (-142.0, 178.0)
+  -> hotdog at (-224.0, -328.0)
+  -> pizza at (-168.0, -328.0)
+  -> seat1 at (-264.0, 216.0)
+  -> seat2 at (-263.0, 43.0)
+  -> seat3 at (-8.0, 88.0)
+  -> seat4 at (-328.0, 262.0)
+  -> seat5 at (264.0, 216.0)
+  -> sandwich at (344.0, -328.0)
+  -> skewers at (224.0, -328.0)
+[Restaurant] Total locations: [&"CS1", &"RS1", &"RG1", &"RG2", &"RG3", &"RG4", &"RG5", &"RG6", &"hotdog", &"pizza", &"seat1", &"seat2", &"seat3", &"seat4", &"seat5", &"sandwich", &"skewers"]
+[GameManager] CustomerSpawner registered
+[Restaurant] CustomerSpawner registered with GameManager
+[RobotServer] Discovering locations...
+[RobotServer] Got 17 locations from Restaurant
+[RobotServer] Ready with 17 locations
+[CustomerSpawner] Spawn point set to CS1 at (-47.0, 333.0)
+[CustomerSpawner] Connected to TimeManager
+[CustomerSpawner] Ready. Max customers for current period: 2 (absolute max: 5)
+[CustomerSpawner] First customer will spawn in ~8 seconds...
+[Restaurant] Using scene NavigationPolygon:
+  - Polygons: 1
+  - Vertices: 4
+  - Outlines: 1
+  - Map active: true

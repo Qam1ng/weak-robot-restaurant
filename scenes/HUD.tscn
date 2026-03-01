@@ -13,13 +13,6 @@ offset_right = 500.0
 offset_bottom = 52.0
 text = "Interaction"
 
-[node name="BeaconLabel" type="Label" parent="."]
-offset_left = 20.0
-offset_top = 380.0
-offset_right = 640.0
-offset_bottom = 412.0
-text = "DOOR BEACON ACTIVE"
-
 [node name="HelpRequestPanel" type="PanelContainer" parent="."]
 offset_left = 660.0
 offset_top = 60.0

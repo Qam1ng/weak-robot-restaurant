@@ -30,14 +30,14 @@ class ActNavigate extends Core.Task:
 	var _current_waypoint_idx: int = 0
 	
 	var _arrival_time: int = 0
-	var _arrival_wait: int = 800 
+	var _arrival_wait: int = 800
 	
 	# Arrival distance thresholds
 	var _is_customer_target: bool = false
 	var _is_player_target: bool = false
 	const ARRIVAL_DIST_NORMAL = 50.0       # Normal waypoint arrival
 	const ARRIVAL_DIST_CUSTOMER = 250.0    # Customer interaction area (very large for easier delivery)
-	const ARRIVAL_DIST_PLAYER = 250.0      # Player interaction area (same as customer)
+	const ARRIVAL_DIST_PLAYER = 90.0       # Must be close before handoff request
 	const ARRIVAL_DIST_STUCK = 300.0       # Accept arrival if stuck but close enough
 
 	# Stuck detection
@@ -159,8 +159,10 @@ class ActNavigate extends Core.Task:
 				# Check if stuck but close enough to target (especially for customer or player)
 				var dist_to_final = actor.global_position.distance_to(_final_target)
 				var close_enough_threshold = 60.0
-				if _is_customer_target or _is_player_target:
+				if _is_customer_target:
 					close_enough_threshold = ARRIVAL_DIST_STUCK
+				elif _is_player_target:
+					close_enough_threshold = ARRIVAL_DIST_PLAYER
 				
 				if _total_stuck_time > 2000 and dist_to_final < close_enough_threshold:
 					# Stuck but within acceptable range - count as success
@@ -416,23 +418,27 @@ class ActPickItem extends Core.Task:
 		var atlas: Texture2D = null
 		var region: Rect2i = Rect2i()
 		
-		if item_node:
-			# Get sprite info before hiding
-			var sprite = item_node.get_node_or_null("Sprite2D")
-			if sprite:
-				atlas = sprite.texture
-				region = Rect2i(sprite.region_rect.position, sprite.region_rect.size)
-			# Hide the item temporarily (will respawn after 2 seconds)
-			item_node.visible = false
-			print("[ActPickItem] Hid item from scene: ", item_name)
-			# Respawn item after 2 seconds
-			var tree = actor.get_tree()
-			if tree:
-				tree.create_timer(2.0).timeout.connect(func():
-					if is_instance_valid(item_node):
-						item_node.visible = true
-						print("[ActPickItem] Item respawned: ", item_name)
-				)
+		if not item_node:
+			print("[ActPickItem] FAILED: Item node not found in scene: ", item_name)
+			actor.speak("I can't find " + item_name + " right now.")
+			return Core.Status.FAILURE
+		
+		# Get sprite info before hiding
+		var sprite = item_node.get_node_or_null("Sprite2D")
+		if sprite:
+			atlas = sprite.texture
+			region = Rect2i(sprite.region_rect.position, sprite.region_rect.size)
+		# Hide the item temporarily (will respawn after 2 seconds)
+		item_node.visible = false
+		print("[ActPickItem] Hid item from scene: ", item_name)
+		# Respawn item after 2 seconds
+		var tree = actor.get_tree()
+		if tree:
+			tree.create_timer(2.0).timeout.connect(func():
+				if is_instance_valid(item_node):
+					item_node.visible = true
+					print("[ActPickItem] Item respawned: ", item_name)
+			)
 		
 		# Add to inventory
 		inventory.add_item(item_name, atlas, region)

@@ -2,7 +2,6 @@ extends CharacterBody2D
 class_name Customer
 
 # ==================== 信号 ====================
-signal request_emitted(customer: Node)
 signal customer_left(customer: Node)
 
 # ==================== 导出变量 ====================
@@ -13,6 +12,8 @@ signal customer_left(customer: Node)
 @export var eating_duration: float = 15.0
 @export var leave_delay: float = 3.0
 @export var patience_seconds: float = 90.0
+@export var interact_radius: float = 64.0
+const MIN_PATIENCE_SECONDS := 90.0
 
 # ==================== 节点引用 ====================
 @onready var agent: NavigationAgent2D = $NavigationAgent2D
@@ -33,6 +34,7 @@ var _has_received_food: bool = false
 var _spawn_position: Vector2 = Vector2.ZERO
 var _final_target: Vector2 = Vector2.ZERO
 var _task_deadline_ms: int = 0
+var _patience_timed_out: bool = false
 
 # 座位信息
 var current_seat: String = ""
@@ -55,6 +57,8 @@ const ARRIVAL_DIST: float = 30.0  # 到达判定距离
 # ==================== 生命周期 ====================
 func _ready() -> void:
 	add_to_group("customer")
+	add_to_group("interaction")
+	patience_seconds = maxf(patience_seconds, MIN_PATIENCE_SECONDS)
 	_spawn_position = global_position
 
 	if spawn_path != NodePath():
@@ -176,6 +180,8 @@ func _pick_seat_and_go():
 func _physics_process(dt: float) -> void:
 	if current_state == State.LEFT:
 		return
+
+	_tick_patience_timeout()
 	
 	if _arrived and current_state in [State.WAITING_FOR_FOOD, State.EATING]:
 		return
@@ -272,12 +278,12 @@ func _on_reached() -> void:
 
 		current_state = State.WAITING_FOR_FOOD
 		_task_deadline_ms = Time.get_ticks_msec() + int(maxf(1.0, patience_seconds) * 1000.0)
+		_patience_timed_out = false
 		print("[Customer] Arrived at seat! Requesting: %s" % request_text)
 		var bubble_mgr = get_node_or_null("/root/BubbleManager")
 		if bubble_mgr and bubble_mgr.has_method("say"):
 			bubble_mgr.say(self, request_text, 3.0, Color(1.0, 0.96, 0.88, 1.0))
 		_post_taskboard_request()
-		emit_signal("request_emitted", self)
 		
 	elif current_state == State.LEAVING:
 		_arrived = true
@@ -334,6 +340,87 @@ func force_leave() -> void:
 	_start_leaving()
 
 func get_task_deadline_ms() -> int:
+	var task_board = get_node_or_null("/root/TaskBoard")
+	if task_board and task_board.has_method("get_open_task_for_customer"):
+		var task: Dictionary = task_board.get_open_task_for_customer(get_instance_id())
+		if not task.is_empty():
+			return int(task.get("deadline_ms", Time.get_ticks_msec()))
 	if _task_deadline_ms <= 0:
 		return Time.get_ticks_msec() + int(maxf(1.0, patience_seconds) * 1000.0)
 	return _task_deadline_ms
+
+func on_player_interact(player: Node) -> void:
+	if player == null:
+		return
+	if global_position.distance_to(player.global_position) > interact_radius:
+		return
+
+	var task_board = get_node_or_null("/root/TaskBoard")
+	if task_board and task_board.has_method("get_in_progress_task_for_customer"):
+		var task: Dictionary = task_board.get_in_progress_task_for_customer(get_instance_id(), "player")
+		if not task.is_empty():
+			var task_id := str(task.get("id", ""))
+			var step_name := str(task_board.get_current_step_name(task_id))
+			if step_name == "TAKE_ORDER":
+				if task_board.complete_current_step(task_id, "TAKE_ORDER"):
+					print("[Customer] Player took order for ", task_id)
+				return
+			if step_name != "DELIVER_AND_SERVE":
+				return
+
+	if current_state != State.WAITING_FOR_FOOD:
+		return
+
+	var p_inv = player.get_node_or_null("Inventory")
+	if p_inv == null:
+		return
+
+	var wanted := _extract_food_from_request(request_text)
+	var idx: int = p_inv.find_item(wanted)
+	if idx == -1:
+		print("[Customer] Player does not have requested item: ", wanted)
+		return
+
+	var item = p_inv.items.pop_at(idx)
+	p_inv.emit_signal("inventory_changed", p_inv.items)
+	receive_item(item)
+	if task_board and task_board.has_method("get_in_progress_task_for_customer"):
+		var ptask: Dictionary = task_board.get_in_progress_task_for_customer(get_instance_id(), "player")
+		if not ptask.is_empty():
+			var ptask_id := str(ptask.get("id", ""))
+			task_board.complete_current_step(ptask_id, "DELIVER_AND_SERVE")
+
+func _tick_patience_timeout() -> void:
+	if current_state != State.WAITING_FOR_FOOD:
+		return
+	if _patience_timed_out:
+		return
+	if _task_deadline_ms <= 0:
+		_task_deadline_ms = get_task_deadline_ms()
+	if Time.get_ticks_msec() < get_task_deadline_ms():
+		return
+
+	_patience_timed_out = true
+	print("[Customer] Patience timeout reached. Leaving now.")
+
+	var task_board = get_node_or_null("/root/TaskBoard")
+	if task_board and task_board.has_method("fail_task_by_customer"):
+		task_board.fail_task_by_customer(get_instance_id(), "customer_patience_timeout")
+
+	var logger = get_node_or_null("/root/EpisodeLogger")
+	if logger and logger.has_method("log_replay_event"):
+		logger.log_replay_event("customer_patience_timeout", {
+			"customer_instance_id": get_instance_id(),
+			"seat": current_seat,
+			"request_text": request_text
+		})
+
+	_start_leaving()
+
+func _extract_food_from_request(request: String) -> String:
+	var request_lower = request.to_lower()
+	var foods = ["pizza", "hotdog", "skewers", "sandwich"]
+	for food in foods:
+		if food in request_lower:
+			return food
+	return "unknown"

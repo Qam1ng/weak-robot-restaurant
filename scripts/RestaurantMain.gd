@@ -31,6 +31,7 @@ func _ready():
 	# 2. Find the NavigationRegion2D
 	var nav_region = $Navigation2D
 	if nav_region:
+		_bind_navigation_map_to_world()
 		_setup_and_bake_navigation(nav_region)
 	else:
 		print("[Restaurant] NavigationRegion2D not found!")
@@ -60,38 +61,43 @@ func get_location(location_name: String) -> Vector2:
 func _setup_and_bake_navigation(region: NavigationRegion2D):
 	# DON'T create NavMesh in code - it doesn't work properly
 	# Instead, just verify what exists and debug
-	
-	# 等待 NavigationServer 完成地图同步
-	for i in range(5):
-		await get_tree().physics_frame
+
+	var nav_map = get_world_2d().navigation_map
+	var nav_ready := await _wait_for_navigation_sync(nav_map)
+	if not nav_ready:
+		print("[Restaurant] Navigation map sync timeout. Skip startup nav query.")
+		return
 	
 	var poly = region.navigation_polygon
 	if not poly:
 		print("[Restaurant] ERROR: No NavigationPolygon in scene!")
 		return
 	
-	var nav_map = region.get_navigation_map()
 	print("[Restaurant] Using scene NavigationPolygon:")
 	print("  - Polygons: ", poly.get_polygon_count())
 	print("  - Vertices: ", poly.vertices.size())
 	print("  - Outlines: ", poly.get_outline_count())
 	print("  - Map active: ", NavigationServer2D.map_is_active(nav_map))
-	
-	# Test navigation
-	var robot_pos = Vector2(99, -84)
-	var pizza_pos = Vector2(-168, -328)
-	
-	var closest_robot = NavigationServer2D.map_get_closest_point(nav_map, robot_pos)
-	var closest_pizza = NavigationServer2D.map_get_closest_point(nav_map, pizza_pos)
-	
-	print("  Robot ", robot_pos, " -> ", closest_robot)
-	print("  Pizza ", pizza_pos, " -> ", closest_pizza)
-	
-	var path = NavigationServer2D.map_get_path(nav_map, robot_pos, pizza_pos, true)
-	print("  Path: ", path.size(), " waypoints")
-	
-	if path.size() == 0:
-		print("[Restaurant] No path found - NavMesh is disconnected or invalid")
+
+func _bind_navigation_map_to_world() -> void:
+	var world_map := get_world_2d().navigation_map
+	var nav_regions := find_children("*", "NavigationRegion2D", true, false)
+	for node in nav_regions:
+		if node is NavigationRegion2D:
+			(node as NavigationRegion2D).set_navigation_map(world_map)
+
+	var nav_agents := find_children("*", "NavigationAgent2D", true, false)
+	for node in nav_agents:
+		if node is NavigationAgent2D:
+			(node as NavigationAgent2D).set_navigation_map(world_map)
+
+func _wait_for_navigation_sync(nav_map: RID, max_physics_frames: int = 60) -> bool:
+	for _i in range(max_physics_frames):
+		var iteration_id := NavigationServer2D.map_get_iteration_id(nav_map)
+		if iteration_id > 0:
+			return true
+		await get_tree().physics_frame
+	return false
 
 func _recursively_add_to_group(node: Node, group: String):
 	# Exclude Doors from the navigation mesh source so they don't cut holes in the mesh.
