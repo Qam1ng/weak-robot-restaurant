@@ -87,7 +87,7 @@ func _ready() -> void:
 	print("[Customer] Ready to enter. Position: ", global_position)
 	
 	# 随机食物
-	var food_choices = ["pizza", "hotdog", "skewers", "sandwich"]
+	var food_choices = ["pizza", "hotdog", "sandwich"]
 	request_text = "Can I order a " + food_choices[randi() % food_choices.size()] + "?"
 	
 	inventory = InventoryScript.new()
@@ -296,7 +296,7 @@ func _on_reached() -> void:
 func _post_taskboard_request() -> void:
 	var task_board = get_node_or_null("/root/TaskBoard")
 	if not task_board:
-		print("[Customer] TaskBoard not found. Fallback to legacy signal only.")
+		print("[Customer] TaskBoard not found.")
 		return
 	if not task_board.has_method("create_fulfill_order"):
 		print("[Customer] TaskBoard missing create_fulfill_order().")
@@ -344,9 +344,12 @@ func get_task_deadline_ms() -> int:
 	if task_board and task_board.has_method("get_open_task_for_customer"):
 		var task: Dictionary = task_board.get_open_task_for_customer(get_instance_id())
 		if not task.is_empty():
-			return int(task.get("deadline_ms", Time.get_ticks_msec()))
+			var deadline_ms := int(task.get("deadline_ms", 0))
+			if deadline_ms > 0:
+				return deadline_ms
+			return -1
 	if _task_deadline_ms <= 0:
-		return Time.get_ticks_msec() + int(maxf(1.0, patience_seconds) * 1000.0)
+		return -1
 	return _task_deadline_ms
 
 func on_player_interact(player: Node) -> void:
@@ -356,17 +359,20 @@ func on_player_interact(player: Node) -> void:
 		return
 
 	var task_board = get_node_or_null("/root/TaskBoard")
-	if task_board and task_board.has_method("get_in_progress_task_for_customer"):
-		var task: Dictionary = task_board.get_in_progress_task_for_customer(get_instance_id(), "player")
-		if not task.is_empty():
-			var task_id := str(task.get("id", ""))
-			var step_name := str(task_board.get_current_step_name(task_id))
-			if step_name == "TAKE_ORDER":
-				if task_board.complete_current_step(task_id, "TAKE_ORDER"):
-					print("[Customer] Player took order for ", task_id)
-				return
-			if step_name != "DELIVER_AND_SERVE":
-				return
+	if task_board == null or not task_board.has_method("get_in_progress_task_for_customer"):
+		return
+
+	# Only allow player delivery when this order is explicitly assigned to player
+	# and currently at DELIVER_AND_SERVE step.
+	var task: Dictionary = task_board.get_in_progress_task_for_customer(get_instance_id(), "player")
+	if task.is_empty():
+		_notify_player("This order is not assigned to you.")
+		return
+	var ptask_id := str(task.get("id", ""))
+	var step_name := str(task_board.get_current_step_name(ptask_id))
+	if step_name != "DELIVER_AND_SERVE":
+		_notify_player("Not ready to serve yet.")
+		return
 
 	if current_state != State.WAITING_FOR_FOOD:
 		return
@@ -379,25 +385,32 @@ func on_player_interact(player: Node) -> void:
 	var idx: int = p_inv.find_item(wanted)
 	if idx == -1:
 		print("[Customer] Player does not have requested item: ", wanted)
+		_notify_player("You don't have the requested dish.")
 		return
 
 	var item = p_inv.items.pop_at(idx)
 	p_inv.emit_signal("inventory_changed", p_inv.items)
 	receive_item(item)
-	if task_board and task_board.has_method("get_in_progress_task_for_customer"):
-		var ptask: Dictionary = task_board.get_in_progress_task_for_customer(get_instance_id(), "player")
-		if not ptask.is_empty():
-			var ptask_id := str(ptask.get("id", ""))
-			task_board.complete_current_step(ptask_id, "DELIVER_AND_SERVE")
+	task_board.complete_current_step(ptask_id, "DELIVER_AND_SERVE")
+
+func _notify_player(text: String) -> void:
+	var huds := get_tree().get_nodes_in_group("hud")
+	if huds.is_empty():
+		return
+	var hud := huds[0]
+	if hud and hud.has_method("show_quick_notice"):
+		hud.call("show_quick_notice", text)
 
 func _tick_patience_timeout() -> void:
 	if current_state != State.WAITING_FOR_FOOD:
 		return
 	if _patience_timed_out:
 		return
-	if _task_deadline_ms <= 0:
-		_task_deadline_ms = get_task_deadline_ms()
-	if Time.get_ticks_msec() < get_task_deadline_ms():
+	var deadline_ms := get_task_deadline_ms()
+	if deadline_ms <= 0:
+		# No serve timer before TAKE_ORDER; customer can keep waiting.
+		return
+	if Time.get_ticks_msec() < deadline_ms:
 		return
 
 	_patience_timed_out = true
@@ -419,7 +432,7 @@ func _tick_patience_timeout() -> void:
 
 func _extract_food_from_request(request: String) -> String:
 	var request_lower = request.to_lower()
-	var foods = ["pizza", "hotdog", "skewers", "sandwich"]
+	var foods = ["pizza", "hotdog", "sandwich"]
 	for food in foods:
 		if food in request_lower:
 			return food

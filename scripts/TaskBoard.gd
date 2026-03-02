@@ -14,7 +14,6 @@ const STATE_FAILED := "failed"
 const STEP_TAKE_ORDER := "TAKE_ORDER"
 const STEP_PICKUP_FROM_KITCHEN := "PICKUP_FROM_KITCHEN"
 const STEP_DELIVER_AND_SERVE := "DELIVER_AND_SERVE"
-const TAKE_ORDER_WINDOW_MS := 60_000
 const SERVE_WINDOW_MS := 90_000
 
 var _tasks_by_id: Dictionary = {}
@@ -35,7 +34,6 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 	var task_id := _new_task_id()
 	var now_ms := Time.get_ticks_msec()
 	var food_item := _extract_food_from_request(request_text)
-	var deadline_ms := now_ms + TAKE_ORDER_WINDOW_MS
 	var steps := [
 		{"name": STEP_TAKE_ORDER, "state": "pending"},
 		{"name": STEP_PICKUP_FROM_KITCHEN, "state": "pending"},
@@ -47,7 +45,7 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 		"type": TASK_FULFILL_ORDER,
 		"state": STATE_UNASSIGNED,
 		"created_at_ms": now_ms,
-		"deadline_ms": deadline_ms,
+		"deadline_ms": 0, # Serve timer starts only after TAKE_ORDER is completed.
 		"claimed_at_ms": 0,
 		"completed_at_ms": 0,
 		"assigned_to": "",
@@ -58,8 +56,7 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 			"food_item": food_item,
 			"seat": seat,
 			"customer_instance_id": customer.get_instance_id(),
-			"take_order_deadline_ms": now_ms + TAKE_ORDER_WINDOW_MS,
-			"serve_deadline_ms": now_ms + SERVE_WINDOW_MS
+			"serve_deadline_ms": 0
 		}
 	}
 
@@ -84,11 +81,6 @@ func get_next_unassigned_task(task_type: String = "") -> Dictionary:
 	return {}
 
 func get_best_unassigned_task(task_type: String = "", constraints: Dictionary = {}) -> Dictionary:
-	var now_ms := Time.get_ticks_msec()
-	var urgency_weight := float(constraints.get("deadline_urgency_weight", 1.0))
-	var best_score := INF
-	var best_task: Dictionary = {}
-
 	for task_id in _task_order:
 		var task = _tasks_by_id.get(task_id, {})
 		if task.is_empty():
@@ -97,16 +89,9 @@ func get_best_unassigned_task(task_type: String = "", constraints: Dictionary = 
 			continue
 		if task_type != "" and task.get("type", "") != task_type:
 			continue
-
-		var slack_ms := _compute_slack_ms(task, now_ms)
-		var score := float(slack_ms) * urgency_weight
-		if score < best_score:
-			best_score = score
-			best_task = task
-
-	if best_task.is_empty():
-		return {}
-	return _copy_task(best_task)
+		# FIFO: return the earliest created unassigned task.
+		return _copy_task(task)
+	return {}
 
 func claim_task(task_id: String, assignee: String) -> Dictionary:
 	var task = _tasks_by_id.get(task_id, {})
@@ -162,7 +147,10 @@ func complete_current_step(task_id: String, expected_step_name: String = "") -> 
 	task["current_step_index"] = idx + 1
 	if actual_step_name == STEP_TAKE_ORDER:
 		var payload: Dictionary = task.get("payload", {})
-		task["deadline_ms"] = int(payload.get("serve_deadline_ms", Time.get_ticks_msec() + SERVE_WINDOW_MS))
+		var serve_deadline := Time.get_ticks_msec() + SERVE_WINDOW_MS
+		payload["serve_deadline_ms"] = serve_deadline
+		task["payload"] = payload
+		task["deadline_ms"] = serve_deadline
 
 	if int(task["current_step_index"]) >= steps.size():
 		task["state"] = STATE_COMPLETED
@@ -266,6 +254,27 @@ func get_task_slack_ms(task_id: String) -> int:
 		return 0
 	return _compute_slack_ms(task, Time.get_ticks_msec())
 
+func get_open_task_count() -> int:
+	var count := 0
+	for task_id in _task_order:
+		var task: Dictionary = _tasks_by_id.get(task_id, {})
+		if task.is_empty():
+			continue
+		var state := str(task.get("state", ""))
+		if state == STATE_COMPLETED or state == STATE_FAILED:
+			continue
+		count += 1
+	return count
+
+func get_all_tasks() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for task_id in _task_order:
+		var task: Dictionary = _tasks_by_id.get(task_id, {})
+		if task.is_empty():
+			continue
+		out.append(_copy_task(task))
+	return out
+
 func complete_task(task_id: String) -> bool:
 	var task = _tasks_by_id.get(task_id, {})
 	if task.is_empty():
@@ -331,7 +340,7 @@ func _new_task_id() -> String:
 
 func _extract_food_from_request(request: String) -> String:
 	var request_lower = request.to_lower()
-	var foods = ["pizza", "hotdog", "skewers", "sandwich"]
+	var foods = ["pizza", "hotdog", "sandwich"]
 	for food in foods:
 		if food in request_lower:
 			return food
@@ -348,7 +357,10 @@ func _copy_task(task: Dictionary) -> Dictionary:
 	return task.duplicate(true)
 
 func _compute_slack_ms(task: Dictionary, now_ms: int) -> int:
-	var deadline_ms := int(task.get("deadline_ms", now_ms))
+	var deadline_ms := int(task.get("deadline_ms", 0))
+	if deadline_ms <= 0:
+		# No active timer yet (before TAKE_ORDER); treat as low urgency.
+		return 2_000_000_000
 	return deadline_ms - now_ms
 
 func _log_task_failure(task: Dictionary) -> void:

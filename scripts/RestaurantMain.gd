@@ -15,11 +15,6 @@ func _ready():
 		item2.display_name = "pizza"
 		print("[Restaurant] Set Item2 display_name to 'pizza'")
 
-	var item3 = get_node_or_null("InteractiveItems/Item3")
-	if item3:
-		item3.display_name = "skewers"
-		print("[Restaurant] Set Item3 display_name to 'skewers'")
-
 	var item4 = get_node_or_null("InteractiveItems/Item4")
 	if item4:
 		item4.display_name = "sandwich"

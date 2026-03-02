@@ -1,5 +1,7 @@
 extends CanvasLayer
 
+signal kitchen_pick_selected(item_name: String)
+
 @onready var interaction_label: Label = $InteractionLabel
 @onready var help_panel: PanelContainer = $HelpRequestPanel
 @onready var help_title: Label = $HelpRequestPanel/Margin/VBox/Title
@@ -17,9 +19,15 @@ extends CanvasLayer
 
 var inventory_panel: PanelContainer
 var inventory_list: VBoxContainer
+var score_label: Label
 var battery_label: Label
 var robot_items_box: VBoxContainer
+var robot_tasks_box: VBoxContainer
 var player_items_box: VBoxContainer
+var player_tasks_box: VBoxContainer
+var customer_tab_buttons: HBoxContainer
+var customer_live_btn: Button
+var customer_history_btn: Button
 var customer_items_box: VBoxContainer
 var dialogue_panel: PanelContainer
 var dialogue_title: Label
@@ -29,6 +37,8 @@ var _active_request_id: String = ""
 var _active_request_type: String = ""
 var _last_utterance_by_request: Dictionary = {}
 var _auto_open_in_flight: Dictionary = {}
+var _popup_mode: String = "none"
+var _kitchen_pick_options: Array[String] = []
 var _mbti_questions: Array[Dictionary] = []
 var _mbti_index: int = 0
 var _mbti_scores := {
@@ -43,6 +53,23 @@ var _mbti_scores := {
 }
 const FEED_COLOR_DIALOGUE := Color(0.84, 0.95, 1.0, 1.0)
 const HANDOFF_PROMPT_DISTANCE := 120.0
+const POPUP_MODE_NONE := "none"
+const POPUP_MODE_HELP := "help"
+const POPUP_MODE_KITCHEN_PICK := "kitchen_pick"
+const CUSTOMER_TAB_LIVE := "live"
+const CUSTOMER_TAB_HISTORY := "history"
+const LEFT_PANEL_GAP_Y := 16.0
+var _customer_tab: String = CUSTOMER_TAB_LIVE
+var _score: int = 0
+var _success_count: int = 0
+var _failed_count: int = 0
+const SCORE_PER_SUCCESS := 0
+const SCORE_PER_FAILURE := -1
+const SCORE_FAIL_THRESHOLD := -10
+const MBTI_PANEL_BASE_SIZE := Vector2(720.0, 440.0)
+const MBTI_PANEL_MARGIN := 24.0
+const MBTI_PANEL_OFFSET_X := 23.0
+var _score_game_over: bool = false
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -52,6 +79,7 @@ func _ready() -> void:
 		interaction_label.hide()
 	if help_panel:
 		help_panel.hide()
+		_reset_help_buttons()
 	if mbti_panel:
 		mbti_panel.hide()
 
@@ -64,11 +92,40 @@ func _ready() -> void:
 
 	_setup_inventory_ui()
 	_setup_dialogue_feed_ui()
+	_set_gameplay_panels_visible(false)
+	_connect_viewport_resize()
 	_connect_help_signals()
 	_connect_dialogue_feed_signals()
 	_connect_robot_inventory()
 	_connect_player_inventory()
-	_setup_mbti_survey()
+	_connect_score_signals()
+	call_deferred("_setup_mbti_survey")
+
+func _connect_viewport_resize() -> void:
+	var vp := get_viewport()
+	if vp == null:
+		return
+	if not vp.size_changed.is_connected(_on_viewport_size_changed):
+		vp.size_changed.connect(_on_viewport_size_changed)
+	_recenter_mbti_panel()
+
+func _on_viewport_size_changed() -> void:
+	_recenter_mbti_panel()
+
+func _recenter_mbti_panel() -> void:
+	if mbti_panel == null:
+		return
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var view_size: Vector2 = vp.get_visible_rect().size
+	if view_size.x <= 0.0 or view_size.y <= 0.0:
+		return
+	var target_w := clampf(MBTI_PANEL_BASE_SIZE.x, 360.0, maxf(360.0, view_size.x - MBTI_PANEL_MARGIN * 2.0))
+	var target_h := clampf(MBTI_PANEL_BASE_SIZE.y, 260.0, maxf(260.0, view_size.y - MBTI_PANEL_MARGIN * 2.0))
+	mbti_panel.custom_minimum_size = Vector2(target_w, target_h)
+	mbti_panel.size = Vector2(target_w, target_h)
+	mbti_panel.position = (view_size - mbti_panel.size) * 0.5 + Vector2(MBTI_PANEL_OFFSET_X, 0.0)
 
 func _connect_help_signals() -> void:
 	var help_mgr = get_node_or_null("/root/HelpRequestManager")
@@ -98,7 +155,11 @@ func _connect_player_inventory() -> void:
 	if players.is_empty():
 		return
 	var player = players[0]
-	var inv = player.get_node_or_null("Inventory")
+	var inv = null
+	if "inventory" in player and player.inventory != null:
+		inv = player.inventory
+	else:
+		inv = player.get_node_or_null("Inventory")
 	if inv:
 		inv.inventory_changed.connect(_on_player_inventory_changed)
 		_on_player_inventory_changed(inv.items)
@@ -125,6 +186,14 @@ func _setup_inventory_ui() -> void:
 	title.add_theme_color_override("font_color", Color.YELLOW)
 	inventory_list.add_child(title)
 
+	score_label = Label.new()
+	score_label.text = "Score: 0  (Success 0 / Failed 0)"
+	score_label.add_theme_color_override("font_color", Color(0.86, 0.96, 1.0, 1.0))
+	inventory_list.add_child(score_label)
+
+	var sep0 = HSeparator.new()
+	inventory_list.add_child(sep0)
+
 	var robot_title = Label.new()
 	robot_title.text = "ROBOT"
 	robot_title.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
@@ -138,6 +207,14 @@ func _setup_inventory_ui() -> void:
 	robot_items_box = VBoxContainer.new()
 	inventory_list.add_child(robot_items_box)
 
+	var robot_task_title = Label.new()
+	robot_task_title.text = "Assigned Tasks"
+	robot_task_title.add_theme_color_override("font_color", Color(0.78, 0.94, 1.0, 1.0))
+	inventory_list.add_child(robot_task_title)
+
+	robot_tasks_box = VBoxContainer.new()
+	inventory_list.add_child(robot_tasks_box)
+
 	var sep = HSeparator.new()
 	inventory_list.add_child(sep)
 
@@ -149,6 +226,14 @@ func _setup_inventory_ui() -> void:
 	player_items_box = VBoxContainer.new()
 	inventory_list.add_child(player_items_box)
 
+	var player_task_title = Label.new()
+	player_task_title.text = "Assigned Tasks"
+	player_task_title.add_theme_color_override("font_color", Color(1.0, 0.90, 0.76, 1.0))
+	inventory_list.add_child(player_task_title)
+
+	player_tasks_box = VBoxContainer.new()
+	inventory_list.add_child(player_tasks_box)
+
 	var sep2 = HSeparator.new()
 	inventory_list.add_child(sep2)
 
@@ -156,6 +241,27 @@ func _setup_inventory_ui() -> void:
 	customer_title.text = "Customer Orders"
 	customer_title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.78, 1.0))
 	inventory_list.add_child(customer_title)
+
+	customer_tab_buttons = HBoxContainer.new()
+	inventory_list.add_child(customer_tab_buttons)
+
+	customer_live_btn = Button.new()
+	customer_live_btn.text = "Live"
+	customer_live_btn.toggle_mode = true
+	customer_live_btn.button_pressed = true
+	customer_live_btn.pressed.connect(func():
+		_set_customer_tab(CUSTOMER_TAB_LIVE)
+	)
+	customer_tab_buttons.add_child(customer_live_btn)
+
+	customer_history_btn = Button.new()
+	customer_history_btn.text = "History"
+	customer_history_btn.toggle_mode = true
+	customer_history_btn.button_pressed = false
+	customer_history_btn.pressed.connect(func():
+		_set_customer_tab(CUSTOMER_TAB_HISTORY)
+	)
+	customer_tab_buttons.add_child(customer_history_btn)
 
 	customer_items_box = VBoxContainer.new()
 	inventory_list.add_child(customer_items_box)
@@ -192,6 +298,68 @@ func _setup_dialogue_feed_ui() -> void:
 	dialogue_log.scroll_active = true
 	dialogue_log.fit_content = false
 	vbox.add_child(dialogue_log)
+	_update_left_panel_layout()
+
+func _connect_score_signals() -> void:
+	var board = get_node_or_null("/root/TaskBoard")
+	if board == null:
+		return
+	if board.has_signal("task_completed") and not board.task_completed.is_connected(_on_task_completed):
+		board.task_completed.connect(_on_task_completed)
+	if board.has_signal("task_failed") and not board.task_failed.is_connected(_on_task_failed):
+		board.task_failed.connect(_on_task_failed)
+	_refresh_score_label()
+
+func _on_task_completed(_task: Dictionary) -> void:
+	_success_count += 1
+	_score += SCORE_PER_SUCCESS
+	_refresh_score_label()
+	_update_player_task_panel()
+	_update_customer_panel()
+
+func _on_task_failed(_task: Dictionary) -> void:
+	_failed_count += 1
+	_score += SCORE_PER_FAILURE
+	_refresh_score_label()
+	_update_player_task_panel()
+	_update_customer_panel()
+	_check_score_game_over()
+
+func _refresh_score_label() -> void:
+	if score_label == null:
+		return
+	score_label.text = "Score: %d  (Success %d / Failed %d)" % [_score, _success_count, _failed_count]
+	if _score < 0:
+		score_label.add_theme_color_override("font_color", Color(1.0, 0.70, 0.70, 1.0))
+	else:
+		score_label.add_theme_color_override("font_color", Color(0.86, 0.96, 1.0, 1.0))
+
+func _check_score_game_over() -> void:
+	if _score_game_over:
+		return
+	if _score > SCORE_FAIL_THRESHOLD:
+		return
+	_score_game_over = true
+	get_tree().paused = true
+	_popup_mode = POPUP_MODE_NONE
+	_active_request_id = ""
+	_active_request_type = ""
+	help_title.text = "Game Over"
+	help_body.text = "Score reached %d (threshold %d).\nShift failed." % [_score, SCORE_FAIL_THRESHOLD]
+	_reset_help_buttons()
+	accept_btn.text = "Retry"
+	decline_btn.text = "Quit"
+	later_btn.hide()
+	accept_btn.pressed.connect(_on_game_over_retry, CONNECT_ONE_SHOT)
+	decline_btn.pressed.connect(_on_game_over_quit, CONNECT_ONE_SHOT)
+	help_panel.show()
+
+func _on_game_over_retry() -> void:
+	get_tree().paused = false
+	get_tree().reload_current_scene()
+
+func _on_game_over_quit() -> void:
+	get_tree().quit()
 
 func _connect_dialogue_feed_signals() -> void:
 	var bubble_mgr = get_node_or_null("/root/BubbleManager")
@@ -206,7 +374,7 @@ func _on_robot_inventory_changed(items: Array) -> void:
 		c.queue_free()
 
 	var holding = Label.new()
-	holding.text = "Holding: " + _summarize_holding(items)
+	holding.text = "Holding (%d/%d):" % [items.size(), _get_robot_capacity()]
 	holding.add_theme_color_override("font_color", Color(0.80, 0.94, 1.0, 1.0))
 	robot_items_box.add_child(holding)
 
@@ -231,7 +399,7 @@ func _on_player_inventory_changed(items: Array) -> void:
 		c.queue_free()
 
 	var holding = Label.new()
-	holding.text = "Holding: " + _summarize_holding(items)
+	holding.text = "Holding (%d/%d):" % [items.size(), _get_player_capacity()]
 	holding.add_theme_color_override("font_color", Color(1.0, 0.92, 0.74, 1.0))
 	player_items_box.add_child(holding)
 
@@ -250,7 +418,62 @@ func _on_player_inventory_changed(items: Array) -> void:
 
 func _process(_dt: float) -> void:
 	_update_battery_label()
+	_update_robot_task_panel()
+	_update_player_task_panel()
 	_update_customer_panel()
+	_update_left_panel_layout()
+
+func _update_left_panel_layout() -> void:
+	if inventory_panel == null or dialogue_panel == null:
+		return
+	# Keep dialogue panel below inventory panel with a fixed gap.
+	var inv_pos := inventory_panel.position
+	var inv_h := maxf(inventory_panel.size.y, inventory_panel.get_combined_minimum_size().y)
+	dialogue_panel.position = Vector2(inv_pos.x, inv_pos.y + inv_h + LEFT_PANEL_GAP_Y)
+	dialogue_panel.custom_minimum_size.x = _left_panel_width
+
+func _update_robot_task_panel() -> void:
+	if robot_tasks_box == null:
+		return
+	for c in robot_tasks_box.get_children():
+		c.queue_free()
+
+	var board = get_node_or_null("/root/TaskBoard")
+	var robots := get_tree().get_nodes_in_group("robot")
+	if board == null or not board.has_method("get_in_progress_tasks_for_assignee") or robots.is_empty():
+		var empty_fallback := Label.new()
+		empty_fallback.text = "(None)"
+		empty_fallback.add_theme_color_override("font_color", Color.GRAY)
+		robot_tasks_box.add_child(empty_fallback)
+		return
+
+	var assignee := str(robots[0].name)
+	var tasks: Array[Dictionary] = board.get_in_progress_tasks_for_assignee(assignee)
+	if tasks.is_empty():
+		var empty := Label.new()
+		empty.text = "(None)"
+		empty.add_theme_color_override("font_color", Color.GRAY)
+		robot_tasks_box.add_child(empty)
+		return
+
+	for task in tasks:
+		var task_id := str(task.get("id", ""))
+		var payload: Dictionary = task.get("payload", {})
+		var food := str(payload.get("food_item", "order")).capitalize()
+		var seat := _friendly_table_name(str(payload.get("seat", "-")))
+		var step := "In Progress"
+		if board.has_method("get_current_step_name"):
+			step = _friendly_step_name(str(board.get_current_step_name(task_id)))
+		var eta := "Waiting"
+		var deadline_ms := int(task.get("deadline_ms", 0))
+		if deadline_ms > 0:
+			var remain_sec := int(ceili(float(deadline_ms - Time.get_ticks_msec()) / 1000.0))
+			eta = str(maxi(remain_sec, 0)) + "s"
+		var line := Label.new()
+		line.text = "%s | %s | %s | %s" % [seat, food, step, eta]
+		if eta == "0s":
+			line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
+		robot_tasks_box.add_child(line)
 
 func _update_battery_label() -> void:
 	if battery_label == null:
@@ -264,7 +487,8 @@ func _update_battery_label() -> void:
 	var mode := str(robot.get("_battery_mode"))
 	if mode == "" or mode == "Null":
 		mode = "normal"
-	battery_label.text = "Battery: %d%% (%s)" % [clampi(level, 0, 100), mode]
+	var mode_text := _friendly_battery_mode(mode)
+	battery_label.text = "Battery: %d%% (%s)" % [clampi(level, 0, 100), mode_text]
 
 	if mode == "emergency":
 		battery_label.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
@@ -279,6 +503,10 @@ func _update_customer_panel() -> void:
 
 	for c in customer_items_box.get_children():
 		c.queue_free()
+
+	if _customer_tab == CUSTOMER_TAB_HISTORY:
+		_update_customer_history_panel()
+		return
 
 	var customers := get_tree().get_nodes_in_group("customer")
 	if customers.is_empty():
@@ -307,26 +535,121 @@ func _update_customer_panel() -> void:
 		if seat == "":
 			seat = "-"
 
-		var countdown_text := "--"
-		if cnode.has_method("get_task_deadline_ms"):
-			var deadline_ms := int(cnode.call("get_task_deadline_ms"))
-			var remain_sec := int(ceili(float(deadline_ms - now_ms) / 1000.0))
-			countdown_text = str(maxi(remain_sec, 0)) + "s"
-
 		var line := Label.new()
-		line.text = "Order: %s | Table: %s | Status: %s | Time left: %s" % [
-			food.capitalize(),
-			seat,
-			_friendly_customer_state(state),
-			countdown_text
-		]
-		if countdown_text == "0s" and state == "WAITING_FOR_FOOD":
-			line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
+		var table_text := _friendly_table_name(seat)
+		if state == "WAITING_FOR_FOOD":
+			var countdown_text := "Waiting"
+			if cnode.has_method("get_task_deadline_ms"):
+				var deadline_ms := int(cnode.call("get_task_deadline_ms"))
+				if deadline_ms > 0:
+					var remain_sec := int(ceili(float(deadline_ms - now_ms) / 1000.0))
+					countdown_text = str(maxi(remain_sec, 0)) + "s"
+			line.text = "%s | %s | %s | %s" % [table_text, food.capitalize(), _friendly_customer_state(state), countdown_text]
+			if countdown_text == "0s":
+				line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
+		else:
+			line.text = "%s | %s | %s" % [table_text, food.capitalize(), _friendly_customer_state(state)]
 		customer_items_box.add_child(line)
+
+func _update_customer_history_panel() -> void:
+	var board = get_node_or_null("/root/TaskBoard")
+	if board == null or not board.has_method("get_all_tasks"):
+		var empty_fallback := Label.new()
+		empty_fallback.text = "(No history)"
+		empty_fallback.add_theme_color_override("font_color", Color.GRAY)
+		customer_items_box.add_child(empty_fallback)
+		return
+
+	var tasks: Array[Dictionary] = board.get_all_tasks()
+	var ended: Array[Dictionary] = []
+	for task in tasks:
+		var st := str(task.get("state", ""))
+		if st == "completed" or st == "failed":
+			ended.append(task)
+
+	if ended.is_empty():
+		var empty := Label.new()
+		empty.text = "(No finished tasks)"
+		empty.add_theme_color_override("font_color", Color.GRAY)
+		customer_items_box.add_child(empty)
+		return
+
+	ended.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var ta := maxi(int(a.get("completed_at_ms", 0)), int(a.get("failed_at_ms", 0)))
+		var tb := maxi(int(b.get("completed_at_ms", 0)), int(b.get("failed_at_ms", 0)))
+		return ta > tb
+	)
+
+	var show_count := mini(8, ended.size())
+	for i in range(show_count):
+		var task: Dictionary = ended[i]
+		var payload: Dictionary = task.get("payload", {})
+		var seat := _friendly_table_name(str(payload.get("seat", "-")))
+		var food := str(payload.get("food_item", "order")).capitalize()
+		var state := str(task.get("state", ""))
+		var status_text := "Success"
+		if state == "failed":
+			status_text = "Failed"
+		var line := Label.new()
+		line.text = "%s | %s | %s" % [seat, food, status_text]
+		if state == "failed":
+			line.add_theme_color_override("font_color", Color(1.0, 0.56, 0.56, 1.0))
+		else:
+			line.add_theme_color_override("font_color", Color(0.72, 1.0, 0.78, 1.0))
+		customer_items_box.add_child(line)
+
+func _set_customer_tab(tab: String) -> void:
+	_customer_tab = tab
+	if customer_live_btn:
+		customer_live_btn.button_pressed = (_customer_tab == CUSTOMER_TAB_LIVE)
+	if customer_history_btn:
+		customer_history_btn.button_pressed = (_customer_tab == CUSTOMER_TAB_HISTORY)
+	_update_customer_panel()
+
+func _update_player_task_panel() -> void:
+	if player_tasks_box == null:
+		return
+	for c in player_tasks_box.get_children():
+		c.queue_free()
+
+	var board = get_node_or_null("/root/TaskBoard")
+	if board == null or not board.has_method("get_in_progress_tasks_for_assignee"):
+		var empty_fallback := Label.new()
+		empty_fallback.text = "(None)"
+		empty_fallback.add_theme_color_override("font_color", Color.GRAY)
+		player_tasks_box.add_child(empty_fallback)
+		return
+
+	var tasks: Array[Dictionary] = board.get_in_progress_tasks_for_assignee("player")
+	if tasks.is_empty():
+		var empty := Label.new()
+		empty.text = "(None)"
+		empty.add_theme_color_override("font_color", Color.GRAY)
+		player_tasks_box.add_child(empty)
+		return
+
+	for task in tasks:
+		var task_id := str(task.get("id", ""))
+		var payload: Dictionary = task.get("payload", {})
+		var food := str(payload.get("food_item", "order")).capitalize()
+		var seat := _friendly_table_name(str(payload.get("seat", "-")))
+		var step := "In Progress"
+		if board.has_method("get_current_step_name"):
+			step = _friendly_step_name(str(board.get_current_step_name(task_id)))
+		var eta := "Waiting"
+		var deadline_ms := int(task.get("deadline_ms", 0))
+		if deadline_ms > 0:
+			var remain_sec := int(ceili(float(deadline_ms - Time.get_ticks_msec()) / 1000.0))
+			eta = str(maxi(remain_sec, 0)) + "s"
+		var line := Label.new()
+		line.text = "%s | %s | %s | %s" % [seat, food, step, eta]
+		if eta == "0s":
+			line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
+		player_tasks_box.add_child(line)
 
 func _extract_food_from_request(request: String) -> String:
 	var text := request.to_lower()
-	var foods = ["pizza", "hotdog", "skewers", "sandwich"]
+	var foods = ["pizza", "hotdog", "sandwich"]
 	for f in foods:
 		if f in text:
 			return f
@@ -355,6 +678,61 @@ func _friendly_customer_state(raw: String) -> String:
 		_:
 			return "Unknown"
 
+func _friendly_table_name(raw: String) -> String:
+	var s := raw.strip_edges().to_lower()
+	if s.begins_with("seat"):
+		var suffix := s.substr(4, s.length() - 4)
+		if suffix != "":
+			return "Table " + suffix
+	if s == "" or s == "-":
+		return "Table -"
+	return raw
+
+func _friendly_battery_mode(raw: String) -> String:
+	match raw:
+		"normal":
+			return "Normal"
+		"conserve":
+			return "Low Power"
+		"emergency":
+			return "Critical"
+		_:
+			return "Normal"
+
+func _friendly_step_name(raw: String) -> String:
+	match raw:
+		"TAKE_ORDER":
+			return "Take Order"
+		"PICKUP_FROM_KITCHEN":
+			return "Pickup"
+		"DELIVER_AND_SERVE":
+			return "Deliver"
+		_:
+			return "In Progress"
+
+func _get_robot_capacity() -> int:
+	var robots = get_tree().get_nodes_in_group("robot")
+	if robots.is_empty():
+		return 0
+	var inv = robots[0].get_node_or_null("Inventory")
+	if inv == null:
+		return 0
+	return int(inv.capacity)
+
+func _get_player_capacity() -> int:
+	var players = get_tree().get_nodes_in_group("player")
+	if players.is_empty():
+		return 0
+	var player = players[0]
+	var inv = null
+	if "inventory" in player and player.inventory != null:
+		inv = player.inventory
+	else:
+		inv = player.get_node_or_null("Inventory")
+	if inv == null:
+		return 0
+	return int(inv.capacity)
+
 func on_interaction_prompt(do_show: bool, text: String) -> void:
 	if not interaction_label:
 		return
@@ -368,25 +746,35 @@ func show_help_request(request: Dictionary) -> void:
 	if request.is_empty():
 		return
 
+	_popup_mode = POPUP_MODE_HELP
 	_active_request_id = str(request.get("id", ""))
 	_active_request_type = str(request.get("type", ""))
-	help_title.text = "Robot Request (%s)" % _active_request_type
+	_reset_help_buttons()
+	help_title.text = "Robot Request"
 	help_body.text = _build_help_text(request)
 	help_panel.show()
 	_maybe_show_help_bubble(request)
 
 func _build_help_text(request: Dictionary) -> String:
-	var escalation = int(request.get("escalation_count", 0))
-	var strategy = str(request.get("strategy", ""))
-	var payload: Dictionary = request.get("payload", {})
 	var utterance = str(request.get("utterance", ""))
 	if utterance == "":
 		utterance = "Can you help now?"
-
-	var item = str(payload.get("item_needed", "item"))
-	return "Strategy: %s\n%s\nNeed item: %s\nEscalation: %d" % [strategy, utterance, item, escalation]
+	return utterance + "\n\nChoose: Accept / Decline / Later"
 
 func _respond(response: String) -> void:
+	if _popup_mode == POPUP_MODE_KITCHEN_PICK:
+		var idx := -1
+		match response:
+			"accept":
+				idx = 0
+			"decline":
+				idx = 1
+			"later":
+				idx = 2
+		if idx >= 0 and idx < _kitchen_pick_options.size():
+			kitchen_pick_selected.emit(_kitchen_pick_options[idx])
+		return
+
 	if _active_request_id == "":
 		return
 	var help_mgr = get_node_or_null("/root/HelpRequestManager")
@@ -403,9 +791,11 @@ func _on_help_request_updated(request: Dictionary) -> void:
 	if status == "accepted":
 		if rid == _active_request_id:
 			help_panel.hide()
+			_popup_mode = POPUP_MODE_NONE
 	elif status == "cooldown":
 		if rid == _active_request_id:
 			help_panel.hide()
+			_popup_mode = POPUP_MODE_NONE
 	elif status == "pending":
 		if rid != _active_request_id:
 			_auto_open_help_request(request)
@@ -429,6 +819,46 @@ func _on_help_request_resolved(request: Dictionary) -> void:
 	_active_request_id = ""
 	_active_request_type = ""
 	help_panel.hide()
+	_popup_mode = POPUP_MODE_NONE
+	_reset_help_buttons()
+
+func show_kitchen_pick_popup(options: Array[String]) -> void:
+	if options.size() < 3:
+		return
+	_popup_mode = POPUP_MODE_KITCHEN_PICK
+	_kitchen_pick_options.clear()
+	for i in range(3):
+		_kitchen_pick_options.append(str(options[i]))
+	_active_request_id = ""
+	_active_request_type = ""
+	help_title.text = "Kitchen Pickup"
+	help_body.text = "Take the dish you need.\nTap a dish to add +1.\nPress E to close."
+	accept_btn.text = _kitchen_pick_options[0].capitalize()
+	decline_btn.text = _kitchen_pick_options[1].capitalize()
+	later_btn.text = _kitchen_pick_options[2].capitalize()
+	help_panel.show()
+
+func hide_kitchen_pick_popup() -> void:
+	if _popup_mode != POPUP_MODE_KITCHEN_PICK:
+		return
+	help_panel.hide()
+	_popup_mode = POPUP_MODE_NONE
+	_kitchen_pick_options.clear()
+	_reset_help_buttons()
+
+func is_kitchen_pick_popup_visible() -> bool:
+	return help_panel.visible and _popup_mode == POPUP_MODE_KITCHEN_PICK
+
+func is_help_request_popup_visible() -> bool:
+	return help_panel.visible and _popup_mode == POPUP_MODE_HELP
+
+func show_quick_notice(text: String) -> void:
+	_append_feed_line(text)
+
+func _reset_help_buttons() -> void:
+	accept_btn.text = "Accept"
+	decline_btn.text = "Decline"
+	later_btn.text = "Later"
 
 func _setup_mbti_survey() -> void:
 	_mbti_questions = [
@@ -476,19 +906,50 @@ func _setup_mbti_survey() -> void:
 
 	var profile = get_node_or_null("/root/PlayerProfile")
 	if profile and profile.has_method("has_mbti") and bool(profile.has_mbti()):
+		_set_gameplay_panels_visible(true)
 		return
+
+	# Let player camera settle before pausing, to avoid post-survey camera jump.
+	await _stabilize_player_camera_before_mbti()
 
 	_mbti_index = 0
 	for k in _mbti_scores.keys():
 		_mbti_scores[k] = 0
 
 	get_tree().paused = true
+	_recenter_mbti_panel()
 	mbti_panel.show()
 	mbti_result.hide()
 	mbti_confirm.hide()
 	mbti_option_a.show()
 	mbti_option_b.show()
 	_refresh_mbti_question()
+
+func _focus_player_camera_now() -> void:
+	var players = get_tree().get_nodes_in_group("player")
+	if players.is_empty():
+		return
+	var player = players[0]
+	if not (player is Node):
+		return
+	var cam = (player as Node).get_node_or_null("Camera2D")
+	if cam == null or not (cam is Camera2D):
+		return
+	var camera := cam as Camera2D
+	camera.make_current()
+	camera.force_update_scroll()
+
+func _stabilize_player_camera_before_mbti() -> void:
+	# Wait for a few frames until player camera is current to avoid startup top-edge framing.
+	for _i in range(6):
+		_focus_player_camera_now()
+		await get_tree().process_frame
+		var cam := get_viewport().get_camera_2d()
+		if cam != null:
+			return
+	await get_tree().physics_frame
+	_focus_player_camera_now()
+	await get_tree().process_frame
 
 func _refresh_mbti_question() -> void:
 	if _mbti_index < 0 or _mbti_index >= _mbti_questions.size():
@@ -548,6 +1009,13 @@ func _compute_mbti_type() -> String:
 func _finish_mbti_and_start() -> void:
 	mbti_panel.hide()
 	get_tree().paused = false
+	_set_gameplay_panels_visible(true)
+
+func _set_gameplay_panels_visible(visible: bool) -> void:
+	if inventory_panel:
+		inventory_panel.visible = visible
+	if dialogue_panel:
+		dialogue_panel.visible = visible
 
 func _auto_open_help_request(request: Dictionary) -> void:
 	if mbti_panel and mbti_panel.visible:

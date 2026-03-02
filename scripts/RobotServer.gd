@@ -40,12 +40,16 @@ const TASK_STATE_COMPLETED := "completed"
 const TASK_STATE_FAILED := "failed"
 const HELP_TYPE_HANDOFF := "HANDOFF"
 const CHARGING_MARKER := "RS1"
+const IDLE_WAIT_MARKER := "RG4"
 const EMERGENCY_RECHARGE_RESUME_LEVEL := 55.0
 const ROBOT_MAX_ACTIVE_TASKS := 1
+const EMERGENCY_HANDOFF_APPROACH_DISTANCE := 120.0
+@export var robot_handoff_threshold_tasks: int = 5
 var _active_task_id: String = ""
 var _active_task_step: String = ""
 var _active_step_started: bool = false
 var _last_replan_ms: int = 0
+var _pending_overload_handoff_task_id: String = ""
 
 # ---------- Unified Constraints ----------
 const BATTERY_MODE_NORMAL := "normal"
@@ -65,6 +69,9 @@ var _active_help_request_type: String = ""
 var _help_request_suppressed: bool = false
 var _recharge_override_active: bool = false
 var _last_recharge_notice_ms: int = 0
+var _battery_emergency_handoff_attempted_task_id: String = ""
+var _last_emergency_approach_notice_ms: int = 0
+var _last_overload_approach_notice_ms: int = 0
 
 # ---------- Custom BT Tasks ----------
 # Execute actions from "planned_actions" queue one by one
@@ -322,16 +329,26 @@ func _check_episode_completion() -> void:
 	var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
 	_constraint_input = _collect_constraint_input()
 
-	if _tick_recharge_override(has_plan):
-		return
-
 	# No active task: try to claim new work when idle.
 	if _active_task_id == "":
+		if _tick_recharge_override(has_plan):
+			return
 		if not has_plan and not _waiting_for_help:
 			_try_claim_next_task()
 		return
 
 	if _sync_active_task_state():
+		return
+
+	# Emergency delegation has highest priority for the active task.
+	if _tick_emergency_delegation():
+		return
+
+	# Overload delegation: approach player first, then request in-person handoff.
+	if _tick_overload_handoff_delegation():
+		return
+
+	if _tick_recharge_override(has_plan):
 		return
 
 	_tick_offer_take_order_handoff()
@@ -406,28 +423,33 @@ func _try_claim_next_task() -> void:
 	if _active_task_id != "" and ROBOT_MAX_ACTIVE_TASKS <= 1:
 		return
 
-	# Conserve mode: while idle, prefer charging before taking new tasks.
-	if _battery_mode == BATTERY_MODE_CONSERVE:
-		if _is_near_recharge_station():
-			return
-		if battery_level <= battery_conserve_threshold + 5.0:
-			_plan_navigate_to_location(CHARGING_MARKER)
-			_try_speak_recharge_notice("Battery low. Recharging before next task.")
-			return
-
 	var board = _task_board()
 	if not board:
 		return
 	var constraints = _collect_constraint_input()
 	var task = board.get_best_unassigned_task(TASK_TYPE_FULFILL_ORDER, constraints)
 	if task.is_empty():
+		# Idle behavior by battery mode:
+		# - emergency: handled by recharge override earlier in tick loop.
+		# - conserve: no pending orders -> go charge.
+		# - normal: stay on dining side for quicker next-customer response.
+		if _battery_mode == BATTERY_MODE_CONSERVE:
+			if not _is_near_recharge_station():
+				_plan_navigate_to_location(CHARGING_MARKER)
+				_try_speak_recharge_notice("Battery low. Recharging while idle.")
+			return
+		if _battery_mode == BATTERY_MODE_NORMAL and not _is_in_dining_side():
+			var locations: Dictionary = bt_runner.bb.get("locations", {})
+			if locations.has(IDLE_WAIT_MARKER):
+				_plan_navigate_to_location(IDLE_WAIT_MARKER)
 		return
-	
-	var task_slack_ms = int(task.get("deadline_ms", Time.get_ticks_msec()) - Time.get_ticks_msec())
-	var battery_mode = str(constraints.get("battery_mode", BATTERY_MODE_NORMAL))
-	if battery_mode == BATTERY_MODE_EMERGENCY and task_slack_ms > 20_000:
-		print("[RobotServer] Emergency battery; deferring new claim. slack_ms=", task_slack_ms)
-		return
+
+	# Pending work exists: in conserve/normal we should still serve orders.
+	if _battery_mode == BATTERY_MODE_EMERGENCY:
+		var task_slack_ms = int(task.get("deadline_ms", Time.get_ticks_msec()) - Time.get_ticks_msec())
+		if task_slack_ms > 20_000:
+			print("[RobotServer] Emergency battery; deferring new claim. slack_ms=", task_slack_ms)
+			return
 
 	var task_id = str(task.get("id", ""))
 	if task_id == "":
@@ -440,38 +462,16 @@ func _try_claim_next_task() -> void:
 	_start_claimed_task(claimed)
 
 func _tick_offer_take_order_handoff() -> void:
-	if _active_task_id == "":
-		return
-	if _active_help_request_id != "":
-		return
-	if _waiting_for_help:
-		return
-	var board = _task_board()
-	if board == null or not board.has_method("get_best_handoff_candidate_for_player"):
-		return
-	var candidate: Dictionary = board.get_best_handoff_candidate_for_player()
-	if candidate.is_empty():
-		return
-	var candidate_id := str(candidate.get("id", ""))
-	if candidate_id == "":
-		return
-	_ensure_help_request(HELP_TYPE_HANDOFF, {
-		"handoff_mode": "TAKEOVER_TASK",
-		"task_id": candidate_id,
-		"item_needed": str(candidate.get("payload", {}).get("food_item", "item")),
-		"reason": "robot_busy_take_order_handoff",
-		"slack_ms": int(board.get_task_slack_ms(candidate_id))
-	}, {
-		"cooldown_ms": 3000,
-		"max_escalation": 2,
-		"urgency": clampf(1.0 - float(board.get_task_slack_ms(candidate_id)) / 90000.0, 0.1, 1.0)
-	})
+	# Disabled by design: take-order ownership is robot-only now.
+	# Overload handoff is triggered only after robot completes TAKE_ORDER for a claimed task.
+	return
 
 func _start_claimed_task(task: Dictionary) -> void:
 	_active_task_id = str(task.get("id", ""))
 	_active_task_step = ""
 	if _active_task_id == "":
 		return
+	_pending_overload_handoff_task_id = ""
 
 	var payload: Dictionary = task.get("payload", {})
 	var customer = _resolve_customer_from_payload(payload)
@@ -494,7 +494,23 @@ func _start_claimed_task(task: Dictionary) -> void:
 		logger.start_episode(_current_food_item, customer_seat, customer.global_position, global_position)
 		_episode_active = true
 
+	if _should_trigger_overload_handoff(_active_task_id):
+		_pending_overload_handoff_task_id = _active_task_id
+
 	_plan_current_task_step()
+
+func _should_trigger_overload_handoff(task_id: String) -> bool:
+	if task_id == "":
+		return false
+	var board = _task_board()
+	if board == null:
+		return false
+	if not board.has_method("get_open_task_count"):
+		return false
+	if robot_handoff_threshold_tasks <= 0:
+		return false
+	var open_tasks := int(board.get_open_task_count())
+	return open_tasks >= robot_handoff_threshold_tasks
 
 func _resolve_customer_from_payload(payload: Dictionary) -> Node2D:
 	var iid = int(payload.get("customer_instance_id", 0))
@@ -564,11 +580,14 @@ func _plan_pickup_step() -> void:
 	speak("Heading to kitchen for " + item_name + ".")
 
 func _plan_deliver_step() -> void:
-	_set_step_plan([
+	var actions := [
 		{"action": "navigate", "params": {"target": "customer"}},
-		{"action": "drop", "params": {}},
-		{"action": "navigate", "params": {"target": "RS1"}}
-	])
+		{"action": "drop", "params": {}}
+	]
+	# Return to charging station only when battery is already in constrained modes.
+	if _battery_mode == BATTERY_MODE_CONSERVE or _battery_mode == BATTERY_MODE_EMERGENCY:
+		actions.append({"action": "navigate", "params": {"target": "RS1"}})
+	_set_step_plan(actions)
 	speak("Delivering now.")
 
 func _on_active_step_finished() -> void:
@@ -583,6 +602,11 @@ func _on_active_step_finished() -> void:
 	var ok = board.complete_current_step(_active_task_id, expected_step)
 	if not ok:
 		print("[RobotServer] Failed to complete step for task: ", _active_task_id)
+		return
+
+	if expected_step == STEP_TAKE_ORDER and _pending_overload_handoff_task_id == _active_task_id:
+		# Defer request creation to tick loop so robot can approach player first.
+		_active_step_started = false
 		return
 
 	_active_step_started = false
@@ -605,8 +629,10 @@ func _clear_active_task_runtime() -> void:
 	_active_task_id = ""
 	_active_task_step = ""
 	_active_step_started = false
+	_pending_overload_handoff_task_id = ""
 	_last_replan_ms = 0
 	_recharge_override_active = false
+	_battery_emergency_handoff_attempted_task_id = ""
 	bt_runner.bb.erase("target_customer")
 	bt_runner.bb["last_plan_failed"] = false
 	_clear_help_request_runtime()
@@ -650,6 +676,154 @@ func _collect_constraint_input() -> Dictionary:
 
 	return input
 
+func _tick_emergency_delegation() -> bool:
+	if _active_task_id == "":
+		return false
+
+	var is_battery_emergency := _battery_mode == BATTERY_MODE_EMERGENCY
+	if not is_battery_emergency:
+		return false
+
+	# If currently waiting on a help request, keep waiting (highest priority state).
+	if _waiting_for_help:
+		return true
+
+	var help_mgr = _help_manager()
+	if help_mgr == null:
+		return false
+
+	var player = _get_primary_player()
+	if player == null:
+		return false
+
+	if _active_help_request_id != "":
+		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
+		if not existing.is_empty():
+			var st := str(existing.get("status", ""))
+			if st != "resolved":
+				_waiting_for_help = true
+				return true
+
+	# Emergency handoff must be in-person: approach player first, then request/popup.
+	var distance_to_player := global_position.distance_to(player.global_position)
+	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
+		_waiting_for_help = false
+		var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
+		if not has_plan:
+			_plan_navigate_to_position(player.global_position, "emergency_player")
+		var now_ms := Time.get_ticks_msec()
+		if now_ms - _last_emergency_approach_notice_ms > 1800:
+			_last_emergency_approach_notice_ms = now_ms
+			speak("Battery critical. Coming to you for urgent handoff.")
+		return true
+
+	var reason := ""
+	if is_battery_emergency and _battery_emergency_handoff_attempted_task_id != _active_task_id:
+		reason = "battery_emergency"
+		_battery_emergency_handoff_attempted_task_id = _active_task_id
+	else:
+		# Already attempted emergency delegation for this task.
+		# Battery emergency should now force recharge override.
+		if is_battery_emergency and not _recharge_override_active:
+			_activate_recharge_override("Battery critical. Recharging now.")
+			return true
+		return false
+
+	var board = _task_board()
+	var item_needed := "item"
+	var slack_ms := int(_constraint_input.get("slack_ms", 0))
+	if board and board.has_method("get_task"):
+		var task: Dictionary = board.get_task(_active_task_id)
+		var payload: Dictionary = task.get("payload", {})
+		item_needed = str(payload.get("food_item", "item"))
+
+	_ensure_help_request(HELP_TYPE_HANDOFF, {
+		"handoff_mode": "TAKEOVER_TASK",
+		"task_id": _active_task_id,
+		"item_needed": item_needed,
+		"reason": reason,
+		"slack_ms": slack_ms
+	}, {
+		"cooldown_ms": 2500,
+		"max_escalation": 1,
+		"urgency": 1.0
+	})
+	_waiting_for_help = true
+	speak("Battery critical. Please take this order while I recharge.")
+	return true
+
+func _tick_overload_handoff_delegation() -> bool:
+	if _active_task_id == "":
+		return false
+	if _pending_overload_handoff_task_id == "" or _pending_overload_handoff_task_id != _active_task_id:
+		return false
+	if _help_request_suppressed:
+		# Player refused this request episode; continue task execution.
+		_pending_overload_handoff_task_id = ""
+		return false
+
+	var help_mgr = _help_manager()
+	if help_mgr == null:
+		return false
+	var player = _get_primary_player()
+	if player == null:
+		return false
+
+	if _active_help_request_id != "":
+		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
+		if not existing.is_empty():
+			var st := str(existing.get("status", ""))
+			if st != "resolved":
+				_waiting_for_help = true
+				return true
+
+	var distance_to_player := global_position.distance_to(player.global_position)
+	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
+		_waiting_for_help = false
+		var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
+		if not has_plan:
+			_plan_navigate_to_position(player.global_position, "overload_player")
+		var now_ms := Time.get_ticks_msec()
+		if now_ms - _last_overload_approach_notice_ms > 1800:
+			_last_overload_approach_notice_ms = now_ms
+			speak("Task load is high. Coming to you for handoff.")
+		return true
+
+	var board = _task_board()
+	var item_needed := "item"
+	var slack_ms := int(_constraint_input.get("slack_ms", 0))
+	if board and board.has_method("get_task"):
+		var task: Dictionary = board.get_task(_active_task_id)
+		var payload: Dictionary = task.get("payload", {})
+		item_needed = str(payload.get("food_item", "item"))
+
+	_ensure_help_request(HELP_TYPE_HANDOFF, {
+		"handoff_mode": "TAKEOVER_TASK",
+		"task_id": _active_task_id,
+		"item_needed": item_needed,
+		"reason": "robot_over_threshold_post_take_order",
+		"slack_ms": slack_ms
+	}, {
+		"cooldown_ms": 4000,
+		"max_escalation": 2,
+		"urgency": _estimate_help_urgency()
+	})
+	_waiting_for_help = true
+	speak("Task load is high. Please take over this order.")
+	return true
+
+func _get_primary_player() -> Node2D:
+	var players := get_tree().get_nodes_in_group("player")
+	if players.is_empty():
+		return null
+	if players[0] is Node2D:
+		return players[0] as Node2D
+	return null
+
+func _is_in_dining_side() -> bool:
+	# Keep normal-idle robot on customer side (lower room).
+	return global_position.y >= -150.0
+
 func _update_battery_and_mode(dt: float) -> void:
 	var moving := velocity.length() > 1.0
 	var drain_rate := battery_drain_idle_per_sec
@@ -692,7 +866,8 @@ func _is_near_recharge_station() -> bool:
 	var station = bt_runner.bb.get("locations", {}).get(CHARGING_MARKER, Vector2.ZERO)
 	if station == Vector2.ZERO:
 		return false
-	return global_position.distance_to(station) <= 36.0
+	# Navigation arrival often stops around 40-50px from exact marker.
+	return global_position.distance_to(station) <= 60.0
 
 func _estimate_help_urgency() -> float:
 	var slack_ms := int(_constraint_input.get("slack_ms", 0))
@@ -727,6 +902,14 @@ func _activate_recharge_override(notice: String = "") -> void:
 func _tick_recharge_override(has_plan: bool) -> bool:
 	# Enter override proactively on emergency battery.
 	if _battery_mode == BATTERY_MODE_EMERGENCY and not _recharge_override_active:
+		# Give emergency handoff (if any) a chance before forcing recharge travel.
+		if _waiting_for_help:
+			return true
+		var help_mgr = _help_manager()
+		if help_mgr and _active_help_request_id != "":
+			var req: Dictionary = help_mgr.get_request(_active_help_request_id)
+			if not req.is_empty() and str(req.get("status", "")) != "resolved":
+				return true
 		_activate_recharge_override("Battery critical. Recharging now.")
 		return true
 
@@ -833,6 +1016,8 @@ func _on_help_request_updated(request: Dictionary) -> void:
 	elif status == "resolved" and final_response == "decline":
 		_help_request_suppressed = true
 		set_waiting_for_help(false, "")
+		if _battery_mode == BATTERY_MODE_EMERGENCY and not _recharge_override_active:
+			_activate_recharge_override("Battery critical. Recharging now.")
 
 func _apply_handoff_accept(request: Dictionary) -> void:
 	var payload: Dictionary = request.get("payload", {})

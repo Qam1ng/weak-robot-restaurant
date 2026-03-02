@@ -147,26 +147,15 @@ region_rect = Rect2(390, 300, 36, 30)
 position = Vector2(-168, -360)
 shape = SubResource("RectangleShape2D_0lfbe")
 
-[node name="Item3" parent="InteractiveItems" instance=ExtResource("8_g484w")]
-
-[node name="Sprite2D" parent="InteractiveItems/Item3" index="0"]
-position = Vector2(224, -392)
-region_enabled = true
-region_rect = Rect2(339.27673, 339.0842, 39.710968, 33.927826)
-
-[node name="CollisionShape2D" parent="InteractiveItems/Item3/Area2D" index="0"]
-position = Vector2(224, -360)
-shape = SubResource("RectangleShape2D_ndmpn")
-
 [node name="Item4" parent="InteractiveItems" instance=ExtResource("8_g484w")]
 
 [node name="Sprite2D" parent="InteractiveItems/Item4" index="0"]
-position = Vector2(344, -392)
+position = Vector2(-112, -392)
 region_enabled = true
 region_rect = Rect2(292.07703, 52.558144, 39.9646, 31.655136)
 
 [node name="CollisionShape2D" parent="InteractiveItems/Item4/Area2D" index="0"]
-position = Vector2(344, -360)
+position = Vector2(-112, -360)
 shape = SubResource("RectangleShape2D_ndmpn")
 
 [node name="CustomerSpawner" type="Node" parent="."]
@@ -225,232 +214,184 @@ position = Vector2(-328, 262)
 position = Vector2(264, 216)
 
 [node name="sandwich" type="Marker2D" parent="LocationMarkers" groups=["items"]]
-position = Vector2(344, -328)
-
-[node name="skewers" type="Marker2D" parent="LocationMarkers" groups=["items"]]
-position = Vector2(224, -328)
+position = Vector2(-112, -328)
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]
 
 [editable path="InteractiveItems/Item1"]
 [editable path="InteractiveItems/Item2"]
-[editable path="InteractiveItems/Item3"]
 [editable path="InteractiveItems/Item4"]

@@ -1,13 +1,5 @@
 Godot Engine v4.6.stable.official.89cea1439 - https://godotengine.org
 
-SCRIPT ERROR: Parse Error: Could not preload resource script "res://scripts/PersuasionEngine.gd".
-   at: GDScript::reload (res://scripts/HelpRequestManager.gd:19)
-SCRIPT ERROR: Parse Error: Could not resolve script "res://scripts/PersuasionEngine.gd".
-   at: GDScript::reload (res://scripts/HelpRequestManager.gd:19)
-ERROR: Failed to load script "res://scripts/HelpRequestManager.gd" with error "Parse error".
-   at: load (modules/gdscript/gdscript.cpp:2907)
-ERROR: Failed to instantiate an autoload, script 'res://scripts/HelpRequestManager.gd' does not inherit from 'Node'.
-   at: start (main/main.cpp:4407)
 ERROR: Condition "ret != noErr" is true. Returning: ""
    at: get_system_ca_certificates (platform/macos/os_macos.mm:1014)
 [DialogueManager] Ready with API key from local secret source.
@@ -20,7 +12,6 @@ ERROR: Condition "ret != noErr" is true. Returning: ""
 [HumanServer] ready OK; node=Player
 [Restaurant] Set Item1 display_name to 'hotdog'
 [Restaurant] Set Item2 display_name to 'pizza'
-[Restaurant] Set Item3 display_name to 'skewers'
 [Restaurant] Set Item4 display_name to 'sandwich'
 [Restaurant] Discovering ALL locations at startup...
   -> CS1 at (-47.0, 333.0)
@@ -38,14 +29,13 @@ ERROR: Condition "ret != noErr" is true. Returning: ""
   -> seat3 at (-8.0, 88.0)
   -> seat4 at (-328.0, 262.0)
   -> seat5 at (264.0, 216.0)
-  -> sandwich at (344.0, -328.0)
-  -> skewers at (224.0, -328.0)
-[Restaurant] Total locations: [&"CS1", &"RS1", &"RG1", &"RG2", &"RG3", &"RG4", &"RG5", &"RG6", &"hotdog", &"pizza", &"seat1", &"seat2", &"seat3", &"seat4", &"seat5", &"sandwich", &"skewers"]
+  -> sandwich at (-112.0, -328.0)
+[Restaurant] Total locations: [&"CS1", &"RS1", &"RG1", &"RG2", &"RG3", &"RG4", &"RG5", &"RG6", &"hotdog", &"pizza", &"seat1", &"seat2", &"seat3", &"seat4", &"seat5", &"sandwich"]
 [GameManager] CustomerSpawner registered
 [Restaurant] CustomerSpawner registered with GameManager
 [RobotServer] Discovering locations...
-[RobotServer] Got 17 locations from Restaurant
-[RobotServer] Ready with 17 locations
+[RobotServer] Got 16 locations from Restaurant
+[RobotServer] Ready with 16 locations
 [CustomerSpawner] Spawn point set to CS1 at (-47.0, 333.0)
 [CustomerSpawner] Connected to TimeManager
 [CustomerSpawner] Ready. Max customers for current period: 2 (absolute max: 5)

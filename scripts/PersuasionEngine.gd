@@ -46,6 +46,7 @@ static func _score(strategy: String, context: Dictionary) -> float:
 	var urgency := float(env.get("urgency", 0.5))
 	var busyness := float(env.get("busyness", 0.5))
 	var player_load := float(player.get("load", 0.5))
+	var player_task_load := float(player.get("task_load", player_load))
 	var acceptance_rate := float(history.get("acceptance_rate", 0.5))
 	var annoyance := float(history.get("annoyance", 0.0))
 	var battery_level := float(robot.get("battery_level", 100.0))
@@ -61,17 +62,17 @@ static func _score(strategy: String, context: Dictionary) -> float:
 
 	match strategy:
 		STRATEGY_SCARCITY:
-			return 2.2 * urgency + 1.8 * battery_pressure - 0.5 * player_load + 0.9 * personality_boost
+			return 2.2 * urgency + 1.8 * battery_pressure - 0.5 * player_load - 0.7 * player_task_load + 0.9 * personality_boost
 		STRATEGY_AUTHORITY:
-			return 1.7 * urgency + 1.2 * busyness + 1.0 * battery_pressure - 0.4 * player_load + 0.9 * personality_boost
+			return 1.7 * urgency + 1.2 * busyness + 1.0 * battery_pressure - 0.4 * player_load - 0.6 * player_task_load + 0.9 * personality_boost
 		STRATEGY_COMMITMENT:
-			return 1.8 * acceptance_rate + 0.6 * urgency - 0.6 * annoyance + 0.9 * personality_boost
+			return 1.8 * acceptance_rate + 0.6 * urgency - 0.6 * annoyance - 0.4 * player_task_load + 0.9 * personality_boost
 		STRATEGY_RECIPROCITY:
-			return 1.2 * acceptance_rate + 0.8 * (1.0 - player_load) + 0.5 * busyness - 0.6 * annoyance + 0.9 * personality_boost
+			return 1.2 * acceptance_rate + 0.8 * (1.0 - player_load) + 0.5 * busyness - 0.6 * annoyance - 0.5 * player_task_load + 0.9 * personality_boost
 		STRATEGY_SOCIAL_PROOF:
-			return 1.6 * busyness + 0.8 * urgency - 0.3 * player_load + 0.9 * personality_boost
+			return 1.6 * busyness + 0.8 * urgency - 0.3 * player_load - 0.4 * player_task_load + 0.9 * personality_boost
 		STRATEGY_LIKING:
-			return 1.4 * annoyance + 0.8 * (1.0 - player_load) + 0.4 * acceptance_rate + 0.9 * personality_boost
+			return 1.4 * annoyance + 0.8 * (1.0 - player_load) + 0.4 * acceptance_rate - 0.3 * player_task_load + 0.9 * personality_boost
 		_:
 			return 0.0
 
@@ -99,6 +100,10 @@ static func _build_intent(request_type: String, strategy: String, context: Dicti
 		evidence.append("slack_ms:%d" % slack_ms)
 	var battery_mode := str(context.get("robot", {}).get("battery_mode", "normal"))
 	evidence.append("battery_mode:%s" % battery_mode)
+	var player_active_tasks := int(context.get("player", {}).get("active_tasks", 0))
+	var player_task_load := float(context.get("player", {}).get("task_load", 0.0))
+	evidence.append("player_active_tasks:%d" % player_active_tasks)
+	evidence.append("player_task_load:%.2f" % player_task_load)
 
 	return {
 		"request_type": request_type,
