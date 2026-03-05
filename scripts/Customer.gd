@@ -73,7 +73,7 @@ func _ready() -> void:
 	agent.set_navigation_map(get_world_2d().navigation_map)
 	agent.avoidance_enabled = true
 	agent.max_speed = move_speed
-	agent.radius = 20.0
+	agent.radius = 14.0
 	agent.path_desired_distance = 12.0
 	agent.target_desired_distance = 14.0
 	agent.velocity_computed.connect(_on_velocity_computed)
