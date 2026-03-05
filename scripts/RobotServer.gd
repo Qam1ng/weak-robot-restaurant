@@ -507,13 +507,10 @@ func _plan_current_task_step() -> void:
 
 	match _active_task_step:
 		STEP_TAKE_ORDER:
-			print("[RobotServer][Plan] task=", _active_task_id, " step=TAKE_ORDER")
 			_plan_take_order_step()
 		STEP_PICKUP_FROM_KITCHEN:
-			print("[RobotServer][Plan] task=", _active_task_id, " step=PICKUP_FROM_KITCHEN item=", _current_food_item)
 			_plan_pickup_step()
 		STEP_DELIVER_AND_SERVE:
-			print("[RobotServer][Plan] task=", _active_task_id, " step=DELIVER_AND_SERVE")
 			_plan_deliver_step()
 		_:
 			pass
@@ -539,7 +536,6 @@ func _plan_take_order_step() -> void:
 		if not locations.has(nearest_pose.name):
 			locations[nearest_pose.name] = nearest_pose.global_position
 			bt_runner.bb["locations"] = locations
-		print("[RobotServer][PlanTakeOrder] target_pose=", nearest_pose.name, " target_pos=", nearest_pose.global_position, " customer_pos=", customer.global_position)
 		_set_step_plan([
 			{"action": "navigate", "params": {"target": nearest_pose.name}}
 		])
@@ -553,11 +549,6 @@ func _plan_pickup_step() -> void:
 
 	bt_runner.bb["item_name"] = item_name
 	var raw_target: Vector2 = locations.get(item_name, Vector2.ZERO)
-	var nav_target := raw_target
-	var nav_map: RID = get_world_2d().navigation_map
-	if nav_map.is_valid() and raw_target != Vector2.ZERO:
-		nav_target = NavigationServer2D.map_get_closest_point(nav_map, raw_target)
-	print("[RobotServer][PlanPickup] item=", item_name, " raw=", raw_target, " nav=", nav_target, " robot=", global_position)
 	_set_step_plan([
 		{"action": "navigate", "params": {"target": item_name}},
 		{"action": "pick", "params": {"item": item_name}}

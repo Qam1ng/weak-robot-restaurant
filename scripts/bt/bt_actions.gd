@@ -23,10 +23,6 @@ class ActNavigate extends Core.Task:
 	var _stuck_duration_ms: int = 0
 	var _total_stuck_time_ms: int = 0
 	var _retry_count: int = 0
-	var _logged_no_path: bool = false
-	var _last_collision_log_ms: int = 0
-	var _last_path_tail: Vector2 = Vector2.ZERO
-	var _last_path_tail_gap: float = INF
 	const MAX_RETRY_ATTEMPTS := 3
 	const STUCK_TIMEOUT_MS := 5000
 
@@ -86,12 +82,6 @@ class ActNavigate extends Core.Task:
 		var start_nav_now: Vector2 = NavigationServer2D.map_get_closest_point(nav_map, actor.global_position)
 		var target_nav_now: Vector2 = NavigationServer2D.map_get_closest_point(nav_map, _final_target)
 		var server_path: PackedVector2Array = NavigationServer2D.map_get_path(nav_map, start_nav_now, target_nav_now, true, 1)
-		if server_path.size() > 0:
-			_last_path_tail = server_path[server_path.size() - 1]
-			_last_path_tail_gap = _last_path_tail.distance_to(target_nav_now)
-		else:
-			_last_path_tail = Vector2.ZERO
-			_last_path_tail_gap = INF
 		if actor.has_method("set_nav_debug_path"):
 			actor.call("set_nav_debug_path", server_path)
 
@@ -124,7 +114,7 @@ class ActNavigate extends Core.Task:
 					bb["help_reason"] = "too_many_evasions"
 					bb["help_stuck_position"] = actor.global_position
 					bb["help_evasion_attempts"] = _retry_count
-					print("[ActNavigate][Fail] from=", actor.global_position, " to=", _final_target, " retries=", _retry_count, " stuck_ms=", _total_stuck_time_ms, " path_points=", server_path.size(), " tail=", _last_path_tail, " tail_gap=", int(_last_path_tail_gap), " target_nav=", target_nav_now)
+					print("[ActNavigate][Fail] from=", actor.global_position, " to=", _final_target, " retries=", _retry_count, " stuck_ms=", _total_stuck_time_ms, " path_points=", server_path.size())
 					if actor.has_method("speak"):
 						actor.speak("I've tried " + str(_retry_count) + " times but can't get through. Need help!")
 					return Core.Status.FAILURE
@@ -144,11 +134,7 @@ class ActNavigate extends Core.Task:
 			else:
 				next_path_pos = server_path[next_idx]
 			has_valid_path = true
-			_logged_no_path = false
 		else:
-			if not _logged_no_path:
-				print("[ActNavigate][NoPath] target=", _final_target, " agent_radius=", agent.radius, " server_path_points=", server_path.size(), " start_nav=", start_nav_now, " target_nav=", target_nav_now)
-				_logged_no_path = true
 			# No valid nav path: do not drift to (0,0) or force straight-line through colliders.
 			# Stay still and let stuck logic fail fast with precise logs.
 			has_valid_path = false
@@ -159,30 +145,8 @@ class ActNavigate extends Core.Task:
 		else:
 			actor.velocity = Vector2.ZERO
 		actor.move_and_slide()
-		_log_blocking_collision_if_any(actor)
 
 		return Core.Status.RUNNING
-
-	func _log_blocking_collision_if_any(actor: Node) -> void:
-		if not (actor is CharacterBody2D):
-			return
-		var body := actor as CharacterBody2D
-		var ccount := body.get_slide_collision_count()
-		if ccount <= 0:
-			return
-		var now_ms := Time.get_ticks_msec()
-		if now_ms - _last_collision_log_ms < 700:
-			return
-		_last_collision_log_ms = now_ms
-		var c: KinematicCollision2D = body.get_slide_collision(0)
-		if c == null:
-			return
-		var col_obj := c.get_collider()
-		var col_name := str(col_obj)
-		var col_path := ""
-		if col_obj is Node:
-			col_path = str((col_obj as Node).get_path())
-		print("[ActNavigate][BlockedBy] collider=", col_name, " path=", col_path, " normal=", c.get_normal(), " pos=", c.get_position())
 
 	func _set_agent_target(agent: NavigationAgent2D, actor: Node, target: Vector2) -> void:
 		agent.set_navigation_map(actor.get_world_2d().navigation_map)
