@@ -4,13 +4,14 @@ class_name RobotServer
 
 # ---------- Movement / spawn ----------
 @export var spawn_path: NodePath
-@export var move_speed: float = 120.0
+@export var move_speed: float = 100.0
 @onready var agent: NavigationAgent2D = $NavigationAgent2D
 @onready var anim: AnimatedSprite2D   = $AnimatedSprite2D
 @onready var ray: RayCast2D = null # Created in _ready
 
 var _moving: bool = false
 var _last_dir: Vector2 = Vector2.DOWN
+var _nav_debug_line: Line2D = null
 
 # ---------- BT ----------
 const Core = preload("res://scripts/bt/bt_core.gd")
@@ -73,104 +74,48 @@ var _battery_emergency_handoff_attempted_task_id: String = ""
 var _last_emergency_approach_notice_ms: int = 0
 var _last_overload_approach_notice_ms: int = 0
 
+func _has_property(obj: Object, prop_name: String) -> bool:
+	for p in obj.get_property_list():
+		if str(p.get("name", "")) == prop_name:
+			return true
+	return false
+
 # ---------- Custom BT Tasks ----------
 # Execute actions from "planned_actions" queue one by one
 class ActExecutePlan extends Core.Task:
 	var current_node: Core.Task = null
 	
 	func tick(bb: Dictionary, actor: Node) -> int:
-		# 1. Check if we have a plan
 		if not bb.has("planned_actions") or bb.planned_actions.is_empty():
 			return Core.Status.FAILURE
 			
-		# 2. Instantiate Action Node if needed
 		if current_node == null:
-			# Peek at the first action
 			var action_data = bb.planned_actions[0]
 			var action_name = action_data.get("action")
 			var params = action_data.get("params", {})
-			
-			print("[BT] Creating node for action: ", action_name)
-			current_node = _create_action_node(action_name, params, bb)
-			
-			# Log action start
+			current_node = _create_action_node(action_name, params, bb, actor)
 			var logger = actor.get_node_or_null("/root/EpisodeLogger")
 			if logger:
 				logger.log_event("action_start", {"action": action_name, "params": params})
 			
 			if not current_node:
-				print("[BT] Unknown action or failed to create: ", action_name)
-				# Remove the bad action to avoid infinite loop
 				bb.planned_actions.pop_front()
 				return Core.Status.FAILURE
 		
-		# 3. Tick current node
 		var status = current_node.tick(bb, actor)
 		
 		if status == Core.Status.SUCCESS:
 			var completed_action = bb.planned_actions[0].get("action")
-			print("[BT] Action completed: ", completed_action)
-			
-			# Log action completion
 			var logger = actor.get_node_or_null("/root/EpisodeLogger")
 			if logger:
 				logger.log_event("action_complete", {"action": completed_action, "success": true})
 			
-			# Action done, remove from queue
 			bb.planned_actions.pop_front()
 			bb["last_plan_failed"] = false
 			current_node = null
 			return Core.Status.RUNNING 
 			
 		elif status == Core.Status.FAILURE:
-			var failed_action = bb.planned_actions[0]
-			var action_name = failed_action.get("action")
-			print("[BT] Action failed: ", action_name)
-
-			# Fallback Logic for Navigate/Pick Failure (e.g., evasion timeout)
-			if action_name == "navigate" or action_name == "pick":
-				var help_reason = bb.get("help_reason", "unknown")
-				print("[BT] Action failed: ", action_name, ". Reason: ", help_reason, ". Entering Fallback Logic.")
-				
-				# Check if next (or current failed) action relates to picking an item
-				var item_needed = ""
-				if action_name == "pick":
-					item_needed = failed_action.get("params", {}).get("item", "item")
-				elif bb.planned_actions.size() > 0:
-					# If nav failed, check if next action was pick
-					# bb.planned_actions[0] is the failed action itself
-					# If failed action is navigate, check if there is a subsequent pick
-					if bb.planned_actions.size() > 1:
-						var next = bb.planned_actions[1]
-						if next.get("action") == "pick":
-							item_needed = next.get("params", {}).get("item", "item")
-				
-				if item_needed != "":
-					var reason_text = "navigation failed"
-					if help_reason == "evasion_timeout":
-						reason_text = "stuck for 5+ seconds (evasion timeout)"
-					elif help_reason == "too_many_evasions":
-						reason_text = "exceeded max evasion attempts (6+)"
-					print("[BT] ", reason_text, ". Switching to AskHelp for: ", item_needed)
-					
-					# Clear the problematic actions (Navigate + Pick)
-					# If Navigate failed: pop navigate, pop pick
-					# If Pick failed: pop pick
-					
-					if action_name == "navigate":
-						bb.planned_actions.pop_front() # Remove failed nav
-						if not bb.planned_actions.is_empty() and bb.planned_actions[0].get("action") == "pick":
-							bb.planned_actions.pop_front() # Remove associated pick
-					elif action_name == "pick":
-						bb.planned_actions.pop_front() # Remove failed pick
-						
-					var ask_action = {"action": "ask_help", "params": {"item": item_needed}}
-					bb.planned_actions.push_front(ask_action)
-					
-					current_node = null # Reset to process new action immediately
-					return Core.Status.RUNNING
-
-			# If not recoverable or unknown failure, abort plan
 			bb["last_plan_failed"] = true
 			bb.erase("planned_actions")
 			current_node = null
@@ -178,33 +123,25 @@ class ActExecutePlan extends Core.Task:
 			
 		return Core.Status.RUNNING
 
-	func _create_action_node(name: String, params: Dictionary, bb: Dictionary) -> Core.Task:
-		# Dynamic Action Mapping Factory
-		var Act = load("res://scripts/bt/bt_actions.gd")
+	func _create_action_node(name: String, params: Dictionary, bb: Dictionary, actor: Node) -> Core.Task:
+		var Act = preload("res://scripts/bt/bt_actions.gd")
 		match name:
 			"navigate":
 				var target_name = params.get("target", "")
 				var node = Act.ActNavigate.new()
-				
-				print("[BT] Resolving navigation target: ", target_name)
-				
-				# Resolve target:
-				# 1. Check blackboard "locations" (discovered markers)
 				if bb.has("locations") and bb["locations"].has(target_name):
-					# Temporarily store the resolved Vector2 for ActNavigate to consume
+					var raw_target: Vector2 = bb["locations"][target_name]
+					var resolved_target: Vector2 = raw_target
+					var nav_map: RID = actor.get_world_2d().navigation_map
+					if nav_map.is_valid():
+						var nav_closest := NavigationServer2D.map_get_closest_point(nav_map, raw_target)
+						resolved_target = nav_closest
 					var temp_key = "nav_target_" + str(Time.get_ticks_msec()) + "_" + str(randi())
-					bb[temp_key] = bb["locations"][target_name]
+					bb[temp_key] = resolved_target
 					node.target_key = temp_key
-					print("[BT] Target resolved to coordinates: ", bb[temp_key])
-				# 2. Check special keys
 				elif target_name == "customer":
 					node.target_key = "target_customer"
-					print("[BT] Target is customer")
-				elif target_name == "counter": # Fallback if 'counter' not in locations
-					node.target_key = "counter_pos"
-					print("[BT] Target is default counter")
 				else:
-					print("[BT] Unknown nav target: ", target_name)
 					return null
 				return node
 				
@@ -242,14 +179,39 @@ func _ready() -> void:
 	await get_tree().physics_frame
 	
 	# Configure Navigation Agent
-	agent.avoidance_enabled = true
+	agent.set_navigation_map(get_world_2d().navigation_map)
+	agent.navigation_layers = 1
+	# Use native path points from NavigationAgent2D, but apply movement directly in actor.
+	# Avoidance callback path can be flaky when nav sources are rebuilt at runtime.
+	agent.avoidance_enabled = false
 	agent.max_speed = move_speed
-	agent.radius = 20.0  # Match the robot's approximate size (width ~40-50px)
-	agent.neighbor_distance = 500.0
+	agent.radius = 10.0
+	# Avoid over-reacting to far-away agents, which can skew local steering.
+	agent.neighbor_distance = 120.0
 	agent.time_horizon = 1.0
-	agent.debug_enabled = true # Enable debug visuals for pathfinding
+	agent.debug_enabled = true
+	if _has_property(agent, "debug_use_custom"):
+		agent.set("debug_use_custom", true)
+	if _has_property(agent, "debug_path_custom_color"):
+		agent.set("debug_path_custom_color", Color(1.0, 0.15, 0.15, 1.0))
+	if _has_property(agent, "debug_path_custom_line_width"):
+		agent.set("debug_path_custom_line_width", 3.0)
 	
-	agent.velocity_computed.connect(_on_agent_velocity_computed)
+	if agent.avoidance_enabled:
+		agent.velocity_computed.connect(_on_agent_velocity_computed)
+	await _wait_for_nav_sync(agent.get_navigation_map(), 120)
+	_snap_robot_to_nav_if_needed()
+
+	if not has_node("NavDebugPath"):
+		var l := Line2D.new()
+		l.name = "NavDebugPath"
+		l.width = 3.0
+		l.default_color = Color(1.0, 0.15, 0.15, 1.0)
+		l.z_index = 100
+		add_child(l)
+		_nav_debug_line = l
+	else:
+		_nav_debug_line = get_node("NavDebugPath") as Line2D
 
 	# Dynamic RayCast creation for BT Avoidance
 	if not has_node("RayCast2D"):
@@ -277,7 +239,6 @@ func _ready() -> void:
 	
 	bt_runner.root = root
 	bt_runner.bb = {
-		"counter_pos": Vector2(500, 160), # Default
 		"carrying_item": false,
 		"planned_actions": [], # Queue of {action, params}
 		"last_plan_failed": false,
@@ -287,18 +248,34 @@ func _ready() -> void:
 	
 	# ---------- Discover Locations IMMEDIATELY ----------
 	_discover_locations()
-	print("[RobotServer] Ready with ", bt_runner.bb["locations"].size(), " locations")
+
+func _snap_robot_to_nav_if_needed() -> void:
+	var nav_map: RID = get_world_2d().navigation_map
+	if not nav_map.is_valid():
+		return
+	if NavigationServer2D.map_get_iteration_id(nav_map) <= 0:
+		return
+	var closest := NavigationServer2D.map_get_closest_point(nav_map, global_position)
+	var d := global_position.distance_to(closest)
+	# If spawn starts outside nav, agent can return empty path forever.
+	if d > 12.0:
+		global_position = closest
+
+func _wait_for_nav_sync(nav_map: RID, max_physics_frames: int = 90) -> void:
+	if not nav_map.is_valid():
+		return
+	for _i in range(max_physics_frames):
+		if NavigationServer2D.map_get_iteration_id(nav_map) > 0:
+			return
+		await get_tree().physics_frame
 
 func _discover_locations():
-	print("[RobotServer] Discovering locations...")
-	
 	# Try to get locations from RestaurantMain first (centralized data)
 	var restaurant = get_tree().get_root().find_child("Restaurant", true, false)
 	if restaurant and restaurant.has_method("get_all_locations"):
 		var locs = restaurant.get_all_locations()
 		if not locs.is_empty():
 			bt_runner.bb["locations"] = locs.duplicate()
-			print("[RobotServer] Got ", locs.size(), " locations from Restaurant")
 			return
 	
 	# Fallback: discover directly from LocationMarkers
@@ -307,9 +284,6 @@ func _discover_locations():
 		for child in markers_node.get_children():
 			if child is Marker2D:
 				bt_runner.bb["locations"][child.name] = child.global_position
-				print("  -> Found: ", child.name, " at ", child.global_position)
-	
-	print("[RobotServer] Discovered ", bt_runner.bb["locations"].size(), " locations")
 
 func _physics_process(dt: float) -> void:
 	_update_battery_and_mode(dt)
@@ -448,7 +422,6 @@ func _try_claim_next_task() -> void:
 	if _battery_mode == BATTERY_MODE_EMERGENCY:
 		var task_slack_ms = int(task.get("deadline_ms", Time.get_ticks_msec()) - Time.get_ticks_msec())
 		if task_slack_ms > 20_000:
-			print("[RobotServer] Emergency battery; deferring new claim. slack_ms=", task_slack_ms)
 			return
 
 	var task_id = str(task.get("id", ""))
@@ -476,7 +449,6 @@ func _start_claimed_task(task: Dictionary) -> void:
 	var payload: Dictionary = task.get("payload", {})
 	var customer = _resolve_customer_from_payload(payload)
 	if customer == null:
-		print("[RobotServer] Task ", _active_task_id, " has no valid customer. Skipping.")
 		var board = _task_board()
 		if board and board.has_method("complete_task"):
 			board.complete_task(_active_task_id)
@@ -535,13 +507,16 @@ func _plan_current_task_step() -> void:
 
 	match _active_task_step:
 		STEP_TAKE_ORDER:
+			print("[RobotServer][Plan] task=", _active_task_id, " step=TAKE_ORDER")
 			_plan_take_order_step()
 		STEP_PICKUP_FROM_KITCHEN:
+			print("[RobotServer][Plan] task=", _active_task_id, " step=PICKUP_FROM_KITCHEN item=", _current_food_item)
 			_plan_pickup_step()
 		STEP_DELIVER_AND_SERVE:
+			print("[RobotServer][Plan] task=", _active_task_id, " step=DELIVER_AND_SERVE")
 			_plan_deliver_step()
 		_:
-			print("[RobotServer] Unknown task step: ", _active_task_step)
+			pass
 
 func _plan_take_order_step() -> void:
 	var customer := bt_runner.bb.get("target_customer", null) as Node2D
@@ -560,8 +535,11 @@ func _plan_take_order_step() -> void:
 			nearest_pose = pose
 
 	if nearest_pose:
-		if not bt_runner.bb["locations"].has(nearest_pose.name):
-			bt_runner.bb["locations"][nearest_pose.name] = nearest_pose.global_position
+		var locations: Dictionary = bt_runner.bb.get("locations", {})
+		if not locations.has(nearest_pose.name):
+			locations[nearest_pose.name] = nearest_pose.global_position
+			bt_runner.bb["locations"] = locations
+		print("[RobotServer][PlanTakeOrder] target_pose=", nearest_pose.name, " target_pos=", nearest_pose.global_position, " customer_pos=", customer.global_position)
 		_set_step_plan([
 			{"action": "navigate", "params": {"target": nearest_pose.name}}
 		])
@@ -569,10 +547,17 @@ func _plan_take_order_step() -> void:
 
 func _plan_pickup_step() -> void:
 	var item_name := _current_food_item
-	if item_name == "" or not bt_runner.bb["locations"].has(item_name):
+	var locations: Dictionary = bt_runner.bb.get("locations", {})
+	if item_name == "" or not locations.has(item_name):
 		item_name = "pizza"
 
 	bt_runner.bb["item_name"] = item_name
+	var raw_target: Vector2 = locations.get(item_name, Vector2.ZERO)
+	var nav_target := raw_target
+	var nav_map: RID = get_world_2d().navigation_map
+	if nav_map.is_valid() and raw_target != Vector2.ZERO:
+		nav_target = NavigationServer2D.map_get_closest_point(nav_map, raw_target)
+	print("[RobotServer][PlanPickup] item=", item_name, " raw=", raw_target, " nav=", nav_target, " robot=", global_position)
 	_set_step_plan([
 		{"action": "navigate", "params": {"target": item_name}},
 		{"action": "pick", "params": {"item": item_name}}
@@ -601,7 +586,6 @@ func _on_active_step_finished() -> void:
 
 	var ok = board.complete_current_step(_active_task_id, expected_step)
 	if not ok:
-		print("[RobotServer] Failed to complete step for task: ", _active_task_id)
 		return
 
 	if expected_step == STEP_TAKE_ORDER and _pending_overload_handoff_task_id == _active_task_id:
@@ -621,7 +605,6 @@ func _finish_active_task_if_needed() -> void:
 	if not board.is_task_completed(_active_task_id):
 		return
 
-	print("[RobotServer] Task completed: ", _active_task_id)
 	_end_current_episode(true)
 	_clear_active_task_runtime()
 
@@ -635,6 +618,7 @@ func _clear_active_task_runtime() -> void:
 	_battery_emergency_handoff_attempted_task_id = ""
 	bt_runner.bb.erase("target_customer")
 	bt_runner.bb["last_plan_failed"] = false
+	set_nav_debug_path(PackedVector2Array())
 	_clear_help_request_runtime()
 
 func _set_step_plan(actions: Array) -> void:
@@ -849,7 +833,6 @@ func _update_battery_mode() -> void:
 		_battery_mode = BATTERY_MODE_NORMAL
 
 	if previous != _battery_mode:
-		print("[RobotServer] Battery mode: ", previous, " -> ", _battery_mode, " (", int(battery_level), "%)")
 		# Emergency mode should immediately interrupt execution and recharge.
 		if _battery_mode == BATTERY_MODE_EMERGENCY:
 			_activate_recharge_override("Battery critical. Recharging now.")
@@ -1101,6 +1084,17 @@ func _clear_help_request_runtime() -> void:
 	_active_help_request_type = ""
 	_help_request_suppressed = false
 
+func set_nav_debug_path(world_points: PackedVector2Array) -> void:
+	if _nav_debug_line == null:
+		return
+	if world_points.is_empty():
+		_nav_debug_line.points = PackedVector2Array()
+		return
+	var local_points := PackedVector2Array()
+	for p in world_points:
+		local_points.push_back(to_local(p))
+	_nav_debug_line.points = local_points
+
 func _on_agent_velocity_computed(safe_velocity: Vector2) -> void:
 	if _waiting_for_help:
 		_moving = false
@@ -1130,7 +1124,6 @@ func _update_anim(v: Vector2) -> void:
 		anim.play(anim_name)
 
 func speak(text: String) -> void:
-	print("[Robot] Says: ", text)
 	var bubble_mgr = get_node_or_null("/root/BubbleManager")
 	if bubble_mgr and bubble_mgr.has_method("say"):
 		bubble_mgr.say(self, text, 2.6, Color(0.88, 0.96, 1.0, 1.0))

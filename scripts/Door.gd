@@ -3,7 +3,6 @@ extends Node2D
 # --- 节点引用 ---
 @onready var spr: AnimatedSprite2D     = $AnimatedSprite2D
 @onready var col: CollisionShape2D     = $StaticBody2D/CollisionShape2D
-@onready var nav: NavigationRegion2D   = $NavigationRegion2D
 @onready var trig: Area2D              = $Area2D
 
 # --- 动画名（和你的资源一致）---
@@ -41,20 +40,31 @@ func _clear_wall_behind_door():
 	# The door is usually child of LayerDoors, which is child of TileMap
 	var layer_walls = get_node_or_null("../../LayerWalls")
 	if layer_walls and layer_walls is TileMapLayer:
-		var map_pos = layer_walls.local_to_map(layer_walls.to_local(global_position))
-		# Check if there is a tile
-		if layer_walls.get_cell_source_id(map_pos) != -1:
-			print("[Door] Found wall tile at ", map_pos, ". Removing to prevent blocking.")
-			layer_walls.set_cell(map_pos, -1) # Clear the cell
+		var map_pos: Vector2i = layer_walls.local_to_map(layer_walls.to_local(global_position))
+		var cleared := _clear_wall_corridor(layer_walls, map_pos)
+		if cleared > 0:
+			print("[Door] Cleared wall corridor near door (", map_pos, "), cells=", cleared)
 	else:
 		# Try absolute path if relative fails
 		var root = get_tree().current_scene
 		layer_walls = root.find_child("LayerWalls", true, false)
 		if layer_walls and layer_walls is TileMapLayer:
-			var map_pos = layer_walls.local_to_map(layer_walls.to_local(global_position))
-			if layer_walls.get_cell_source_id(map_pos) != -1:
-				print("[Door] Found wall tile at ", map_pos, " (absolute search). Removing.")
-				layer_walls.set_cell(map_pos, -1)
+			var map_pos: Vector2i = layer_walls.local_to_map(layer_walls.to_local(global_position))
+			var cleared := _clear_wall_corridor(layer_walls, map_pos)
+			if cleared > 0:
+				print("[Door] Cleared wall corridor near door (absolute search ", map_pos, "), cells=", cleared)
+
+func _clear_wall_corridor(layer_walls: TileMapLayer, center: Vector2i) -> int:
+	# Remove a small doorway corridor so physics blockers match the intended passage.
+	# x: doorway width, y: wall thickness around the doorway seam.
+	var cleared := 0
+	for dx in range(-1, 2):
+		for dy in range(-1, 2):
+			var cell := Vector2i(center.x + dx, center.y + dy)
+			if layer_walls.get_cell_source_id(cell) != -1:
+				layer_walls.set_cell(cell, -1)
+				cleared += 1
+	return cleared
 
 func _on_body_entered(n: Node) -> void:
 	if n.is_in_group("player"):
@@ -79,11 +89,9 @@ func toggle() -> void:
 	_apply_state_and_play_transition()
 
 func _apply_state_and_idle(play_idle: bool) -> void:
-	# 物理/导航
+	# 物理
 	if is_instance_valid(col):
 		col.disabled = is_open          # 开门=不挡路
-	if is_instance_valid(nav):
-		nav.enabled = is_open           # 开门=可走
 
 	# idle 外观
 	if is_instance_valid(spr):

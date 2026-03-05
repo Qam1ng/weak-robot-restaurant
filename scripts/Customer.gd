@@ -44,15 +44,10 @@ var current_seat: String = ""
 var _last_pos: Vector2 = Vector2.ZERO
 var _stuck_timer: float = 0.0
 
-# 绕行状态 - 与 Robot 一致的基于距离的设计
-var _evasion_active: bool = false
-var _evasion_dir: Vector2 = Vector2.ZERO
-var _evasion_start_pos: Vector2 = Vector2.ZERO
-var _evasion_count: int = 0
-
-const EVASION_DISTANCE: float = 80.0  # 每次绕行移动的距离
-const STUCK_THRESHOLD: float = 0.3  # 卡住判定时间
-const ARRIVAL_DIST: float = 30.0  # 到达判定距离
+const ARRIVAL_DIST: float = 30.0  # 默认到达判定距离
+const ARRIVAL_DIST_SEAT: float = 56.0  # 入座判定半径（seat 点可在不可走区边缘）
+const ARRIVAL_DIST_STUCK: float = 80.0  # 导航结束但与目标有偏差时的容错
+var _path_initialized: bool = false
 
 # ==================== 生命周期 ====================
 func _ready() -> void:
@@ -74,10 +69,13 @@ func _ready() -> void:
 	elif col_shape is CircleShape2D:
 		col_shape.radius = 9.0
 	
-	# NavigationAgent 配置（仅用于避障参考，不用于路径规划）
+	# NavigationAgent 配置
+	agent.set_navigation_map(get_world_2d().navigation_map)
 	agent.avoidance_enabled = true
 	agent.max_speed = move_speed
 	agent.radius = 20.0
+	agent.path_desired_distance = 12.0
+	agent.target_desired_distance = 14.0
 	agent.velocity_computed.connect(_on_velocity_computed)
 
 	print("[Customer] Waiting %.1f seconds before entering..." % start_delay_sec)
@@ -125,8 +123,7 @@ func _start_leaving() -> void:
 	current_state = State.LEAVING
 	_arrived = false
 	_target_set = false
-	_evasion_count = 0
-	_evasion_active = false
+	_path_initialized = false
 	
 	var cs1 = _find_exit_point()
 	_final_target = cs1.global_position if cs1 else _spawn_position
@@ -171,8 +168,7 @@ func _pick_seat_and_go():
 	current_seat = _seat_target.name
 	_final_target = _seat_target.global_position
 	_target_set = true
-	_evasion_count = 0
-	_evasion_active = false
+	_path_initialized = false
 	
 	print("[Customer] Selected seat: %s at %s" % [_seat_target.name, _final_target])
 	print("[Customer] Navigating to seat...")
@@ -189,90 +185,55 @@ func _physics_process(dt: float) -> void:
 	if not _target_set:
 		return
 
-	var to_target = _final_target - global_position
-	var dist = to_target.length()
-	
-	# 到达检测
-	if dist < ARRIVAL_DIST:
+	if not _path_initialized:
+		agent.target_position = _final_target
+		_path_initialized = true
+		_last_pos = global_position
+
+	var dist = global_position.distance_to(_final_target)
+	var arrival_dist := ARRIVAL_DIST
+	if current_state == State.ENTERING:
+		arrival_dist = ARRIVAL_DIST_SEAT
+	if dist < arrival_dist:
 		_on_reached()
 		return
-	
-	# Evasion mode - 持续绕行直到移动足够距离
-	if _evasion_active:
-		var evaded_dist = global_position.distance_to(_evasion_start_pos)
-		
-		if evaded_dist >= EVASION_DISTANCE:
-			# 绕行完成，恢复正常导航
-			_evasion_active = false
-			_stuck_timer = 0.0
-			print("[Customer] Evasion complete, moved ", int(evaded_dist), "px")
-		else:
-			# 继续绕行
-			velocity = _evasion_dir * move_speed
-			move_and_slide()
-			_update_anim_by_velocity(velocity)
-			return
-	
-	# 卡住检测
-	var current_pos = global_position
-	var moved = current_pos.distance_to(_last_pos)
-	
-	if moved < 1.5:
-		_stuck_timer += dt
-		if _stuck_timer > STUCK_THRESHOLD:
-			_start_evade(to_target)
-			_stuck_timer = 0.0
-	else:
-		_stuck_timer = 0.0
-	
-	_last_pos = current_pos
-	
-	# 正常朝目标移动
-	velocity = to_target.normalized() * move_speed
-	move_and_slide()
-	_update_anim_by_velocity(velocity)
 
-func _start_evade(to_target: Vector2) -> void:
-	"""开始绕行 - 与 Robot 一致的 4 方向轮换"""
-	var perpendicular = Vector2(-to_target.y, to_target.x).normalized()
-	var backward = -to_target.normalized()
-	
-	# 根据尝试次数选择方向：左、右、后左、后右
-	var dir_names = ["LEFT", "RIGHT", "BACK-LEFT", "BACK-RIGHT"]
-	var dir_idx = _evasion_count % 4
-	
-	match dir_idx:
-		0: _evasion_dir = perpendicular  # 左
-		1: _evasion_dir = -perpendicular  # 右
-		2: _evasion_dir = (perpendicular + backward).normalized()  # 后左
-		3: _evasion_dir = (-perpendicular + backward).normalized()  # 后右
-	
-	_evasion_active = true
-	_evasion_start_pos = global_position
-	_evasion_count += 1
-	
-	print("[Customer] Starting evasion: %s for %dpx (attempt #%d)" % [dir_names[dir_idx], EVASION_DISTANCE, _evasion_count])
+	# NavigationAgent 认为完成且距离可接受时，也视作到达。
+	if agent.is_navigation_finished() and dist <= ARRIVAL_DIST_STUCK:
+		_on_reached()
+		return
+
+	# 跟随 navmesh 路径，不再直线硬走。
+	var nav_next := agent.get_next_path_position()
+	var to_next := nav_next - global_position
+	if to_next.length() > 2.0:
+		agent.set_velocity(to_next.normalized() * move_speed)
+	else:
+		agent.set_velocity(Vector2.ZERO)
 
 func _on_velocity_computed(safe_velocity: Vector2) -> void:
-	# 仅在避障时使用
 	if _arrived:
 		return
-	if safe_velocity.length() > 10.0:
+	if safe_velocity.length() < 0.1:
+		velocity = Vector2.ZERO
+	else:
 		velocity = safe_velocity
-		move_and_slide()
+	move_and_slide()
+	_update_anim_by_velocity(velocity)
 
 func _on_reached() -> void:
 	if current_state == State.ENTERING:
 		if _arrived:
 			return
 		_arrived = true
+		_target_set = false
+		_path_initialized = false
 		velocity = Vector2.ZERO
 
 		if _seat_target != null:
-			if global_position.x <= _seat_target.global_position.x:
-				anim.play("sit_right")
-			else:
-				anim.play("sit_left")
+			# Snap to seat anchor so larger arrival radius does not leave visual offset.
+			global_position = _seat_target.global_position
+			anim.play(_resolve_seat_sit_anim(_seat_target))
 		else:
 			_update_anim_by_velocity(Vector2.ZERO)
 
@@ -287,6 +248,8 @@ func _on_reached() -> void:
 		
 	elif current_state == State.LEAVING:
 		_arrived = true
+		_target_set = false
+		_path_initialized = false
 		velocity = Vector2.ZERO
 		current_state = State.LEFT
 		print("[Customer] Left the restaurant.")
@@ -437,3 +400,17 @@ func _extract_food_from_request(request: String) -> String:
 		if food in request_lower:
 			return food
 	return "unknown"
+
+func _resolve_seat_sit_anim(seat: Node2D) -> String:
+	# Preferred: explicit seat metadata.
+	# In Godot Inspector -> Node -> Metadata, set key "sit_anim" to:
+	# sit_left / sit_right (and optionally sit_up / sit_down if those animations exist).
+	if seat != null and seat.has_meta("sit_anim"):
+		var sit_anim := str(seat.get_meta("sit_anim")).strip_edges()
+		if sit_anim != "":
+			return sit_anim
+
+	# Fallback: keep legacy behavior if metadata is missing.
+	if seat != null and global_position.x <= seat.global_position.x:
+		return "sit_right"
+	return "sit_left"

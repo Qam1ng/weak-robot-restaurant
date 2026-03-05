@@ -2,7 +2,6 @@ extends CanvasLayer
 
 signal kitchen_pick_selected(item_name: String)
 
-@onready var interaction_label: Label = $InteractionLabel
 @onready var help_panel: PanelContainer = $HelpRequestPanel
 @onready var help_title: Label = $HelpRequestPanel/Margin/VBox/Title
 @onready var help_body: RichTextLabel = $HelpRequestPanel/Margin/VBox/Body
@@ -75,8 +74,6 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	add_to_group("hud")
 
-	if interaction_label:
-		interaction_label.hide()
 	if help_panel:
 		help_panel.hide()
 		_reset_help_buttons()
@@ -732,15 +729,6 @@ func _get_player_capacity() -> int:
 	if inv == null:
 		return 0
 	return int(inv.capacity)
-
-func on_interaction_prompt(do_show: bool, text: String) -> void:
-	if not interaction_label:
-		return
-	if do_show:
-		interaction_label.text = text
-		interaction_label.show()
-	else:
-		interaction_label.hide()
 
 func show_help_request(request: Dictionary) -> void:
 	if request.is_empty():

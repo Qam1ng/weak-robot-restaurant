@@ -42,7 +42,7 @@ ERROR: Condition "ret != noErr" is true. Returning: ""
 [CustomerSpawner] Ready. Max customers for current period: 2 (absolute max: 5)
 [CustomerSpawner] First customer will spawn in ~8 seconds...
 [Restaurant] Using scene NavigationPolygon:
-  - Polygons: 17
-  - Vertices: 45
+  - Polygons: 13
+  - Vertices: 37
   - Outlines: 1
   - Map active: true
