@@ -11,6 +11,13 @@ signal day_changed(day: int)
 # ==================== 时间配置 ====================
 ## 现实1秒 = 游戏内多少分钟
 @export var real_to_game_ratio: float = 1.0
+## 早晨时间倍率（默认 2.5 => 5小时约2分钟）
+@export var morning_time_multiplier: float = 2.5
+## 下午时间倍率（默认 3.0 => 3小时约1分钟）
+@export var afternoon_time_multiplier: float = 3.0
+## 夜晚时间加速倍率（仅 NIGHT 生效）
+## 例如白天 1.0、夜晚 15.0 => 9 小时夜晚约 36 秒
+@export var night_time_multiplier: float = 15.0
 ## 游戏开始时的小时 (0-23)
 @export var start_hour: int = 8
 ## 游戏开始时的分钟 (0-59)
@@ -44,7 +51,7 @@ var current_period: Period = Period.MORNING
 var is_peak_time: bool = false
 var is_open: bool = true  # 餐厅是否营业
 
-var _accumulated_time: float = 0.0
+var _accumulated_game_minutes: float = 0.0
 var _paused: bool = false
 
 # ==================== 生命周期 ====================
@@ -57,13 +64,27 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if _paused:
 		return
-	
-	_accumulated_time += delta
-	
-	# 每现实1秒增加 real_to_game_ratio 分钟
-	while _accumulated_time >= 1.0:
-		_accumulated_time -= 1.0
-		_advance_time(int(real_to_game_ratio))
+
+	var minutes_per_second := _get_minutes_per_second()
+	_accumulated_game_minutes += delta * minutes_per_second
+
+	# 连续推进：支持非整数倍率，避免时段时长偏差
+	while _accumulated_game_minutes >= 1.0:
+		_accumulated_game_minutes -= 1.0
+		_advance_time(1)
+
+func _get_minutes_per_second() -> float:
+	var minutes_per_second := real_to_game_ratio
+	match current_period:
+		Period.MORNING:
+			minutes_per_second *= morning_time_multiplier
+		Period.AFTERNOON:
+			minutes_per_second *= afternoon_time_multiplier
+		Period.NIGHT:
+			minutes_per_second *= night_time_multiplier
+		_:
+			pass
+	return maxf(0.01, minutes_per_second)
 
 # ==================== 时间推进 ====================
 func _advance_time(minutes: int) -> void:

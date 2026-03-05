@@ -47,6 +47,7 @@ var _stuck_timer: float = 0.0
 const ARRIVAL_DIST: float = 30.0  # 默认到达判定距离
 const ARRIVAL_DIST_SEAT: float = 56.0  # 入座判定半径（seat 点可在不可走区边缘）
 const ARRIVAL_DIST_STUCK: float = 80.0  # 导航结束但与目标有偏差时的容错
+const ENTERING_STUCK_TIMEOUT_SEC: float = 3.0
 var _path_initialized: bool = false
 
 # ==================== 生命周期 ====================
@@ -169,6 +170,8 @@ func _pick_seat_and_go():
 	_final_target = _seat_target.global_position
 	_target_set = true
 	_path_initialized = false
+	_stuck_timer = 0.0
+	_last_pos = global_position
 	
 	print("[Customer] Selected seat: %s at %s" % [_seat_target.name, _final_target])
 	print("[Customer] Navigating to seat...")
@@ -189,6 +192,23 @@ func _physics_process(dt: float) -> void:
 		agent.target_position = _final_target
 		_path_initialized = true
 		_last_pos = global_position
+
+	# ENTERING 卡住保护：3 秒几乎不前进则重选座位
+	if current_state == State.ENTERING:
+		var moved_dist := global_position.distance_to(_last_pos)
+		if moved_dist < 0.8:
+			_stuck_timer += dt
+		else:
+			_stuck_timer = 0.0
+		_last_pos = global_position
+		if _stuck_timer >= ENTERING_STUCK_TIMEOUT_SEC:
+			_stuck_timer = 0.0
+			_path_initialized = false
+			_target_set = false
+			agent.set_velocity(Vector2.ZERO)
+			print("[Customer] Entering stuck for %.1fs, reselecting seat..." % ENTERING_STUCK_TIMEOUT_SEC)
+			_pick_seat_and_go()
+			return
 
 	var dist = global_position.distance_to(_final_target)
 	var arrival_dist := ARRIVAL_DIST
@@ -229,6 +249,7 @@ func _on_reached() -> void:
 		_target_set = false
 		_path_initialized = false
 		velocity = Vector2.ZERO
+		_stuck_timer = 0.0
 
 		if _seat_target != null:
 			# Snap to seat anchor so larger arrival radius does not leave visual offset.

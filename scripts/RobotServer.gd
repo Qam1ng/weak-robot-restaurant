@@ -3,7 +3,6 @@ extends CharacterBody2D
 class_name RobotServer
 
 # ---------- Movement / spawn ----------
-@export var spawn_path: NodePath
 @export var move_speed: float = 100.0
 @onready var agent: NavigationAgent2D = $NavigationAgent2D
 @onready var anim: AnimatedSprite2D   = $AnimatedSprite2D
@@ -172,10 +171,6 @@ func _ready() -> void:
 	else:
 		inventory = get_node("Inventory")
 
-	if spawn_path != NodePath():
-		var rs := get_node(spawn_path) as Node2D
-		global_position = rs.global_position
-
 	await get_tree().physics_frame
 	
 	# Configure Navigation Agent
@@ -200,7 +195,6 @@ func _ready() -> void:
 	if agent.avoidance_enabled:
 		agent.velocity_computed.connect(_on_agent_velocity_computed)
 	await _wait_for_nav_sync(agent.get_navigation_map(), 120)
-	_snap_robot_to_nav_if_needed()
 
 	if not has_node("NavDebugPath"):
 		var l := Line2D.new()
@@ -248,18 +242,6 @@ func _ready() -> void:
 	
 	# ---------- Discover Locations IMMEDIATELY ----------
 	_discover_locations()
-
-func _snap_robot_to_nav_if_needed() -> void:
-	var nav_map: RID = get_world_2d().navigation_map
-	if not nav_map.is_valid():
-		return
-	if NavigationServer2D.map_get_iteration_id(nav_map) <= 0:
-		return
-	var closest := NavigationServer2D.map_get_closest_point(nav_map, global_position)
-	var d := global_position.distance_to(closest)
-	# If spawn starts outside nav, agent can return empty path forever.
-	if d > 12.0:
-		global_position = closest
 
 func _wait_for_nav_sync(nav_map: RID, max_physics_frames: int = 90) -> void:
 	if not nav_map.is_valid():
