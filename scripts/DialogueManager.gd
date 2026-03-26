@@ -1,6 +1,7 @@
 extends Node
 
 signal utterance_generated(request_id: String, utterance: String, meta: Dictionary)
+signal directed_utterance_generated(request_id: String, utterance: String, meta: Dictionary)
 
 const OPENAI_URL := "https://api.openai.com/v1/chat/completions"
 const DEFAULT_MODEL := "gpt-4o-mini"
@@ -81,6 +82,68 @@ func realize_help_utterance(request: Dictionary) -> void:
 			"fallback": fallback
 		})
 
+func realize_directed_utterance(request: Dictionary) -> void:
+	if request.is_empty():
+		return
+
+	var request_id := str(request.get("id", "")).strip_edges()
+	if request_id == "":
+		return
+
+	var fallback := str(request.get("fallback", "")).strip_edges()
+	if fallback == "":
+		fallback = "Okay."
+
+	if not _is_llm_enabled() or not has_api_key():
+		directed_utterance_generated.emit(request_id, fallback, {
+			"provider": "fallback",
+			"status": "disabled_or_missing_key",
+			"fallback": fallback
+		})
+		return
+
+	var source_role := str(request.get("source_role", "player")).strip_edges()
+	var recipient_role := str(request.get("recipient_role", "robot")).strip_edges()
+	var intent_type := str(request.get("intent_type", "directed_reply")).strip_edges()
+	var item_name := str(request.get("item_name", "")).strip_edges()
+	var context_note := str(request.get("context_note", "")).strip_edges()
+
+	var system_prompt := "Write one short in-game line of direct speech. Keep it natural, concrete, polite, and under 18 words. No quotes. No stage directions."
+	var user_prompt := "speaker=%s recipient=%s intent=%s item=%s context=%s fallback=%s" % [
+		source_role,
+		recipient_role,
+		intent_type,
+		item_name,
+		context_note,
+		fallback
+	]
+
+	var body := {
+		"model": _llm_model(),
+		"messages": [
+			{"role": "system", "content": system_prompt},
+			{"role": "user", "content": user_prompt}
+		],
+		"temperature": _llm_temperature(),
+		"max_tokens": 60
+	}
+	var headers: PackedStringArray = PackedStringArray([
+		"Content-Type: application/json",
+		"Authorization: Bearer " + _api_key
+	])
+
+	var http := HTTPRequest.new()
+	add_child(http)
+	http.request_completed.connect(_on_directed_request_completed.bind(http, request_id, fallback))
+	var err := http.request(OPENAI_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(body))
+	if err != OK:
+		http.queue_free()
+		directed_utterance_generated.emit(request_id, fallback, {
+			"provider": "fallback",
+			"status": "request_error",
+			"fallback": fallback
+		})
+
 func _on_request_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, request_id: String, fallback: String) -> void:
 	if is_instance_valid(http):
 		http.queue_free()
@@ -124,6 +187,54 @@ func _on_request_completed(_result: int, code: int, _headers: PackedStringArray,
 		return
 
 	utterance_generated.emit(request_id, content, {
+		"provider": "openai",
+		"status": "ok",
+		"model": _llm_model()
+	})
+
+func _on_directed_request_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, request_id: String, fallback: String) -> void:
+	if is_instance_valid(http):
+		http.queue_free()
+
+	if code < 200 or code >= 300:
+		directed_utterance_generated.emit(request_id, fallback, {
+			"provider": "fallback",
+			"status": "http_error",
+			"http_code": code,
+			"fallback": fallback
+		})
+		return
+
+	var top = JSON.parse_string(body.get_string_from_utf8())
+	if not (top is Dictionary):
+		directed_utterance_generated.emit(request_id, fallback, {
+			"provider": "fallback",
+			"status": "parse_error",
+			"fallback": fallback
+		})
+		return
+
+	var choices: Array = top.get("choices", [])
+	if choices.is_empty():
+		directed_utterance_generated.emit(request_id, fallback, {
+			"provider": "fallback",
+			"status": "empty_choices",
+			"fallback": fallback
+		})
+		return
+
+	var message: Dictionary = choices[0].get("message", {})
+	var content := str(message.get("content", "")).strip_edges()
+	content = content.replace("\n", " ")
+	if content == "":
+		directed_utterance_generated.emit(request_id, fallback, {
+			"provider": "fallback",
+			"status": "empty_content",
+			"fallback": fallback
+		})
+		return
+
+	directed_utterance_generated.emit(request_id, content, {
 		"provider": "openai",
 		"status": "ok",
 		"model": _llm_model()

@@ -45,7 +45,7 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 		"type": TASK_FULFILL_ORDER,
 		"state": STATE_UNASSIGNED,
 		"created_at_ms": now_ms,
-		"deadline_ms": 0, # Serve timer starts only after TAKE_ORDER is completed.
+		"deadline_ms": now_ms + SERVE_WINDOW_MS,
 		"claimed_at_ms": 0,
 		"completed_at_ms": 0,
 		"assigned_to": "",
@@ -56,7 +56,7 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 			"food_item": food_item,
 			"seat": seat,
 			"customer_instance_id": customer.get_instance_id(),
-			"serve_deadline_ms": 0
+			"serve_deadline_ms": now_ms + SERVE_WINDOW_MS
 		}
 	}
 
@@ -145,13 +145,6 @@ func complete_current_step(task_id: String, expected_step_name: String = "") -> 
 	steps[idx] = step
 	task["steps"] = steps
 	task["current_step_index"] = idx + 1
-	if actual_step_name == STEP_TAKE_ORDER:
-		var payload: Dictionary = task.get("payload", {})
-		var serve_deadline := Time.get_ticks_msec() + SERVE_WINDOW_MS
-		payload["serve_deadline_ms"] = serve_deadline
-		task["payload"] = payload
-		task["deadline_ms"] = serve_deadline
-
 	if int(task["current_step_index"]) >= steps.size():
 		task["state"] = STATE_COMPLETED
 		task["completed_at_ms"] = Time.get_ticks_msec()

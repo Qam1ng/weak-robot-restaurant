@@ -35,6 +35,7 @@ var _spawn_position: Vector2 = Vector2.ZERO
 var _final_target: Vector2 = Vector2.ZERO
 var _task_deadline_ms: int = 0
 var _patience_timed_out: bool = false
+var _pending_player_line_request_id: String = ""
 
 # 座位信息
 var current_seat: String = ""
@@ -78,6 +79,7 @@ func _ready() -> void:
 	agent.path_desired_distance = 12.0
 	agent.target_desired_distance = 14.0
 	agent.velocity_computed.connect(_on_velocity_computed)
+	_connect_dialogue_manager()
 
 	print("[Customer] Waiting %.1f seconds before entering..." % start_delay_sec)
 	await get_tree().create_timer(start_delay_sec).timeout
@@ -374,6 +376,17 @@ func on_player_interact(player: Node) -> void:
 
 	var item = p_inv.items.pop_at(idx)
 	p_inv.emit_signal("inventory_changed", p_inv.items)
+	if player is Node2D:
+		_request_player_line(
+			player as Node2D,
+			self,
+			"player_deliver_food",
+			"Here is your " + wanted + ".",
+			{
+				"item_name": wanted,
+				"context_note": "The player is handing the requested dish to the customer."
+			}
+		)
 	receive_item(item)
 	task_board.complete_current_step(ptask_id, "DELIVER_AND_SERVE")
 
@@ -435,3 +448,41 @@ func _resolve_seat_sit_anim(seat: Node2D) -> String:
 	if seat != null and global_position.x <= seat.global_position.x:
 		return "sit_right"
 	return "sit_left"
+
+func _connect_dialogue_manager() -> void:
+	var dm = get_node_or_null("/root/DialogueManager")
+	if dm and dm.has_signal("directed_utterance_generated") and not dm.directed_utterance_generated.is_connected(_on_directed_utterance_generated):
+		dm.directed_utterance_generated.connect(_on_directed_utterance_generated)
+
+func _request_player_line(player: Node2D, recipient: Node2D, intent_type: String, fallback: String, payload: Dictionary = {}) -> void:
+	var dm = get_node_or_null("/root/DialogueManager")
+	var bubble_mgr = get_node_or_null("/root/BubbleManager")
+	if bubble_mgr == null or recipient == null or not is_instance_valid(recipient):
+		return
+	if dm == null or not dm.has_method("realize_directed_utterance"):
+		if bubble_mgr.has_method("say_to"):
+			bubble_mgr.say_to(player, recipient, fallback, 2.6, Color(1.0, 0.94, 0.78, 1.0))
+		return
+	_pending_player_line_request_id = "customer_player_%s_%d" % [str(get_instance_id()), Time.get_ticks_msec()]
+	var request := {
+		"id": _pending_player_line_request_id,
+		"source_role": "player",
+		"recipient_role": "customer",
+		"intent_type": intent_type,
+		"fallback": fallback,
+		"item_name": str(payload.get("item_name", "")),
+		"context_note": str(payload.get("context_note", ""))
+	}
+	dm.realize_directed_utterance(request)
+
+func _on_directed_utterance_generated(request_id: String, utterance: String, _meta: Dictionary) -> void:
+	if request_id != _pending_player_line_request_id:
+		return
+	_pending_player_line_request_id = ""
+	var players := get_tree().get_nodes_in_group("player")
+	if players.is_empty() or not (players[0] is Node2D):
+		return
+	var player := players[0] as Node2D
+	var bubble_mgr = get_node_or_null("/root/BubbleManager")
+	if bubble_mgr and bubble_mgr.has_method("say_to"):
+		bubble_mgr.say_to(player, self, utterance, 2.6, Color(1.0, 0.94, 0.78, 1.0))

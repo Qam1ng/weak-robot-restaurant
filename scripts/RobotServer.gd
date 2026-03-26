@@ -72,6 +72,7 @@ var _last_recharge_notice_ms: int = 0
 var _battery_emergency_handoff_attempted_task_id: String = ""
 var _last_emergency_approach_notice_ms: int = 0
 var _last_overload_approach_notice_ms: int = 0
+var _pending_player_line_request_id: String = ""
 
 func _has_property(obj: Object, prop_name: String) -> bool:
 	for p in obj.get_property_list():
@@ -225,6 +226,7 @@ func _ready() -> void:
 			help_mgr.request_updated.connect(_on_help_request_updated)
 		if not help_mgr.request_resolved.is_connected(_on_help_request_resolved):
 			help_mgr.request_resolved.connect(_on_help_request_resolved)
+	_connect_dialogue_manager()
 
 	# ---------- BT Construction ----------
 	var exec_plan = ActExecutePlan.new()
@@ -1006,6 +1008,20 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 
 	set_waiting_for_help(false, "")
 	speak("Task handoff accepted. You take over this order.")
+	var players := get_tree().get_nodes_in_group("player")
+	if not players.is_empty():
+		var player = players[0]
+		if player is Node2D:
+			_request_player_line(
+				player as Node2D,
+				self,
+				"player_handoff_accept",
+				"Okay, I will take over this order.",
+				{
+					"item_name": _current_food_item,
+					"context_note": "The player accepts the robot's task handoff and speaks back to the robot."
+				}
+			)
 	var help_mgr = _help_manager()
 	if help_mgr and _active_help_request_id != "":
 		help_mgr.complete_request(_active_help_request_id, "cooperative_handoff_task_transfer")
@@ -1100,6 +1116,44 @@ func speak(text: String) -> void:
 	var bubble_mgr = get_node_or_null("/root/BubbleManager")
 	if bubble_mgr and bubble_mgr.has_method("say"):
 		bubble_mgr.say(self, text, 2.6, Color(0.88, 0.96, 1.0, 1.0))
+
+func _connect_dialogue_manager() -> void:
+	var dm = get_node_or_null("/root/DialogueManager")
+	if dm and dm.has_signal("directed_utterance_generated") and not dm.directed_utterance_generated.is_connected(_on_directed_utterance_generated):
+		dm.directed_utterance_generated.connect(_on_directed_utterance_generated)
+
+func _request_player_line(player: Node2D, recipient: Node2D, intent_type: String, fallback: String, payload: Dictionary = {}) -> void:
+	var dm = get_node_or_null("/root/DialogueManager")
+	var bubble_mgr = get_node_or_null("/root/BubbleManager")
+	if bubble_mgr == null or recipient == null or not is_instance_valid(recipient):
+		return
+	if dm == null or not dm.has_method("realize_directed_utterance"):
+		if bubble_mgr.has_method("say_to"):
+			bubble_mgr.say_to(player, recipient, fallback, 2.6, Color(1.0, 0.94, 0.78, 1.0))
+		return
+	_pending_player_line_request_id = "robot_player_%s_%d" % [str(get_instance_id()), Time.get_ticks_msec()]
+	var request := {
+		"id": _pending_player_line_request_id,
+		"source_role": "player",
+		"recipient_role": "robot",
+		"intent_type": intent_type,
+		"fallback": fallback,
+		"item_name": str(payload.get("item_name", "")),
+		"context_note": str(payload.get("context_note", ""))
+	}
+	dm.realize_directed_utterance(request)
+
+func _on_directed_utterance_generated(request_id: String, utterance: String, _meta: Dictionary) -> void:
+	if request_id != _pending_player_line_request_id:
+		return
+	_pending_player_line_request_id = ""
+	var players := get_tree().get_nodes_in_group("player")
+	if players.is_empty() or not (players[0] is Node2D):
+		return
+	var player := players[0] as Node2D
+	var bubble_mgr = get_node_or_null("/root/BubbleManager")
+	if bubble_mgr and bubble_mgr.has_method("say_to"):
+		bubble_mgr.say_to(player, self, utterance, 2.6, Color(1.0, 0.94, 0.78, 1.0))
 
 # ---------- Interaction Interface ----------
 func needs_help() -> bool:

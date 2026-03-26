@@ -10,14 +10,11 @@ signal day_changed(day: int)
 
 # ==================== 时间配置 ====================
 ## 现实1秒 = 游戏内多少分钟
-@export var real_to_game_ratio: float = 1.0
-## 早晨时间倍率（默认 2.5 => 5小时约2分钟）
-@export var morning_time_multiplier: float = 2.5
-## 下午时间倍率（默认 3.0 => 3小时约1分钟）
-@export var afternoon_time_multiplier: float = 3.0
-## 夜晚时间加速倍率（仅 NIGHT 生效）
-## 例如白天 1.0、夜晚 15.0 => 9 小时夜晚约 36 秒
-@export var night_time_multiplier: float = 15.0
+@export var real_to_game_ratio: float = 2.0
+## 分时段倍率默认都为 1.0，表示整天按统一比例等比缩放
+@export var morning_time_multiplier: float = 1.0
+@export var afternoon_time_multiplier: float = 1.0
+@export var night_time_multiplier: float = 1.0
 ## 游戏开始时的小时 (0-23)
 @export var start_hour: int = 8
 ## 游戏开始时的分钟 (0-59)
@@ -39,8 +36,8 @@ const PERIOD_CONFIG = {
 	Period.MORNING: [6, 11, false],    # 6:00 - 11:00 普通
 	Period.LUNCH: [11, 14, true],      # 11:00 - 14:00 午餐高峰
 	Period.AFTERNOON: [14, 17, false], # 14:00 - 17:00 普通
-	Period.DINNER: [17, 21, true],     # 17:00 - 21:00 晚餐高峰
-	Period.NIGHT: [21, 6, false]       # 21:00 - 6:00 关店/夜间
+	Period.DINNER: [17, 23, true],     # 17:00 - 23:00 晚餐高峰
+	Period.NIGHT: [23, 6, false]       # 23:00 - 6:00 关店/夜间
 }
 
 # ==================== 状态 ====================
@@ -169,7 +166,7 @@ func skip_to_next_period() -> void:
 		Period.MORNING: [11, 0],
 		Period.LUNCH: [14, 0],
 		Period.AFTERNOON: [17, 0],
-		Period.DINNER: [21, 0],
+		Period.DINNER: [23, 0],
 		Period.NIGHT: [6, 0]
 	}
 	

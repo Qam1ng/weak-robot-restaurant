@@ -2,12 +2,6 @@ extends CanvasLayer
 
 signal kitchen_pick_selected(item_name: String)
 
-@onready var help_panel: PanelContainer = $HelpRequestPanel
-@onready var help_title: Label = $HelpRequestPanel/Margin/VBox/Title
-@onready var help_body: RichTextLabel = $HelpRequestPanel/Margin/VBox/Body
-@onready var accept_btn: Button = $HelpRequestPanel/Margin/VBox/Buttons/Accept
-@onready var decline_btn: Button = $HelpRequestPanel/Margin/VBox/Buttons/Decline
-@onready var later_btn: Button = $HelpRequestPanel/Margin/VBox/Buttons/Later
 @onready var mbti_panel: PanelContainer = $MBTIPanel
 @onready var mbti_progress: Label = $MBTIPanel/Margin/VBox/Progress
 @onready var mbti_question: Label = $MBTIPanel/Margin/VBox/Question
@@ -31,6 +25,15 @@ var customer_items_box: VBoxContainer
 var dialogue_panel: PanelContainer
 var dialogue_title: Label
 var dialogue_log: RichTextLabel
+var player_dialogue_overlay: PanelContainer
+var player_dialogue_overlay_label: RichTextLabel
+var player_dialogue_info_stack: VBoxContainer
+var player_dialogue_overlay_buttons: HBoxContainer
+var player_dialogue_overlay_accept_btn: Button
+var player_dialogue_overlay_decline_btn: Button
+var player_dialogue_overlay_later_btn: Button
+var _player_dialogue_overlay_tween: Tween
+var _player_dialogue_info_cards: Array[Dictionary] = []
 var _left_panel_width: float = 0.0
 var _active_request_id: String = ""
 var _active_request_type: String = ""
@@ -55,9 +58,18 @@ const HANDOFF_PROMPT_DISTANCE := 120.0
 const POPUP_MODE_NONE := "none"
 const POPUP_MODE_HELP := "help"
 const POPUP_MODE_KITCHEN_PICK := "kitchen_pick"
+const POPUP_MODE_GAME_OVER := "game_over"
 const CUSTOMER_TAB_LIVE := "live"
 const CUSTOMER_TAB_HISTORY := "history"
 const LEFT_PANEL_GAP_Y := 16.0
+const SIDE_PANEL_MARGIN := 20.0
+const TOP_PANEL_Y := 60.0
+const PLAYER_DIALOGUE_OVERLAY_Y := 84.0
+const PLAYER_DIALOGUE_OVERLAY_WIDTH := 520.0
+const PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT := 72.0
+const PLAYER_DIALOGUE_OVERLAY_SHOW_SEC := 5.0
+const PLAYER_DIALOGUE_STACK_GAP := 10.0
+const PLAYER_DIALOGUE_MAX_STACK := 3
 var _customer_tab: String = CUSTOMER_TAB_LIVE
 var _score: int = 0
 var _success_count: int = 0
@@ -74,21 +86,16 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	add_to_group("hud")
 
-	if help_panel:
-		help_panel.hide()
-		_reset_help_buttons()
 	if mbti_panel:
 		mbti_panel.hide()
 
-	accept_btn.pressed.connect(func(): _respond("accept"))
-	decline_btn.pressed.connect(func(): _respond("decline"))
-	later_btn.pressed.connect(func(): _respond("later"))
 	mbti_option_a.pressed.connect(func(): _choose_mbti("A"))
 	mbti_option_b.pressed.connect(func(): _choose_mbti("B"))
 	mbti_confirm.pressed.connect(_finish_mbti_and_start)
 
 	_setup_inventory_ui()
 	_setup_dialogue_feed_ui()
+	_setup_player_dialogue_overlay_ui()
 	_set_gameplay_panels_visible(false)
 	_connect_viewport_resize()
 	_connect_help_signals()
@@ -108,6 +115,7 @@ func _connect_viewport_resize() -> void:
 
 func _on_viewport_size_changed() -> void:
 	_recenter_mbti_panel()
+	_update_gameplay_panel_layout()
 
 func _recenter_mbti_panel() -> void:
 	if mbti_panel == null:
@@ -165,7 +173,7 @@ func _setup_inventory_ui() -> void:
 	inventory_panel = PanelContainer.new()
 	inventory_panel.name = "InventoryPanel"
 	add_child(inventory_panel)
-	inventory_panel.position = Vector2(20, 60)
+	inventory_panel.position = Vector2(SIDE_PANEL_MARGIN, TOP_PANEL_Y)
 
 	var style = StyleBoxFlat.new()
 	style.bg_color = Color(0, 0, 0, 0.5)
@@ -184,7 +192,7 @@ func _setup_inventory_ui() -> void:
 	inventory_list.add_child(title)
 
 	score_label = Label.new()
-	score_label.text = "Score: 0  (Success 0 / Failed 0)"
+	score_label.text = "Score: 0  (Lose at %d)" % SCORE_FAIL_THRESHOLD
 	score_label.add_theme_color_override("font_color", Color(0.86, 0.96, 1.0, 1.0))
 	inventory_list.add_child(score_label)
 
@@ -270,7 +278,7 @@ func _setup_dialogue_feed_ui() -> void:
 	dialogue_panel = PanelContainer.new()
 	dialogue_panel.name = "DialogueFeedPanel"
 	add_child(dialogue_panel)
-	dialogue_panel.position = Vector2(20, 430)
+	dialogue_panel.position = Vector2(SIDE_PANEL_MARGIN, TOP_PANEL_Y)
 	dialogue_panel.custom_minimum_size = Vector2(_left_panel_width, 210)
 
 	var style = StyleBoxFlat.new()
@@ -295,7 +303,71 @@ func _setup_dialogue_feed_ui() -> void:
 	dialogue_log.scroll_active = true
 	dialogue_log.fit_content = false
 	vbox.add_child(dialogue_log)
-	_update_left_panel_layout()
+	_update_gameplay_panel_layout()
+
+func _setup_player_dialogue_overlay_ui() -> void:
+	player_dialogue_info_stack = VBoxContainer.new()
+	player_dialogue_info_stack.name = "PlayerDialogueInfoStack"
+	player_dialogue_info_stack.visible = false
+	player_dialogue_info_stack.add_theme_constant_override("separation", PLAYER_DIALOGUE_STACK_GAP)
+	add_child(player_dialogue_info_stack)
+
+	player_dialogue_overlay = PanelContainer.new()
+	player_dialogue_overlay.name = "PlayerDialogueOverlay"
+	player_dialogue_overlay.visible = false
+	add_child(player_dialogue_overlay)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.11, 0.16, 0.92)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = Color(1.0, 0.84, 0.36, 0.95)
+	style.corner_radius_top_left = 12
+	style.corner_radius_top_right = 12
+	style.corner_radius_bottom_right = 12
+	style.corner_radius_bottom_left = 12
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	player_dialogue_overlay.add_theme_stylebox_override("panel", style)
+	player_dialogue_overlay.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	player_dialogue_overlay.add_child(vbox)
+
+	player_dialogue_overlay_label = RichTextLabel.new()
+	player_dialogue_overlay_label.bbcode_enabled = false
+	player_dialogue_overlay_label.fit_content = true
+	player_dialogue_overlay_label.scroll_active = false
+	player_dialogue_overlay_label.selection_enabled = false
+	player_dialogue_overlay_label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT - 20.0)
+	vbox.add_child(player_dialogue_overlay_label)
+
+	player_dialogue_overlay_buttons = HBoxContainer.new()
+	player_dialogue_overlay_buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	player_dialogue_overlay_buttons.visible = false
+	vbox.add_child(player_dialogue_overlay_buttons)
+
+	player_dialogue_overlay_accept_btn = Button.new()
+	player_dialogue_overlay_accept_btn.text = "Accept"
+	player_dialogue_overlay_accept_btn.pressed.connect(func(): _respond("accept"))
+	player_dialogue_overlay_buttons.add_child(player_dialogue_overlay_accept_btn)
+
+	player_dialogue_overlay_decline_btn = Button.new()
+	player_dialogue_overlay_decline_btn.text = "Decline"
+	player_dialogue_overlay_decline_btn.pressed.connect(func(): _respond("decline"))
+	player_dialogue_overlay_buttons.add_child(player_dialogue_overlay_decline_btn)
+
+	player_dialogue_overlay_later_btn = Button.new()
+	player_dialogue_overlay_later_btn.text = "Later"
+	player_dialogue_overlay_later_btn.pressed.connect(func(): _respond("later"))
+	player_dialogue_overlay_buttons.add_child(player_dialogue_overlay_later_btn)
+
+	_update_gameplay_panel_layout()
 
 func _connect_score_signals() -> void:
 	var board = get_node_or_null("/root/TaskBoard")
@@ -325,7 +397,7 @@ func _on_task_failed(_task: Dictionary) -> void:
 func _refresh_score_label() -> void:
 	if score_label == null:
 		return
-	score_label.text = "Score: %d  (Success %d / Failed %d)" % [_score, _success_count, _failed_count]
+	score_label.text = "Score: %d  (Lose at %d)" % [_score, SCORE_FAIL_THRESHOLD]
 	if _score < 0:
 		score_label.add_theme_color_override("font_color", Color(1.0, 0.70, 0.70, 1.0))
 	else:
@@ -338,18 +410,15 @@ func _check_score_game_over() -> void:
 		return
 	_score_game_over = true
 	get_tree().paused = true
-	_popup_mode = POPUP_MODE_NONE
+	_popup_mode = POPUP_MODE_GAME_OVER
 	_active_request_id = ""
 	_active_request_type = ""
-	help_title.text = "Game Over"
-	help_body.text = "Score reached %d (threshold %d).\nShift failed." % [_score, SCORE_FAIL_THRESHOLD]
-	_reset_help_buttons()
-	accept_btn.text = "Retry"
-	decline_btn.text = "Quit"
-	later_btn.hide()
-	accept_btn.pressed.connect(_on_game_over_retry, CONNECT_ONE_SHOT)
-	decline_btn.pressed.connect(_on_game_over_quit, CONNECT_ONE_SHOT)
-	help_panel.show()
+	_show_player_dialogue_prompt(
+		"Game Over",
+		"Score reached %d (threshold %d).\nShift failed." % [_score, SCORE_FAIL_THRESHOLD],
+		["Retry", "Quit"],
+		false
+	)
 
 func _on_game_over_retry() -> void:
 	get_tree().paused = false
@@ -360,8 +429,8 @@ func _on_game_over_quit() -> void:
 
 func _connect_dialogue_feed_signals() -> void:
 	var bubble_mgr = get_node_or_null("/root/BubbleManager")
-	if bubble_mgr and bubble_mgr.has_signal("message_emitted") and not bubble_mgr.message_emitted.is_connected(_on_bubble_message):
-		bubble_mgr.message_emitted.connect(_on_bubble_message)
+	if bubble_mgr and bubble_mgr.has_signal("message_routed") and not bubble_mgr.message_routed.is_connected(_on_bubble_message):
+		bubble_mgr.message_routed.connect(_on_bubble_message)
 
 func _on_robot_inventory_changed(items: Array) -> void:
 	if not robot_items_box:
@@ -418,16 +487,31 @@ func _process(_dt: float) -> void:
 	_update_robot_task_panel()
 	_update_player_task_panel()
 	_update_customer_panel()
-	_update_left_panel_layout()
+	_update_gameplay_panel_layout()
 
-func _update_left_panel_layout() -> void:
+func _update_gameplay_panel_layout() -> void:
 	if inventory_panel == null or dialogue_panel == null:
 		return
-	# Keep dialogue panel below inventory panel with a fixed gap.
-	var inv_pos := inventory_panel.position
-	var inv_h := maxf(inventory_panel.size.y, inventory_panel.get_combined_minimum_size().y)
-	dialogue_panel.position = Vector2(inv_pos.x, inv_pos.y + inv_h + LEFT_PANEL_GAP_Y)
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var view_size := vp.get_visible_rect().size
+	if view_size.x <= 0.0 or view_size.y <= 0.0:
+		return
+	inventory_panel.position = Vector2(SIDE_PANEL_MARGIN, TOP_PANEL_Y)
+	var dialogue_w := maxf(_left_panel_width, dialogue_panel.custom_minimum_size.x)
+	dialogue_panel.position = Vector2(view_size.x - dialogue_w - SIDE_PANEL_MARGIN, TOP_PANEL_Y)
 	dialogue_panel.custom_minimum_size.x = _left_panel_width
+	if player_dialogue_overlay:
+		var overlay_w := player_dialogue_overlay.custom_minimum_size.x
+		player_dialogue_overlay.position = Vector2((view_size.x - overlay_w) * 0.5, PLAYER_DIALOGUE_OVERLAY_Y)
+	if player_dialogue_info_stack:
+		var stack_y := PLAYER_DIALOGUE_OVERLAY_Y
+		if player_dialogue_overlay and player_dialogue_overlay.visible:
+			var prompt_h := maxf(player_dialogue_overlay.size.y, player_dialogue_overlay.get_combined_minimum_size().y)
+			stack_y += prompt_h + PLAYER_DIALOGUE_STACK_GAP
+		player_dialogue_info_stack.position = Vector2((view_size.x - PLAYER_DIALOGUE_OVERLAY_WIDTH) * 0.5, stack_y)
+		player_dialogue_info_stack.custom_minimum_size.x = PLAYER_DIALOGUE_OVERLAY_WIDTH
 
 func _update_robot_task_panel() -> void:
 	if robot_tasks_box == null:
@@ -513,7 +597,9 @@ func _update_customer_panel() -> void:
 		customer_items_box.add_child(empty_label)
 		return
 
+	var board = get_node_or_null("/root/TaskBoard")
 	var now_ms := Time.get_ticks_msec()
+	var shown_count := 0
 	for n in customers:
 		if not (n is Node):
 			continue
@@ -532,8 +618,26 @@ func _update_customer_panel() -> void:
 		if seat == "":
 			seat = "-"
 
+		var open_task: Dictionary = {}
+		var ended_task_recently := false
+		if board and board.has_method("get_open_task_for_customer"):
+			open_task = board.get_open_task_for_customer(cnode.get_instance_id())
+		if open_task.is_empty() and board and board.has_method("get_all_tasks"):
+			for task in board.get_all_tasks():
+				var payload: Dictionary = task.get("payload", {})
+				if int(payload.get("customer_instance_id", 0)) != cnode.get_instance_id():
+					continue
+				var task_state := str(task.get("state", ""))
+				if task_state == "completed" or task_state == "failed":
+					ended_task_recently = true
+					break
+
+		if ended_task_recently and state != "EATING":
+			continue
+
 		var line := Label.new()
 		var table_text := _friendly_table_name(seat)
+		var display_state := _friendly_customer_state(state, _current_customer_step_name(open_task))
 		if state == "WAITING_FOR_FOOD":
 			var countdown_text := "Waiting"
 			if cnode.has_method("get_task_deadline_ms"):
@@ -541,12 +645,19 @@ func _update_customer_panel() -> void:
 				if deadline_ms > 0:
 					var remain_sec := int(ceili(float(deadline_ms - now_ms) / 1000.0))
 					countdown_text = str(maxi(remain_sec, 0)) + "s"
-			line.text = "%s | %s | %s | %s" % [table_text, food.capitalize(), _friendly_customer_state(state), countdown_text]
+			line.text = "%s | %s | %s | %s" % [table_text, food.capitalize(), display_state, countdown_text]
 			if countdown_text == "0s":
 				line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
 		else:
-			line.text = "%s | %s | %s" % [table_text, food.capitalize(), _friendly_customer_state(state)]
+			line.text = "%s | %s | %s" % [table_text, food.capitalize(), display_state]
 		customer_items_box.add_child(line)
+		shown_count += 1
+
+	if shown_count == 0:
+		var empty_after_filter := Label.new()
+		empty_after_filter.text = "(None)"
+		empty_after_filter.add_theme_color_override("font_color", Color.GRAY)
+		customer_items_box.add_child(empty_after_filter)
 
 func _update_customer_history_panel() -> void:
 	var board = get_node_or_null("/root/TaskBoard")
@@ -563,6 +674,11 @@ func _update_customer_history_panel() -> void:
 		var st := str(task.get("state", ""))
 		if st == "completed" or st == "failed":
 			ended.append(task)
+
+	var summary := Label.new()
+	summary.text = "Success %d | Failed %d" % [_success_count, _failed_count]
+	summary.add_theme_color_override("font_color", Color(0.90, 0.94, 1.0, 1.0))
+	customer_items_box.add_child(summary)
 
 	if ended.is_empty():
 		var empty := Label.new()
@@ -660,11 +776,13 @@ func _summarize_holding(items: Array) -> String:
 		names.append(str(item.get("name", "item")))
 	return ", ".join(names)
 
-func _friendly_customer_state(raw: String) -> String:
+func _friendly_customer_state(raw: String, step_name: String = "") -> String:
 	match raw:
 		"ENTERING":
 			return "Walking to table"
 		"WAITING_FOR_FOOD":
+			if step_name == "TAKE_ORDER":
+				return "Waiting for order"
 			return "Waiting for food"
 		"EATING":
 			return "Eating"
@@ -707,6 +825,15 @@ func _friendly_step_name(raw: String) -> String:
 		_:
 			return "In Progress"
 
+func _current_customer_step_name(task: Dictionary) -> String:
+	if task.is_empty():
+		return ""
+	var idx := int(task.get("current_step_index", 0))
+	var steps: Array = task.get("steps", [])
+	if idx < 0 or idx >= steps.size():
+		return ""
+	return str((steps[idx] as Dictionary).get("name", ""))
+
 func _get_robot_capacity() -> int:
 	var robots = get_tree().get_nodes_in_group("robot")
 	if robots.is_empty():
@@ -738,9 +865,7 @@ func show_help_request(request: Dictionary) -> void:
 	_active_request_id = str(request.get("id", ""))
 	_active_request_type = str(request.get("type", ""))
 	_reset_help_buttons()
-	help_title.text = "Robot Request"
-	help_body.text = _build_help_text(request)
-	help_panel.show()
+	_show_player_dialogue_prompt("Robot Request", _build_help_text(request), ["Accept", "Decline", "Later"], true)
 	_maybe_show_help_bubble(request)
 
 func _build_help_text(request: Dictionary) -> String:
@@ -763,6 +888,14 @@ func _respond(response: String) -> void:
 			kitchen_pick_selected.emit(_kitchen_pick_options[idx])
 		return
 
+	if _popup_mode == POPUP_MODE_GAME_OVER:
+		match response:
+			"accept":
+				_on_game_over_retry()
+			"decline":
+				_on_game_over_quit()
+		return
+
 	if _active_request_id == "":
 		return
 	var help_mgr = get_node_or_null("/root/HelpRequestManager")
@@ -778,17 +911,17 @@ func _on_help_request_updated(request: Dictionary) -> void:
 	var status = str(request.get("status", ""))
 	if status == "accepted":
 		if rid == _active_request_id:
-			help_panel.hide()
+			_hide_player_dialogue_overlay()
 			_popup_mode = POPUP_MODE_NONE
 	elif status == "cooldown":
 		if rid == _active_request_id:
-			help_panel.hide()
+			_hide_player_dialogue_overlay()
 			_popup_mode = POPUP_MODE_NONE
 	elif status == "pending":
 		if rid != _active_request_id:
 			_auto_open_help_request(request)
 		else:
-			help_body.text = _build_help_text(request)
+			_show_player_dialogue_prompt("Robot Request", _build_help_text(request), ["Accept", "Decline", "Later"], true)
 			_maybe_show_help_bubble(request)
 
 func _on_help_request_created(request: Dictionary) -> void:
@@ -806,7 +939,7 @@ func _on_help_request_resolved(request: Dictionary) -> void:
 		return
 	_active_request_id = ""
 	_active_request_type = ""
-	help_panel.hide()
+	_hide_player_dialogue_overlay()
 	_popup_mode = POPUP_MODE_NONE
 	_reset_help_buttons()
 
@@ -819,34 +952,43 @@ func show_kitchen_pick_popup(options: Array[String]) -> void:
 		_kitchen_pick_options.append(str(options[i]))
 	_active_request_id = ""
 	_active_request_type = ""
-	help_title.text = "Kitchen Pickup"
-	help_body.text = "Take the dish you need.\nTap a dish to add +1.\nPress E to close."
-	accept_btn.text = _kitchen_pick_options[0].capitalize()
-	decline_btn.text = _kitchen_pick_options[1].capitalize()
-	later_btn.text = _kitchen_pick_options[2].capitalize()
-	help_panel.show()
+	_show_player_dialogue_prompt(
+		"Kitchen Pickup",
+		"Take the dish you need.\nTap a dish to add +1.\nPress E to close.",
+		[
+			_kitchen_pick_options[0].capitalize(),
+			_kitchen_pick_options[1].capitalize(),
+			_kitchen_pick_options[2].capitalize()
+		],
+		true
+	)
 
 func hide_kitchen_pick_popup() -> void:
 	if _popup_mode != POPUP_MODE_KITCHEN_PICK:
 		return
-	help_panel.hide()
+	_hide_player_dialogue_overlay()
 	_popup_mode = POPUP_MODE_NONE
 	_kitchen_pick_options.clear()
 	_reset_help_buttons()
 
 func is_kitchen_pick_popup_visible() -> bool:
-	return help_panel.visible and _popup_mode == POPUP_MODE_KITCHEN_PICK
+	return _popup_mode == POPUP_MODE_KITCHEN_PICK and player_dialogue_overlay != null and player_dialogue_overlay.visible
 
 func is_help_request_popup_visible() -> bool:
-	return help_panel.visible and _popup_mode == POPUP_MODE_HELP
+	return _popup_mode == POPUP_MODE_HELP and player_dialogue_overlay != null and player_dialogue_overlay.visible
 
 func show_quick_notice(text: String) -> void:
-	_append_feed_line(text)
+	_append_feed_line("Notice", text)
 
 func _reset_help_buttons() -> void:
-	accept_btn.text = "Accept"
-	decline_btn.text = "Decline"
-	later_btn.text = "Later"
+	if player_dialogue_overlay_accept_btn:
+		player_dialogue_overlay_accept_btn.text = "Accept"
+	if player_dialogue_overlay_decline_btn:
+		player_dialogue_overlay_decline_btn.text = "Decline"
+	if player_dialogue_overlay_later_btn:
+		player_dialogue_overlay_later_btn.text = "Later"
+	if player_dialogue_overlay_later_btn:
+		player_dialogue_overlay_later_btn.visible = true
 
 func _setup_mbti_survey() -> void:
 	_mbti_questions = [
@@ -1004,6 +1146,10 @@ func _set_gameplay_panels_visible(visible: bool) -> void:
 		inventory_panel.visible = visible
 	if dialogue_panel:
 		dialogue_panel.visible = visible
+	if player_dialogue_overlay and not visible:
+		player_dialogue_overlay.visible = false
+	if player_dialogue_info_stack and not visible:
+		player_dialogue_info_stack.visible = false
 
 func _auto_open_help_request(request: Dictionary) -> void:
 	if mbti_panel and mbti_panel.visible:
@@ -1015,7 +1161,7 @@ func _auto_open_help_request(request: Dictionary) -> void:
 		return
 	if bool(_auto_open_in_flight.get(rid, false)):
 		return
-	if rid == _active_request_id and help_panel.visible:
+	if rid == _active_request_id and player_dialogue_overlay != null and player_dialogue_overlay.visible:
 		return
 
 	_auto_open_in_flight[rid] = true
@@ -1065,22 +1211,31 @@ func _maybe_show_help_bubble(request: Dictionary) -> void:
 	if robots.is_empty():
 		return
 	var robot = robots[0]
+	var players := get_tree().get_nodes_in_group("player")
+	var player := players[0] if not players.is_empty() else null
 	if robot is Node2D:
-		bubble_mgr.say(robot, utterance, 2.8, Color(0.94, 0.98, 1.0, 1.0))
+		if player != null and player is Node2D and bubble_mgr.has_method("say_to"):
+			bubble_mgr.say_to(robot, player, utterance, 2.8, Color(0.94, 0.98, 1.0, 1.0))
+		else:
+			bubble_mgr.say(robot, utterance, 2.8, Color(0.94, 0.98, 1.0, 1.0))
 
-func _on_bubble_message(_speaker: String, text: String, kind: String) -> void:
+func _on_bubble_message(source: Node2D, recipient: Node2D, speaker: String, text: String, kind: String, recipient_kind: String) -> void:
 	if kind == "system":
 		return
-	_append_feed_line(text)
+	_append_feed_line(speaker, text)
+	if _should_skip_player_overlay_message(source, recipient, kind, recipient_kind):
+		return
+	if _is_player_related_dialogue(source, recipient, kind, recipient_kind):
+		_show_player_dialogue_overlay(speaker, text, kind)
 
-func _append_feed_line(text: String) -> void:
+func _append_feed_line(speaker: String, text: String) -> void:
 	if dialogue_log == null:
 		return
 	var content := text.strip_edges()
 	if content == "":
 		return
 	var stamp := Time.get_time_string_from_system()
-	var line := "[%s] %s\n" % [stamp, content]
+	var line := "[%s] %s: %s\n" % [stamp, speaker, content]
 	dialogue_log.push_color(FEED_COLOR_DIALOGUE)
 	dialogue_log.add_text(line)
 	dialogue_log.pop()
@@ -1088,3 +1243,145 @@ func _append_feed_line(text: String) -> void:
 	if dialogue_log.get_line_count() > max_lines:
 		dialogue_log.clear()
 	dialogue_log.scroll_to_line(max(0, dialogue_log.get_line_count() - 1))
+
+func _is_player_related_dialogue(source: Node2D, recipient: Node2D, kind: String, recipient_kind: String) -> bool:
+	if kind == "player" or recipient_kind == "player":
+		return true
+	if source != null and is_instance_valid(source) and source.is_in_group("player"):
+		return true
+	if recipient != null and is_instance_valid(recipient) and recipient.is_in_group("player"):
+		return true
+	return false
+
+func _should_skip_player_overlay_message(source: Node2D, recipient: Node2D, kind: String, recipient_kind: String) -> bool:
+	if not _is_player_related_dialogue(source, recipient, kind, recipient_kind):
+		return true
+	if _popup_mode == POPUP_MODE_HELP and kind == "robot" and recipient_kind == "player":
+		return true
+	if _popup_mode == POPUP_MODE_KITCHEN_PICK or _popup_mode == POPUP_MODE_GAME_OVER:
+		return true
+	return false
+
+func _show_player_dialogue_overlay(speaker: String, text: String, kind: String) -> void:
+	if player_dialogue_info_stack == null:
+		return
+	var content := text.strip_edges()
+	if content == "":
+		return
+	var speaker_color := Color(1.0, 0.92, 0.74, 1.0)
+	if kind == "robot":
+		speaker_color = Color(0.76, 0.95, 1.0, 1.0)
+	elif kind == "customer":
+		speaker_color = Color(1.0, 0.85, 0.78, 1.0)
+
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.11, 0.16, 0.90)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = speaker_color
+	style.corner_radius_top_left = 12
+	style.corner_radius_top_right = 12
+	style.corner_radius_bottom_right = 12
+	style.corner_radius_bottom_left = 12
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	card.add_theme_stylebox_override("panel", style)
+
+	var label := RichTextLabel.new()
+	label.bbcode_enabled = false
+	label.fit_content = true
+	label.scroll_active = false
+	label.selection_enabled = false
+	label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT - 20.0)
+	card.add_child(label)
+	label.push_color(speaker_color)
+	label.add_text(speaker)
+	label.pop()
+	label.add_text(": %s" % content)
+
+	player_dialogue_info_stack.add_child(card)
+	player_dialogue_info_stack.visible = true
+	_player_dialogue_info_cards.append({"node": card})
+	_trim_player_dialogue_info_cards()
+	_update_gameplay_panel_layout()
+
+	card.modulate = Color(1, 1, 1, 1)
+	card.scale = Vector2(0.95, 0.95)
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(card, "scale", Vector2(1.0, 1.0), 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.chain().tween_interval(PLAYER_DIALOGUE_OVERLAY_SHOW_SEC)
+	tween.set_parallel(true)
+	tween.tween_property(card, "modulate:a", 0.0, 0.22).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	tween.chain().tween_callback(func():
+		_remove_player_dialogue_info_card(card)
+	)
+
+func _show_player_dialogue_prompt(title: String, body: String, button_texts: Array[String] = [], show_third_button: bool = true) -> void:
+	if player_dialogue_overlay == null or player_dialogue_overlay_label == null:
+		return
+	if _player_dialogue_overlay_tween and _player_dialogue_overlay_tween.is_valid():
+		_player_dialogue_overlay_tween.kill()
+	player_dialogue_overlay.visible = true
+	player_dialogue_overlay.modulate = Color(1, 1, 1, 1)
+	player_dialogue_overlay.scale = Vector2(1.0, 1.0)
+	player_dialogue_overlay.position = Vector2(player_dialogue_overlay.position.x, PLAYER_DIALOGUE_OVERLAY_Y)
+	player_dialogue_overlay_label.clear()
+	player_dialogue_overlay_label.push_color(Color(1.0, 0.84, 0.36, 1.0))
+	player_dialogue_overlay_label.add_text(title)
+	player_dialogue_overlay_label.pop()
+	player_dialogue_overlay_label.add_text("\n\n" + body)
+	if player_dialogue_overlay_buttons:
+		player_dialogue_overlay_buttons.visible = not button_texts.is_empty()
+		if player_dialogue_overlay_accept_btn and button_texts.size() >= 1:
+			player_dialogue_overlay_accept_btn.text = button_texts[0]
+		if player_dialogue_overlay_decline_btn and button_texts.size() >= 2:
+			player_dialogue_overlay_decline_btn.text = button_texts[1]
+		if player_dialogue_overlay_later_btn:
+			player_dialogue_overlay_later_btn.visible = show_third_button and button_texts.size() >= 3
+			if button_texts.size() >= 3:
+				player_dialogue_overlay_later_btn.text = button_texts[2]
+	_trim_player_dialogue_info_cards()
+	_update_gameplay_panel_layout()
+
+func _hide_player_dialogue_overlay_buttons() -> void:
+	if player_dialogue_overlay_buttons:
+		player_dialogue_overlay_buttons.visible = false
+
+func _hide_player_dialogue_overlay() -> void:
+	if player_dialogue_overlay == null:
+		return
+	_hide_player_dialogue_overlay_buttons()
+	player_dialogue_overlay.visible = false
+	player_dialogue_overlay.modulate = Color(1, 1, 1, 1)
+	player_dialogue_overlay.position = Vector2(player_dialogue_overlay.position.x, PLAYER_DIALOGUE_OVERLAY_Y)
+	_update_gameplay_panel_layout()
+
+func _trim_player_dialogue_info_cards() -> void:
+	var allowed := PLAYER_DIALOGUE_MAX_STACK
+	if player_dialogue_overlay and player_dialogue_overlay.visible:
+		allowed -= 1
+	allowed = maxi(allowed, 0)
+	while _player_dialogue_info_cards.size() > allowed:
+		var oldest: Dictionary = _player_dialogue_info_cards.pop_front()
+		var node = oldest.get("node", null)
+		if node != null and is_instance_valid(node):
+			node.queue_free()
+
+func _remove_player_dialogue_info_card(card: Control) -> void:
+	for i in range(_player_dialogue_info_cards.size()):
+		var entry: Dictionary = _player_dialogue_info_cards[i]
+		if entry.get("node", null) == card:
+			_player_dialogue_info_cards.remove_at(i)
+			break
+	if card != null and is_instance_valid(card):
+		card.queue_free()
+	if player_dialogue_info_stack and _player_dialogue_info_cards.is_empty():
+		player_dialogue_info_stack.visible = false
+	_update_gameplay_panel_layout()
