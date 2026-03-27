@@ -563,6 +563,11 @@ func _on_active_step_finished() -> void:
 	if not ok:
 		return
 
+	if expected_step == STEP_TAKE_ORDER:
+		var customer: Node = bt_runner.bb.get("target_customer", null)
+		if customer != null and customer.has_method("on_food_order_taken"):
+			customer.call("on_food_order_taken")
+
 	if expected_step == STEP_TAKE_ORDER and _pending_overload_handoff_task_id == _active_task_id:
 		# Defer request creation to tick loop so robot can approach player first.
 		_active_step_started = false

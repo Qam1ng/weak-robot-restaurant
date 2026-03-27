@@ -74,9 +74,11 @@ var _customer_tab: String = CUSTOMER_TAB_LIVE
 var _score: int = 0
 var _success_count: int = 0
 var _failed_count: int = 0
-const SCORE_PER_SUCCESS := 0
-const SCORE_PER_FAILURE := -1
-const SCORE_FAIL_THRESHOLD := -10
+const SCORE_PER_SUCCESS := 2
+const SCORE_PER_FAILURE := -6
+const SCORE_PER_DRINK_SUCCESS := 1
+const SCORE_PER_DRINK_FAILURE := -3
+const SCORE_FAIL_THRESHOLD := -30
 const MBTI_PANEL_BASE_SIZE := Vector2(720.0, 440.0)
 const MBTI_PANEL_MARGIN := 24.0
 const MBTI_PANEL_OFFSET_X := 23.0
@@ -192,7 +194,7 @@ func _setup_inventory_ui() -> void:
 	inventory_list.add_child(title)
 
 	score_label = Label.new()
-	score_label.text = "Score: 0  (Lose at %d)" % SCORE_FAIL_THRESHOLD
+	score_label.text = "Score: 0"
 	score_label.add_theme_color_override("font_color", Color(0.86, 0.96, 1.0, 1.0))
 	inventory_list.add_child(score_label)
 
@@ -379,16 +381,26 @@ func _connect_score_signals() -> void:
 		board.task_failed.connect(_on_task_failed)
 	_refresh_score_label()
 
-func _on_task_completed(_task: Dictionary) -> void:
+func _on_task_completed(task: Dictionary) -> void:
 	_success_count += 1
-	_score += SCORE_PER_SUCCESS
+	var payload: Dictionary = task.get("payload", {})
+	var order_kind := str(payload.get("order_kind", "food"))
+	if order_kind == "drink":
+		_score += SCORE_PER_DRINK_SUCCESS
+	else:
+		_score += SCORE_PER_SUCCESS
 	_refresh_score_label()
 	_update_player_task_panel()
 	_update_customer_panel()
 
-func _on_task_failed(_task: Dictionary) -> void:
+func _on_task_failed(task: Dictionary) -> void:
 	_failed_count += 1
-	_score += SCORE_PER_FAILURE
+	var payload: Dictionary = task.get("payload", {})
+	var order_kind := str(payload.get("order_kind", "food"))
+	if order_kind == "drink":
+		_score += SCORE_PER_DRINK_FAILURE
+	else:
+		_score += SCORE_PER_FAILURE
 	_refresh_score_label()
 	_update_player_task_panel()
 	_update_customer_panel()
@@ -397,9 +409,11 @@ func _on_task_failed(_task: Dictionary) -> void:
 func _refresh_score_label() -> void:
 	if score_label == null:
 		return
-	score_label.text = "Score: %d  (Lose at %d)" % [_score, SCORE_FAIL_THRESHOLD]
+	score_label.text = "Score: %d" % _score
 	if _score < 0:
 		score_label.add_theme_color_override("font_color", Color(1.0, 0.70, 0.70, 1.0))
+	elif _score > 0:
+		score_label.add_theme_color_override("font_color", Color(0.72, 1.0, 0.78, 1.0))
 	else:
 		score_label.add_theme_color_override("font_color", Color(0.86, 0.96, 1.0, 1.0))
 
@@ -540,7 +554,7 @@ func _update_robot_task_panel() -> void:
 	for task in tasks:
 		var task_id := str(task.get("id", ""))
 		var payload: Dictionary = task.get("payload", {})
-		var food := str(payload.get("food_item", "order")).capitalize()
+		var item_label := _task_display_name(payload)
 		var seat := _friendly_table_name(str(payload.get("seat", "-")))
 		var step := "In Progress"
 		if board.has_method("get_current_step_name"):
@@ -551,7 +565,7 @@ func _update_robot_task_panel() -> void:
 			var remain_sec := int(ceili(float(deadline_ms - Time.get_ticks_msec()) / 1000.0))
 			eta = str(maxi(remain_sec, 0)) + "s"
 		var line := Label.new()
-		line.text = "%s | %s | %s | %s" % [seat, food, step, eta]
+		line.text = "%s | %s | %s | %s" % [seat, item_label, step, eta]
 		if eta == "0s":
 			line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
 		robot_tasks_box.add_child(line)
@@ -608,21 +622,17 @@ func _update_customer_panel() -> void:
 		if cnode.has_method("get_state_name"):
 			state = str(cnode.call("get_state_name"))
 
-		var food := "item"
-		if "request_text" in cnode:
-			food = _extract_food_from_request(str(cnode.get("request_text")))
-
 		var seat := ""
 		if "current_seat" in cnode:
 			seat = str(cnode.get("current_seat"))
 		if seat == "":
 			seat = "-"
 
-		var open_task: Dictionary = {}
+		var open_tasks: Array[Dictionary] = []
 		var ended_task_recently := false
-		if board and board.has_method("get_open_task_for_customer"):
-			open_task = board.get_open_task_for_customer(cnode.get_instance_id())
-		if open_task.is_empty() and board and board.has_method("get_all_tasks"):
+		if board and board.has_method("get_open_tasks_for_customer"):
+			open_tasks = board.get_open_tasks_for_customer(cnode.get_instance_id())
+		if open_tasks.is_empty() and board and board.has_method("get_all_tasks"):
 			for task in board.get_all_tasks():
 				var payload: Dictionary = task.get("payload", {})
 				if int(payload.get("customer_instance_id", 0)) != cnode.get_instance_id():
@@ -637,19 +647,36 @@ func _update_customer_panel() -> void:
 
 		var line := Label.new()
 		var table_text := _friendly_table_name(seat)
-		var display_state := _friendly_customer_state(state, _current_customer_step_name(open_task))
+		var food_task := _task_by_kind(open_tasks, "food")
+		var drink_task := _task_by_kind(open_tasks, "drink")
+		var display_state := _friendly_customer_state(state, _current_customer_step_name(food_task))
 		if state == "WAITING_FOR_FOOD":
-			var countdown_text := "Waiting"
-			if cnode.has_method("get_task_deadline_ms"):
-				var deadline_ms := int(cnode.call("get_task_deadline_ms"))
-				if deadline_ms > 0:
-					var remain_sec := int(ceili(float(deadline_ms - now_ms) / 1000.0))
-					countdown_text = str(maxi(remain_sec, 0)) + "s"
-			line.text = "%s | %s | %s | %s" % [table_text, food.capitalize(), display_state, countdown_text]
-			if countdown_text == "0s":
+			var food_step := _current_customer_step_name(food_task)
+			var drink_step := _current_customer_step_name(drink_task)
+			if food_step == "TAKE_ORDER":
+				display_state = "Waiting"
+			elif not drink_task.is_empty() and drink_step == "TAKE_ORDER":
+				display_state = "Waiting"
+			elif not drink_task.is_empty():
+				display_state = "Waiting"
+		if state == "WAITING_FOR_FOOD":
+			var parts: Array[String] = [table_text]
+			if not food_task.is_empty():
+				parts.append("%s %s" % [_compact_item_name(food_task.get("payload", {})), _countdown_text_from_task(food_task, now_ms)])
+			if not drink_task.is_empty():
+				parts.append("%s %s" % [_compact_item_name(drink_task.get("payload", {})), _countdown_text_from_task(drink_task, now_ms)])
+			parts.append(_compact_customer_status(display_state))
+			line.text = " | ".join(parts)
+			if (not food_task.is_empty() and _countdown_text_from_task(food_task, now_ms) == "0s") or (not drink_task.is_empty() and _countdown_text_from_task(drink_task, now_ms) == "0s"):
 				line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
 		else:
-			line.text = "%s | %s | %s" % [table_text, food.capitalize(), display_state]
+			var parts: Array[String] = [table_text]
+			if not food_task.is_empty():
+				parts.append(_compact_item_name(food_task.get("payload", {})))
+			if not drink_task.is_empty():
+				parts.append(_compact_item_name(drink_task.get("payload", {})))
+			parts.append(_compact_customer_status(display_state))
+			line.text = " | ".join(parts)
 		customer_items_box.add_child(line)
 		shown_count += 1
 
@@ -698,13 +725,13 @@ func _update_customer_history_panel() -> void:
 		var task: Dictionary = ended[i]
 		var payload: Dictionary = task.get("payload", {})
 		var seat := _friendly_table_name(str(payload.get("seat", "-")))
-		var food := str(payload.get("food_item", "order")).capitalize()
+		var item_label := _task_display_name(payload)
 		var state := str(task.get("state", ""))
 		var status_text := "Success"
 		if state == "failed":
 			status_text = "Failed"
 		var line := Label.new()
-		line.text = "%s | %s | %s" % [seat, food, status_text]
+		line.text = "%s | %s | %s" % [seat, item_label, status_text]
 		if state == "failed":
 			line.add_theme_color_override("font_color", Color(1.0, 0.56, 0.56, 1.0))
 		else:
@@ -744,7 +771,7 @@ func _update_player_task_panel() -> void:
 	for task in tasks:
 		var task_id := str(task.get("id", ""))
 		var payload: Dictionary = task.get("payload", {})
-		var food := str(payload.get("food_item", "order")).capitalize()
+		var item_label := _task_display_name(payload)
 		var seat := _friendly_table_name(str(payload.get("seat", "-")))
 		var step := "In Progress"
 		if board.has_method("get_current_step_name"):
@@ -755,7 +782,7 @@ func _update_player_task_panel() -> void:
 			var remain_sec := int(ceili(float(deadline_ms - Time.get_ticks_msec()) / 1000.0))
 			eta = str(maxi(remain_sec, 0)) + "s"
 		var line := Label.new()
-		line.text = "%s | %s | %s | %s" % [seat, food, step, eta]
+		line.text = "%s | %s | %s | %s" % [seat, item_label, step, eta]
 		if eta == "0s":
 			line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
 		player_tasks_box.add_child(line)
@@ -768,6 +795,32 @@ func _extract_food_from_request(request: String) -> String:
 			return f
 	return "order"
 
+func _task_display_name(payload: Dictionary) -> String:
+	var item := str(payload.get("display_item", "")).strip_edges()
+	if item == "":
+		item = str(payload.get("food_item", payload.get("drink_item", "order"))).strip_edges()
+	return item.capitalize()
+
+func _compact_item_name(payload: Dictionary) -> String:
+	var item := str(payload.get("display_item", "")).strip_edges().to_lower()
+	if item == "":
+		item = str(payload.get("food_item", payload.get("drink_item", "order"))).strip_edges().to_lower()
+	return item.capitalize()
+
+func _task_by_kind(tasks: Array[Dictionary], order_kind: String) -> Dictionary:
+	for task in tasks:
+		var payload: Dictionary = task.get("payload", {})
+		if str(payload.get("order_kind", "food")) == order_kind:
+			return task
+	return {}
+
+func _countdown_text_from_task(task: Dictionary, now_ms: int) -> String:
+	var deadline_ms := int(task.get("deadline_ms", 0))
+	if deadline_ms <= 0:
+		return "Waiting"
+	var remain_sec := int(ceili(float(deadline_ms - now_ms) / 1000.0))
+	return str(maxi(remain_sec, 0)) + "s"
+
 func _summarize_holding(items: Array) -> String:
 	if items.is_empty():
 		return "None"
@@ -779,11 +832,9 @@ func _summarize_holding(items: Array) -> String:
 func _friendly_customer_state(raw: String, step_name: String = "") -> String:
 	match raw:
 		"ENTERING":
-			return "Walking to table"
+			return "Entering"
 		"WAITING_FOR_FOOD":
-			if step_name == "TAKE_ORDER":
-				return "Waiting for order"
-			return "Waiting for food"
+			return "Waiting"
 		"EATING":
 			return "Eating"
 		"LEAVING":
@@ -792,6 +843,21 @@ func _friendly_customer_state(raw: String, step_name: String = "") -> String:
 			return "Left"
 		_:
 			return "Unknown"
+
+func _compact_customer_status(status: String) -> String:
+	match status:
+		"Entering":
+			return "Entering"
+		"Waiting":
+			return "Waiting"
+		"Eating":
+			return "Eating"
+		"Leaving":
+			return "Leaving"
+		"Left":
+			return "Left"
+		_:
+			return status
 
 func _friendly_table_name(raw: String) -> String:
 	var s := raw.strip_edges().to_lower()
@@ -943,7 +1009,7 @@ func _on_help_request_resolved(request: Dictionary) -> void:
 	_popup_mode = POPUP_MODE_NONE
 	_reset_help_buttons()
 
-func show_kitchen_pick_popup(options: Array[String]) -> void:
+func show_kitchen_pick_popup(options: Array[String], title: String = "Kitchen Pickup") -> void:
 	if options.size() < 3:
 		return
 	_popup_mode = POPUP_MODE_KITCHEN_PICK
@@ -953,8 +1019,8 @@ func show_kitchen_pick_popup(options: Array[String]) -> void:
 	_active_request_id = ""
 	_active_request_type = ""
 	_show_player_dialogue_prompt(
-		"Kitchen Pickup",
-		"Take the dish you need.\nTap a dish to add +1.\nPress E to close.",
+		title,
+		"Take the item you need.\nTap an option to add +1.\nPress E to close.",
 		[
 			_kitchen_pick_options[0].capitalize(),
 			_kitchen_pick_options[1].capitalize(),

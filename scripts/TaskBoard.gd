@@ -6,6 +6,7 @@ signal task_completed(task: Dictionary)
 signal task_failed(task: Dictionary)
 
 const TASK_FULFILL_ORDER := "FULFILL_ORDER"
+const TASK_DRINK_ORDER := "DRINK_ORDER"
 const STATE_UNASSIGNED := "unassigned"
 const STATE_IN_PROGRESS := "in_progress"
 const STATE_COMPLETED := "completed"
@@ -15,6 +16,7 @@ const STEP_TAKE_ORDER := "TAKE_ORDER"
 const STEP_PICKUP_FROM_KITCHEN := "PICKUP_FROM_KITCHEN"
 const STEP_DELIVER_AND_SERVE := "DELIVER_AND_SERVE"
 const SERVE_WINDOW_MS := 90_000
+const DRINK_WINDOW_MS := 60_000
 
 var _tasks_by_id: Dictionary = {}
 var _task_order: Array[String] = []
@@ -52,8 +54,10 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 		"current_step_index": 0,
 		"steps": steps,
 		"payload": {
+			"order_kind": "food",
 			"request_text": request_text,
 			"food_item": food_item,
+			"display_item": food_item,
 			"seat": seat,
 			"customer_instance_id": customer.get_instance_id(),
 			"serve_deadline_ms": now_ms + SERVE_WINDOW_MS
@@ -66,6 +70,52 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 	var copied := _copy_task(task)
 	task_created.emit(copied)
 	_emit_taskbus_event("post_customer_request", copied)
+	return copied
+
+func create_drink_order(customer: Node, drink_item: String, assignee: String = "player") -> Dictionary:
+	if not is_instance_valid(customer):
+		return {}
+	var item_name := drink_item.strip_edges().to_lower()
+	if item_name == "":
+		return {}
+	var seat := ""
+	if "current_seat" in customer:
+		seat = str(customer.current_seat)
+	var task_id := _new_task_id()
+	var now_ms := Time.get_ticks_msec()
+	var steps := [
+		{"name": STEP_TAKE_ORDER, "state": "pending"},
+		{"name": STEP_PICKUP_FROM_KITCHEN, "state": "pending"},
+		{"name": STEP_DELIVER_AND_SERVE, "state": "pending"}
+	]
+	var initial_state := STATE_UNASSIGNED if assignee == "" else STATE_IN_PROGRESS
+	var claimed_at_ms := 0 if assignee == "" else now_ms
+	var task := {
+		"id": task_id,
+		"type": TASK_DRINK_ORDER,
+		"state": initial_state,
+		"created_at_ms": now_ms,
+		"deadline_ms": now_ms + DRINK_WINDOW_MS,
+		"claimed_at_ms": claimed_at_ms,
+		"completed_at_ms": 0,
+		"assigned_to": assignee,
+		"current_step_index": 0,
+		"steps": steps,
+		"payload": {
+			"order_kind": "drink",
+			"request_text": "Can I also get a %s?" % item_name,
+			"drink_item": item_name,
+			"display_item": item_name,
+			"seat": seat,
+			"customer_instance_id": customer.get_instance_id(),
+			"serve_deadline_ms": now_ms + DRINK_WINDOW_MS
+		}
+	}
+	_tasks_by_id[task_id] = task
+	_task_order.append(task_id)
+	var copied := _copy_task(task)
+	task_created.emit(copied)
+	task_updated.emit(copied)
 	return copied
 
 func get_next_unassigned_task(task_type: String = "") -> Dictionary:
@@ -214,6 +264,43 @@ func get_open_task_for_customer(customer_instance_id: int) -> Dictionary:
 		if int(payload.get("customer_instance_id", 0)) == customer_instance_id:
 			return _copy_task(task)
 	return {}
+
+func get_open_tasks_for_customer(customer_instance_id: int, task_type: String = "") -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if customer_instance_id <= 0:
+		return out
+	for task_id in _task_order:
+		var task: Dictionary = _tasks_by_id.get(task_id, {})
+		if task.is_empty():
+			continue
+		if task_type != "" and str(task.get("type", "")) != task_type:
+			continue
+		var state := str(task.get("state", ""))
+		if state == STATE_COMPLETED or state == STATE_FAILED:
+			continue
+		var payload: Dictionary = task.get("payload", {})
+		if int(payload.get("customer_instance_id", 0)) != customer_instance_id:
+			continue
+		out.append(_copy_task(task))
+	return out
+
+func get_in_progress_tasks_for_customer(customer_instance_id: int, assignee: String = "") -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if customer_instance_id <= 0:
+		return out
+	for task_id in _task_order:
+		var task: Dictionary = _tasks_by_id.get(task_id, {})
+		if task.is_empty():
+			continue
+		if str(task.get("state", "")) != STATE_IN_PROGRESS:
+			continue
+		if assignee != "" and str(task.get("assigned_to", "")) != assignee:
+			continue
+		var payload: Dictionary = task.get("payload", {})
+		if int(payload.get("customer_instance_id", 0)) != customer_instance_id:
+			continue
+		out.append(_copy_task(task))
+	return out
 
 func get_best_handoff_candidate_for_player() -> Dictionary:
 	var best: Dictionary = {}
