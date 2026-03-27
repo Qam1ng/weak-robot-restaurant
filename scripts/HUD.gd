@@ -70,6 +70,7 @@ const PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT := 72.0
 const PLAYER_DIALOGUE_OVERLAY_SHOW_SEC := 5.0
 const PLAYER_DIALOGUE_STACK_GAP := 10.0
 const PLAYER_DIALOGUE_MAX_STACK := 3
+const DIALOGUE_PANEL_WIDTH := 340.0
 var _customer_tab: String = CUSTOMER_TAB_LIVE
 var _score: int = 0
 var _success_count: int = 0
@@ -281,7 +282,7 @@ func _setup_dialogue_feed_ui() -> void:
 	dialogue_panel.name = "DialogueFeedPanel"
 	add_child(dialogue_panel)
 	dialogue_panel.position = Vector2(SIDE_PANEL_MARGIN, TOP_PANEL_Y)
-	dialogue_panel.custom_minimum_size = Vector2(_left_panel_width, 210)
+	dialogue_panel.custom_minimum_size = Vector2(maxf(DIALOGUE_PANEL_WIDTH, _left_panel_width), 210)
 
 	var style = StyleBoxFlat.new()
 	style.bg_color = Color(0, 0, 0, 0.5)
@@ -300,7 +301,7 @@ func _setup_dialogue_feed_ui() -> void:
 	vbox.add_child(dialogue_title)
 
 	dialogue_log = RichTextLabel.new()
-	dialogue_log.custom_minimum_size = Vector2(maxf(170.0, _left_panel_width - 30.0), 160)
+	dialogue_log.custom_minimum_size = Vector2(maxf(170.0, dialogue_panel.custom_minimum_size.x - 30.0), 160)
 	dialogue_log.bbcode_enabled = false
 	dialogue_log.scroll_active = true
 	dialogue_log.fit_content = false
@@ -515,7 +516,7 @@ func _update_gameplay_panel_layout() -> void:
 	inventory_panel.position = Vector2(SIDE_PANEL_MARGIN, TOP_PANEL_Y)
 	var dialogue_w := maxf(_left_panel_width, dialogue_panel.custom_minimum_size.x)
 	dialogue_panel.position = Vector2(view_size.x - dialogue_w - SIDE_PANEL_MARGIN, TOP_PANEL_Y)
-	dialogue_panel.custom_minimum_size.x = _left_panel_width
+	dialogue_panel.custom_minimum_size.x = maxf(DIALOGUE_PANEL_WIDTH, _left_panel_width)
 	if player_dialogue_overlay:
 		var overlay_w := player_dialogue_overlay.custom_minimum_size.x
 		player_dialogue_overlay.position = Vector2((view_size.x - overlay_w) * 0.5, PLAYER_DIALOGUE_OVERLAY_Y)
@@ -730,8 +731,9 @@ func _update_customer_history_panel() -> void:
 		var status_text := "Success"
 		if state == "failed":
 			status_text = "Failed"
+		var score_delta_text := _history_score_delta_text(task)
 		var line := Label.new()
-		line.text = "%s | %s | %s" % [seat, item_label, status_text]
+		line.text = "%s | %s | %s | %s" % [seat, item_label, status_text, score_delta_text]
 		if state == "failed":
 			line.add_theme_color_override("font_color", Color(1.0, 0.56, 0.56, 1.0))
 		else:
@@ -806,6 +808,17 @@ func _compact_item_name(payload: Dictionary) -> String:
 	if item == "":
 		item = str(payload.get("food_item", payload.get("drink_item", "order"))).strip_edges().to_lower()
 	return item.capitalize()
+
+func _history_score_delta_text(task: Dictionary) -> String:
+	var payload: Dictionary = task.get("payload", {})
+	var order_kind := str(payload.get("order_kind", "food"))
+	var state := str(task.get("state", ""))
+	var delta := 0
+	if state == "completed":
+		delta = SCORE_PER_DRINK_SUCCESS if order_kind == "drink" else SCORE_PER_SUCCESS
+	elif state == "failed":
+		delta = SCORE_PER_DRINK_FAILURE if order_kind == "drink" else SCORE_PER_FAILURE
+	return ("%+d" % delta)
 
 func _task_by_kind(tasks: Array[Dictionary], order_kind: String) -> Dictionary:
 	for task in tasks:
@@ -1300,8 +1313,7 @@ func _append_feed_line(speaker: String, text: String) -> void:
 	var content := text.strip_edges()
 	if content == "":
 		return
-	var stamp := Time.get_time_string_from_system()
-	var line := "[%s] %s: %s\n" % [stamp, speaker, content]
+	var line := "%s: %s\n" % [speaker, content]
 	dialogue_log.push_color(FEED_COLOR_DIALOGUE)
 	dialogue_log.add_text(line)
 	dialogue_log.pop()
