@@ -9,7 +9,6 @@ const RESPONSE_DECLINE := "decline"
 const RESPONSE_LATER := "later"
 
 const TYPE_HANDOFF := "HANDOFF"
-const HANDOFF_ACCEPT_DISTANCE := 120.0
 
 const STATUS_PENDING := "pending"
 const STATUS_COOLDOWN := "cooldown"
@@ -199,15 +198,6 @@ func respond(request_id: String, response: String) -> Dictionary:
 	if str(req.get("status", "")) == STATUS_RESOLVED:
 		return _copy(req)
 
-	# Enforce in-person acceptance for HANDOFF requests.
-	if response == RESPONSE_ACCEPT and str(req.get("type", "")) == TYPE_HANDOFF:
-		if not _is_player_near_robot(req, HANDOFF_ACCEPT_DISTANCE):
-			print("[HelpRequest] Accept blocked (not near robot) -> ", request_id)
-			_log_help_event("accept_blocked_not_near", req, {
-				"required_distance": HANDOFF_ACCEPT_DISTANCE
-			})
-			return _copy(req)
-
 	var now_ms := Time.get_ticks_msec()
 	var prompt_latency_ms := 0
 	if int(req.get("last_prompt_ms", 0)) > 0:
@@ -365,20 +355,6 @@ func _sample_personality_profile() -> Dictionary:
 		"mbti_type": "",
 		"strategy_affinity": {}
 	}
-
-func _is_player_near_robot(req: Dictionary, max_distance: float) -> bool:
-	var robot_obj = _robot_from_request(req)
-	if robot_obj == null or not (robot_obj is Node2D):
-		return false
-	var players := get_tree().get_nodes_in_group("player")
-	if players.is_empty():
-		return false
-	var player_obj = players[0]
-	if not (player_obj is Node2D):
-		return false
-	var robot_node := robot_obj as Node2D
-	var player_node := player_obj as Node2D
-	return robot_node.global_position.distance_to(player_node.global_position) <= max_distance
 
 func _update_interaction_model(response: String, latency_ms: int) -> void:
 	_interaction_model["total"] = int(_interaction_model.get("total", 0)) + 1

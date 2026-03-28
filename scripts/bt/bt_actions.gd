@@ -39,6 +39,14 @@ class ActNavigate extends Core.Task:
 		if not nav_map.is_valid():
 			return Core.Status.FAILURE
 
+		# Help requests are choice points for the player. Once the robot is waiting
+		# for a response, freeze the current navigation action instead of letting
+		# stale path-following continue to drag the robot away.
+		if actor.has_method("needs_help") and bool(actor.call("needs_help")):
+			actor.velocity = Vector2.ZERO
+			actor.move_and_slide()
+			return Core.Status.RUNNING
+
 		if not _target_set:
 			if not bb.has(target_key):
 				return Core.Status.FAILURE

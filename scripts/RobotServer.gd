@@ -44,7 +44,7 @@ const IDLE_WAIT_MARKER := "RG4"
 const EMERGENCY_RECHARGE_RESUME_LEVEL := 55.0
 const ROBOT_MAX_ACTIVE_TASKS := 1
 const EMERGENCY_HANDOFF_APPROACH_DISTANCE := 120.0
-@export var robot_handoff_threshold_tasks: int = 5
+const DEADLINE_HANDOFF_TRIGGER_MS := 30_000
 var _active_task_id: String = ""
 var _active_task_step: String = ""
 var _active_step_started: bool = false
@@ -67,6 +67,8 @@ var _constraint_input: Dictionary = {}
 var _active_help_request_id: String = ""
 var _active_help_request_type: String = ""
 var _help_request_suppressed: bool = false
+var _overload_handoff_declined_task_id: String = ""
+var _deadline_handoff_declined_task_id: String = ""
 var _recharge_override_active: bool = false
 var _last_recharge_notice_ms: int = 0
 var _battery_emergency_handoff_attempted_task_id: String = ""
@@ -302,6 +304,11 @@ func _check_episode_completion() -> void:
 	if _tick_emergency_delegation():
 		return
 
+	# Deadline-critical handoff is a separate reason from overload and may still
+	# be requested even if the player previously rejected an overload handoff.
+	if _tick_deadline_handoff_delegation():
+		return
+
 	# Overload delegation: approach player first, then request in-person handoff.
 	if _tick_overload_handoff_delegation():
 		return
@@ -463,10 +470,13 @@ func _should_trigger_overload_handoff(task_id: String) -> bool:
 		return false
 	if not board.has_method("get_open_task_count"):
 		return false
-	if robot_handoff_threshold_tasks <= 0:
-		return false
 	var open_tasks := int(board.get_open_task_count())
-	return open_tasks >= robot_handoff_threshold_tasks
+	return open_tasks >= _robot_handoff_threshold_tasks()
+
+func _robot_handoff_threshold_tasks() -> int:
+	if inventory == null:
+		return 1
+	return maxi(1, inventory.capacity)
 
 func _resolve_customer_from_payload(payload: Dictionary) -> Node2D:
 	var iid = int(payload.get("customer_instance_id", 0))
@@ -721,7 +731,7 @@ func _tick_overload_handoff_delegation() -> bool:
 		return false
 	if _pending_overload_handoff_task_id == "" or _pending_overload_handoff_task_id != _active_task_id:
 		return false
-	if _help_request_suppressed:
+	if _overload_handoff_declined_task_id == _active_task_id:
 		# Player refused this request episode; continue task execution.
 		_pending_overload_handoff_task_id = ""
 		return false
@@ -774,6 +784,67 @@ func _tick_overload_handoff_delegation() -> bool:
 	})
 	_waiting_for_help = true
 	speak("Task load is high. Please take over this order.")
+	return true
+
+func _tick_deadline_handoff_delegation() -> bool:
+	if _active_task_id == "":
+		return false
+	if _deadline_handoff_declined_task_id == _active_task_id:
+		return false
+	if _waiting_for_help:
+		return true
+
+	var slack_ms := int(_constraint_input.get("slack_ms", 0))
+	if slack_ms <= 0 or slack_ms > DEADLINE_HANDOFF_TRIGGER_MS:
+		return false
+
+	var help_mgr = _help_manager()
+	if help_mgr == null:
+		return false
+	var player = _get_primary_player()
+	if player == null:
+		return false
+
+	if _active_help_request_id != "":
+		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
+		if not existing.is_empty():
+			var st := str(existing.get("status", ""))
+			if st != "resolved":
+				_waiting_for_help = true
+				return true
+
+	var distance_to_player := global_position.distance_to(player.global_position)
+	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
+		_waiting_for_help = false
+		var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
+		if not has_plan:
+			_plan_navigate_to_position(player.global_position, "deadline_player")
+		var now_ms := Time.get_ticks_msec()
+		if now_ms - _last_overload_approach_notice_ms > 1800:
+			_last_overload_approach_notice_ms = now_ms
+			speak("This order is close to timing out. Coming to you for urgent handoff.")
+		return true
+
+	var board = _task_board()
+	var item_needed := "item"
+	if board and board.has_method("get_task"):
+		var task: Dictionary = board.get_task(_active_task_id)
+		var payload: Dictionary = task.get("payload", {})
+		item_needed = str(payload.get("food_item", "item"))
+
+	_ensure_help_request(HELP_TYPE_HANDOFF, {
+		"handoff_mode": "TAKEOVER_TASK",
+		"task_id": _active_task_id,
+		"item_needed": item_needed,
+		"reason": "deadline_critical",
+		"slack_ms": slack_ms
+	}, {
+		"cooldown_ms": 2500,
+		"max_escalation": 1,
+		"urgency": 1.0
+	})
+	_waiting_for_help = true
+	speak("This order is about to time out. Please take it now.")
 	return true
 
 func _get_primary_player() -> Node2D:
@@ -907,9 +978,6 @@ func _try_speak_recharge_notice(text: String) -> void:
 	speak(text)
 
 func _ensure_help_request(request_type: String, payload: Dictionary = {}, options: Dictionary = {}) -> void:
-	if _help_request_suppressed:
-		return
-
 	var help_mgr = _help_manager()
 	if not help_mgr:
 		return
@@ -970,14 +1038,27 @@ func _on_help_request_updated(request: Dictionary) -> void:
 	var req_id = str(request.get("id", ""))
 	var status = str(request.get("status", ""))
 	var final_response = str(request.get("final_response", ""))
+	var payload: Dictionary = request.get("payload", {})
+	var reason := str(payload.get("reason", ""))
+	var task_id := str(payload.get("task_id", ""))
 	_active_help_request_id = req_id
 	_active_help_request_type = str(request.get("type", ""))
 
 	if status == "accepted":
 		_help_request_suppressed = false
+		if task_id != "":
+			if _overload_handoff_declined_task_id == task_id:
+				_overload_handoff_declined_task_id = ""
+			if _deadline_handoff_declined_task_id == task_id:
+				_deadline_handoff_declined_task_id = ""
 		_apply_handoff_accept(request)
 	elif status == "resolved" and final_response == "decline":
-		_help_request_suppressed = true
+		if reason == "robot_over_threshold_post_take_order" and task_id != "":
+			_overload_handoff_declined_task_id = task_id
+		elif reason == "deadline_critical" and task_id != "":
+			_deadline_handoff_declined_task_id = task_id
+		else:
+			_help_request_suppressed = true
 		set_waiting_for_help(false, "")
 		if _battery_mode == BATTERY_MODE_EMERGENCY and not _recharge_override_active:
 			_activate_recharge_override("Battery critical. Recharging now.")
@@ -998,12 +1079,20 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 	var updated: Dictionary = {}
 	var task_snapshot: Dictionary = board.get_task(task_id) if board.has_method("get_task") else {}
 	var task_state := str(task_snapshot.get("state", ""))
+	var step_before_transfer := str(board.get_current_step_name(task_id)) if board.has_method("get_current_step_name") else ""
 	if task_state == "unassigned" and board.has_method("claim_task"):
 		updated = board.claim_task(task_id, "player")
 	elif board.has_method("reassign_task"):
 		updated = board.reassign_task(task_id, "player")
 	if updated.is_empty():
 		return
+
+	# A robot-to-player handoff already communicates the requested item.
+	# If the task is still formally at TAKE_ORDER, skip that bookkeeping step
+	# so the player can proceed straight to kitchen pickup instead of being
+	# blocked by a stale step gate.
+	if mode == "TAKEOVER_TASK" and step_before_transfer == STEP_TAKE_ORDER and board.has_method("complete_current_step"):
+		board.complete_current_step(task_id, STEP_TAKE_ORDER)
 
 	if task_id == _active_task_id:
 		_end_current_episode(false, "task_handoff_to_player")
@@ -1077,6 +1166,8 @@ func _clear_help_request_runtime() -> void:
 	_active_help_request_id = ""
 	_active_help_request_type = ""
 	_help_request_suppressed = false
+	_overload_handoff_declined_task_id = ""
+	_deadline_handoff_declined_task_id = ""
 
 func set_nav_debug_path(world_points: PackedVector2Array) -> void:
 	if _nav_debug_line == null:
