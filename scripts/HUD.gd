@@ -1323,9 +1323,7 @@ func _append_feed_line(speaker: String, text: String) -> void:
 	dialogue_log.scroll_to_line(max(0, dialogue_log.get_line_count() - 1))
 
 func _is_player_related_dialogue(source: Node2D, recipient: Node2D, kind: String, recipient_kind: String) -> bool:
-	if kind == "player" or recipient_kind == "player":
-		return true
-	if source != null and is_instance_valid(source) and source.is_in_group("player"):
+	if recipient_kind == "player":
 		return true
 	if recipient != null and is_instance_valid(recipient) and recipient.is_in_group("player"):
 		return true

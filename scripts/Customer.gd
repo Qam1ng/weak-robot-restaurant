@@ -376,7 +376,6 @@ func _post_taskboard_request() -> void:
 		print("[Customer] Failed to create FULFILL_ORDER task.")
 		return
 	print("[Customer] Task created: ", task.get("id", "unknown"), " | state=", task.get("state", "unknown"))
-	_activate_drink_order_if_needed(true)
 	_refresh_order_bubble()
 
 func _update_anim_by_velocity(v: Vector2) -> void:
@@ -453,10 +452,6 @@ func on_player_interact(player: Node) -> void:
 
 	var tasks: Array[Dictionary] = task_board.get_in_progress_tasks_for_customer(get_instance_id(), "player")
 	var open_tasks: Array[Dictionary] = task_board.get_open_tasks_for_customer(get_instance_id())
-	if tasks.is_empty() and open_tasks.is_empty() and _drink_required and not _drink_order_activated:
-		_activate_drink_order_if_needed(true)
-		tasks = task_board.get_in_progress_tasks_for_customer(get_instance_id(), "player")
-		open_tasks = task_board.get_open_tasks_for_customer(get_instance_id())
 	if tasks.is_empty() and open_tasks.is_empty():
 		_notify_player("No player order for this customer.")
 		return
@@ -512,7 +507,7 @@ func _notify_player(text: String) -> void:
 		hud.call("show_quick_notice", text)
 
 func on_food_order_taken() -> void:
-	_activate_drink_order_if_needed(false)
+	_activate_drink_order_if_needed(true)
 	_refresh_order_bubble()
 
 func _activate_drink_order_if_needed(notify_player: bool) -> void:

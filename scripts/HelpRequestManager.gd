@@ -262,6 +262,40 @@ func complete_request(request_id: String, resolution_path: String = "cooperative
 	request_resolved.emit(copied)
 	return copied
 
+func cancel_request(request_id: String, resolution_path: String = "invalidated") -> Dictionary:
+	var req: Dictionary = _requests_by_id.get(request_id, {})
+	if req.is_empty():
+		return {}
+	if str(req.get("status", "")) == STATUS_RESOLVED:
+		return _copy(req)
+	req["status"] = STATUS_RESOLVED
+	req["resolution_path"] = resolution_path
+	req["updated_at_ms"] = Time.get_ticks_msec()
+	_requests_by_id[request_id] = req
+	var copied := _copy(req)
+	_log_help_event("canceled", req)
+	_log_help_event("resolved", req)
+	request_updated.emit(copied)
+	request_resolved.emit(copied)
+	return copied
+
+func requeue_request(request_id: String, cooldown_ms: int = 1500, resolution_note: String = "retry_later") -> Dictionary:
+	var req: Dictionary = _requests_by_id.get(request_id, {})
+	if req.is_empty():
+		return {}
+	if str(req.get("status", "")) == STATUS_RESOLVED:
+		return _copy(req)
+	var now_ms := Time.get_ticks_msec()
+	req["status"] = STATUS_COOLDOWN
+	req["updated_at_ms"] = now_ms
+	req["cooldown_until_ms"] = now_ms + maxi(cooldown_ms, 0)
+	req["resolution_path"] = resolution_note
+	_requests_by_id[request_id] = req
+	var copied := _copy(req)
+	_log_help_event("requeued", req, {"resolution_note": resolution_note})
+	request_updated.emit(copied)
+	return copied
+
 
 func _copy(req: Dictionary) -> Dictionary:
 	if req.is_empty():

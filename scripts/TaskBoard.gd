@@ -90,12 +90,13 @@ func create_drink_order(customer: Node, drink_item: String, assignee: String = "
 	]
 	var initial_state := STATE_UNASSIGNED if assignee == "" else STATE_IN_PROGRESS
 	var claimed_at_ms := 0 if assignee == "" else now_ms
+	var deadline_ms := now_ms + DRINK_WINDOW_MS
 	var task := {
 		"id": task_id,
 		"type": TASK_DRINK_ORDER,
 		"state": initial_state,
 		"created_at_ms": now_ms,
-		"deadline_ms": now_ms + DRINK_WINDOW_MS,
+		"deadline_ms": deadline_ms,
 		"claimed_at_ms": claimed_at_ms,
 		"completed_at_ms": 0,
 		"assigned_to": assignee,
@@ -108,7 +109,7 @@ func create_drink_order(customer: Node, drink_item: String, assignee: String = "
 			"display_item": item_name,
 			"seat": seat,
 			"customer_instance_id": customer.get_instance_id(),
-			"serve_deadline_ms": now_ms + DRINK_WINDOW_MS
+			"serve_deadline_ms": deadline_ms
 		}
 	}
 	_tasks_by_id[task_id] = task
