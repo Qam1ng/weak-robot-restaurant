@@ -251,7 +251,11 @@ class ActDropItem extends Core.Task:
 		if not inventory:
 			return Core.Status.FAILURE
 
-		var item = inventory.remove_last()
+		var item: Dictionary = {}
+		if actor.has_method("_take_inventory_item_for_active_task"):
+			item = actor.call("_take_inventory_item_for_active_task")
+		else:
+			item = inventory.remove_last()
 		if item.is_empty():
 			actor.speak("Nothing to deliver!")
 			return Core.Status.FAILURE

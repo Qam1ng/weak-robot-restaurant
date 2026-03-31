@@ -6,17 +6,27 @@ signal inventory_changed(items: Array)
 
 @export var capacity: int = 2
 var items: Array = []  # 每个元素: {name, atlas, region}
+var _next_item_uid: int = 1
 
 func is_full() -> bool:
 	if items.size() >= capacity:
 		return true
 	return false
 
-func add_item(item_name: String, atlas: Texture2D, region: Rect2i) -> bool:
+func add_item(item_name: String, atlas: Texture2D, region: Rect2i, meta: Dictionary = {}) -> bool:
 	if is_full():
 		print("[Inventory] full, cannot add: ", item_name)
 		return false
-	items.append({"name": item_name, "atlas": atlas, "region": region})
+	var entry := {
+		"uid": _next_item_uid,
+		"name": item_name,
+		"atlas": atlas,
+		"region": region
+	}
+	_next_item_uid += 1
+	for key in meta.keys():
+		entry[key] = meta[key]
+	items.append(entry)
 	print("[Inventory] added: ", item_name, "  now=", items.size(), "/", capacity)
 	emit_signal("inventory_changed", items)
 	return true

@@ -290,6 +290,9 @@ func requeue_request(request_id: String, cooldown_ms: int = 1500, resolution_not
 	req["updated_at_ms"] = now_ms
 	req["cooldown_until_ms"] = now_ms + maxi(cooldown_ms, 0)
 	req["resolution_path"] = resolution_note
+	req["final_response"] = ""
+	req["last_response"] = ""
+	req["response_latency_ms"] = 0
 	_requests_by_id[request_id] = req
 	var copied := _copy(req)
 	_log_help_event("requeued", req, {"resolution_note": resolution_note})

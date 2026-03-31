@@ -172,7 +172,6 @@ func _complete_one_matching_pickup_step(item_name: String, station_kind: String)
 	if board == null or not board.has_method("get_in_progress_tasks_for_assignee"):
 		return false
 	var tasks: Array[Dictionary] = board.get_in_progress_tasks_for_assignee("player")
-	print("[HumanServer][PickupTry] station=%s item=%s player_tasks=%d" % [station_kind, item_name, tasks.size()])
 	for task in tasks:
 		var task_id := str(task.get("id", ""))
 		var step_name := str(board.get_current_step_name(task_id))
@@ -181,13 +180,6 @@ func _complete_one_matching_pickup_step(item_name: String, station_kind: String)
 		var wanted_item := str(payload.get("display_item", "")).strip_edges().to_lower()
 		if wanted_item == "":
 			wanted_item = str(payload.get("food_item", payload.get("drink_item", ""))).strip_edges().to_lower()
-		print("[HumanServer][PickupTry] task=%s assignee=%s step=%s order=%s wanted=%s" % [
-			task_id,
-			str(task.get("assigned_to", "")),
-			step_name,
-			order_kind,
-			wanted_item
-		])
 		if step_name != "PICKUP_FROM_KITCHEN":
 			continue
 		if station_kind != "" and order_kind != station_kind:
