@@ -17901,6 +17901,112 @@ shape = SubResource("RectangleShape2D_ndmpn")
 [node name="CustomerSpawner" type="Node" parent="." unique_id=541555158]
 script = ExtResource("10_spawner")
 
+[node name="TableNumbers" type="Node2D" parent="." unique_id=284901117]
+
+[node name="Table1Label" type="Label" parent="TableNumbers" unique_id=198141001]
+z_index = 20
+offset_left = -279.0
+offset_top = 237.0
+offset_right = -251.0
+offset_bottom = 263.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_colors/font_outline_color = Color(1, 0.98039216, 0.8627451, 0.9)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 18
+text = "1"
+horizontal_alignment = 1
+
+[node name="Table2Label" type="Label" parent="TableNumbers" unique_id=158022704]
+z_index = 20
+offset_left = -279.0
+offset_top = 74.0
+offset_right = -251.0
+offset_bottom = 100.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_colors/font_outline_color = Color(1, 0.98039216, 0.8627451, 0.9)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 18
+text = "2"
+horizontal_alignment = 1
+
+[node name="Table3Label" type="Label" parent="TableNumbers" unique_id=224825309]
+z_index = 20
+offset_left = 60.0
+offset_top = 74.0
+offset_right = 88.0
+offset_bottom = 100.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_colors/font_outline_color = Color(1, 0.98039216, 0.8627451, 0.9)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 18
+text = "3"
+horizontal_alignment = 1
+
+[node name="Table4Label" type="Label" parent="TableNumbers" unique_id=948314105]
+z_index = 20
+offset_left = 60.0
+offset_top = 237.0
+offset_right = 88.0
+offset_bottom = 263.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_colors/font_outline_color = Color(1, 0.98039216, 0.8627451, 0.9)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 18
+text = "4"
+horizontal_alignment = 1
+
+[node name="Table5Label" type="Label" parent="TableNumbers" unique_id=522638104]
+z_index = 20
+offset_left = 284.0
+offset_top = 237.0
+offset_right = 312.0
+offset_bottom = 263.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_colors/font_outline_color = Color(1, 0.98039216, 0.8627451, 0.9)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 18
+text = "5"
+horizontal_alignment = 1
+
+[node name="Table6Label" type="Label" parent="TableNumbers" unique_id=932852013]
+z_index = 20
+offset_left = 284.0
+offset_top = 74.0
+offset_right = 312.0
+offset_bottom = 100.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_colors/font_outline_color = Color(1, 0.98039216, 0.8627451, 0.9)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 18
+text = "6"
+horizontal_alignment = 1
+
+[node name="Table7Label" type="Label" parent="TableNumbers" unique_id=933720145]
+z_index = 20
+offset_left = 301.0
+offset_top = -100.0
+offset_right = 329.0
+offset_bottom = -74.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_colors/font_outline_color = Color(1, 0.98039216, 0.8627451, 0.9)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 18
+text = "7"
+horizontal_alignment = 1
+
+[node name="Table8Label" type="Label" parent="TableNumbers" unique_id=1865436003]
+z_index = 20
+offset_left = 75.0
+offset_top = -100.0
+offset_right = 103.0
+offset_bottom = -74.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_colors/font_outline_color = Color(1, 0.98039216, 0.8627451, 0.9)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 18
+text = "8"
+horizontal_alignment = 1
+
 [node name="LocationMarkers" type="Node2D" parent="." unique_id=1536082375]
 
 [node name="CS1" type="Marker2D" parent="LocationMarkers" unique_id=1534879262 groups=["spawn"]]
