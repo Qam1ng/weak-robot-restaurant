@@ -334,6 +334,8 @@ func _check_episode_completion() -> void:
 
 	# Step cannot start yet, keep waiting and re-check constraints.
 	if not _active_step_started:
+		if _should_wait_for_inventory_space():
+			return
 		var now_ms := Time.get_ticks_msec()
 		if now_ms - _last_replan_ms >= 300:
 			_last_replan_ms = now_ms
@@ -669,6 +671,21 @@ func _try_activate_delivery_task() -> bool:
 	if not _activate_task_context(best):
 		return false
 	_plan_current_task_step()
+	return true
+
+func _should_wait_for_inventory_space() -> bool:
+	if _active_task_id == "":
+		return false
+	if _active_task_step != STEP_PICKUP_FROM_KITCHEN:
+		return false
+	if _inventory_full_handoff_declined_task_id != _active_task_id:
+		return false
+	if inventory == null or not inventory.is_full() or inventory.items.is_empty():
+		return false
+	if _consume_existing_inventory_for_active_pickup():
+		return true
+	if _try_activate_delivery_task():
+		return true
 	return true
 
 func _resolve_customer_from_payload(payload: Dictionary) -> Node2D:
@@ -1454,7 +1471,8 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 		return
 
 	if mode == "TAKEOVER_ITEM":
-		if not _transfer_item_to_player_for_handoff(payload):
+		var transfer_result := _transfer_item_to_player_for_handoff(payload)
+		if transfer_result == "player_full":
 			var help_mgr_retry = _help_manager()
 			if help_mgr_retry and _active_help_request_id != "" and help_mgr_retry.has_method("requeue_request"):
 				help_mgr_retry.requeue_request(_active_help_request_id, 1800, "player_inventory_full")
@@ -1463,6 +1481,8 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 			_active_help_request_type = ""
 			speak("Your inventory is full. I still have this item.")
 			return
+		elif transfer_result != "ok":
+			mode = "TAKEOVER_TASK"
 
 	var updated: Dictionary = {}
 	var task_snapshot: Dictionary = board.get_task(task_id) if board.has_method("get_task") else {}
@@ -1516,38 +1536,38 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 	_active_help_request_id = ""
 	_active_help_request_type = ""
 
-func _transfer_item_to_player_for_handoff(payload: Dictionary) -> bool:
+func _transfer_item_to_player_for_handoff(payload: Dictionary) -> String:
 	if inventory == null or inventory.items.is_empty():
-		return false
+		return "missing_item"
 	var players := get_tree().get_nodes_in_group("player")
 	if players.is_empty():
-		return false
+		return "player_unavailable"
 	var player = players[0]
 	if not (player is Node2D):
-		return false
+		return "player_unavailable"
 	var p_inv = player.get_node_or_null("Inventory")
 	if p_inv == null:
-		return false
+		return "player_unavailable"
 	var task_id := str(payload.get("task_id", ""))
 	var preferred := str(payload.get("item_needed", "")).strip_edges()
 	var idx := _find_inventory_item_index_for_task(task_id, preferred, true)
 	if idx == -1 and preferred != "":
 		idx = inventory.find_item(preferred)
 	if idx == -1:
-		idx = inventory.items.size() - 1
+		return "missing_item"
 	if idx < 0 or idx >= inventory.items.size():
-		return false
+		return "missing_item"
 	var item: Dictionary = inventory.items.pop_at(idx)
 	var item_name := str(item.get("name", "item"))
 	var accepted: bool = p_inv.add_item(item_name, item.get("atlas", null), item.get("region", Rect2i()))
 	if not accepted:
 		inventory.items.insert(idx, item)
 		inventory.emit_signal("inventory_changed", inventory.items)
-		return false
+		return "player_full"
 	inventory.emit_signal("inventory_changed", inventory.items)
 	if inventory.items.is_empty():
 		bt_runner.bb["carrying_item"] = false
-	return true
+	return "ok"
 
 func _has_transferable_item_for_task(task_id: String, item_name: String) -> bool:
 	if inventory == null:
