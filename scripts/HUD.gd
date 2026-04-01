@@ -437,6 +437,15 @@ func _check_score_game_over() -> void:
 
 func _on_game_over_retry() -> void:
 	get_tree().paused = false
+	var board = get_node_or_null("/root/TaskBoard")
+	if board and board.has_method("reset_all"):
+		board.reset_all()
+	var help_mgr = get_node_or_null("/root/HelpRequestManager")
+	if help_mgr and help_mgr.has_method("reset_all"):
+		help_mgr.reset_all()
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("reset_run"):
+		game_mgr.reset_run()
 	get_tree().reload_current_scene()
 
 func _on_game_over_quit() -> void:

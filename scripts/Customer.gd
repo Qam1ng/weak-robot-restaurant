@@ -527,20 +527,29 @@ func _activate_drink_order_if_needed(notify_player: bool) -> void:
 		_refresh_order_bubble()
 
 func _deliver_player_task_item(player: Node2D, player_inventory: Node, task: Dictionary) -> void:
-	if player == null or player_inventory == null:
+	if player == null:
 		return
 	var task_board = get_node_or_null("/root/TaskBoard")
 	if task_board == null:
 		return
+	var inv: Inventory = null
+	if "inventory" in player and player.inventory != null and player.inventory is Inventory:
+		inv = player.inventory as Inventory
+	elif player_inventory != null and player_inventory is Inventory:
+		inv = player_inventory as Inventory
+	else:
+		var inv_node := player.get_node_or_null("Inventory")
+		if inv_node != null and inv_node is Inventory:
+			inv = inv_node as Inventory
+	if inv == null:
+		return
 	var task_id := str(task.get("id", ""))
 	var payload: Dictionary = task.get("payload", {})
 	var item_name := _task_payload_item_name(payload)
-	var idx: int = player_inventory.find_item(item_name)
-	if idx == -1:
+	var item: Dictionary = inv.remove_matching(item_name)
+	if item.is_empty():
 		_notify_player("You don't have the requested item.")
 		return
-	var item = player_inventory.items.pop_at(idx)
-	player_inventory.emit_signal("inventory_changed", player_inventory.items)
 	var order_kind := str(payload.get("order_kind", "food"))
 	if order_kind == "drink":
 		_request_player_line(

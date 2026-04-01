@@ -30,6 +30,20 @@ var _interaction_model := {
 	"acceptance_rate": 0.5
 }
 
+func reset_all() -> void:
+	_requests_by_id.clear()
+	_order.clear()
+	_next_id = 1
+	_interaction_model = {
+		"total": 0,
+		"accepted": 0,
+		"declined": 0,
+		"later": 0,
+		"avg_latency_ms": 0.0,
+		"annoyance": 0.0,
+		"acceptance_rate": 0.5
+	}
+
 func _ready() -> void:
 	var dm = _dialogue_manager()
 	if dm and dm.has_signal("utterance_generated") and not dm.utterance_generated.is_connected(_on_utterance_generated):

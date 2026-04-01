@@ -51,6 +51,18 @@ var is_open: bool = true  # 餐厅是否营业
 var _accumulated_game_minutes: float = 0.0
 var _paused: bool = false
 
+func reset_runtime() -> void:
+	current_day = 1
+	current_hour = start_hour
+	current_minute = start_minute
+	current_period = Period.MORNING
+	is_peak_time = false
+	is_open = true
+	_accumulated_game_minutes = 0.0
+	_paused = false
+	_update_period()
+	time_changed.emit(current_hour, current_minute)
+
 # ==================== 生命周期 ====================
 func _ready() -> void:
 	current_hour = start_hour

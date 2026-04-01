@@ -194,6 +194,8 @@ class ActPickItem extends Core.Task:
 		if not inventory:
 			return Core.Status.FAILURE
 		if inventory.is_full():
+			if actor.has_method("_handle_pickup_inventory_full"):
+				actor.call("_handle_pickup_inventory_full", item_name)
 			actor.speak("Inventory full!")
 			return Core.Status.FAILURE
 
@@ -208,6 +210,9 @@ class ActPickItem extends Core.Task:
 		if sprite:
 			atlas = sprite.texture
 			region = Rect2i(sprite.region_rect.position, sprite.region_rect.size)
+		var item_meta: Dictionary = {}
+		if actor.has_method("_pickup_item_meta"):
+			item_meta = actor.call("_pickup_item_meta", item_name)
 
 		item_node.visible = false
 		var tree = actor.get_tree()
@@ -217,7 +222,7 @@ class ActPickItem extends Core.Task:
 					item_node.visible = true
 			)
 
-		inventory.add_item(item_name, atlas, region)
+		inventory.add_item(item_name, atlas, region, item_meta)
 		bb["carrying_item"] = true
 		actor.speak("Got " + item_name + "!")
 		return Core.Status.SUCCESS

@@ -37,8 +37,6 @@ func _ready() -> void:
 	inventory.capacity = 3
 
 	_connect_hud_signals()
-	
-	print("[HumanServer] ready OK; node=", name)
 
 func _ensure_camera_current() -> void:
 	var cam := get_node_or_null("Camera2D")
@@ -89,7 +87,6 @@ func _update_animation(input_dir: Vector2) -> void:
 
 func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("interact"):
-		print("[HumanServer] interact pressed (E/Space)")
 		if _handle_kitchen_pick_interact():
 			return
 		if _try_progress_player_delivery_interact():
@@ -187,7 +184,6 @@ func _complete_one_matching_pickup_step(item_name: String, station_kind: String)
 		if wanted_item != item_name:
 			continue
 		board.complete_current_step(task_id, "PICKUP_FROM_KITCHEN")
-		print("[HumanServer] Picked assigned order item in kitchen: ", item_name, " task=", task_id)
 		return true
 	return false
 

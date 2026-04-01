@@ -15,7 +15,6 @@ func is_full() -> bool:
 
 func add_item(item_name: String, atlas: Texture2D, region: Rect2i, meta: Dictionary = {}) -> bool:
 	if is_full():
-		print("[Inventory] full, cannot add: ", item_name)
 		return false
 	var entry := {
 		"uid": _next_item_uid,
@@ -27,7 +26,6 @@ func add_item(item_name: String, atlas: Texture2D, region: Rect2i, meta: Diction
 	for key in meta.keys():
 		entry[key] = meta[key]
 	items.append(entry)
-	print("[Inventory] added: ", item_name, "  now=", items.size(), "/", capacity)
 	emit_signal("inventory_changed", items)
 	return true
 
@@ -44,3 +42,16 @@ func remove_last() -> Dictionary:
 	var item = items.pop_back()
 	emit_signal("inventory_changed", items)
 	return item
+
+func remove_at(index: int) -> Dictionary:
+	if index < 0 or index >= items.size():
+		return {}
+	var item: Dictionary = items.pop_at(index)
+	emit_signal("inventory_changed", items)
+	return item
+
+func remove_matching(partial_name: String) -> Dictionary:
+	var idx := find_item(partial_name)
+	if idx == -1:
+		return {}
+	return remove_at(idx)

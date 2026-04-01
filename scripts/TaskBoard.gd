@@ -22,6 +22,14 @@ var _tasks_by_id: Dictionary = {}
 var _task_order: Array[String] = []
 var _next_id: int = 1
 
+func _process(_delta: float) -> void:
+	_fail_overdue_in_progress_tasks()
+
+func reset_all() -> void:
+	_tasks_by_id.clear()
+	_task_order.clear()
+	_next_id = 1
+
 func create_fulfill_order(customer: Node) -> Dictionary:
 	if not is_instance_valid(customer):
 		return {}
@@ -222,6 +230,37 @@ func reassign_task(task_id: String, assignee: String) -> Dictionary:
 	task_updated.emit(copied)
 	return copied
 
+func reset_task_to_step(task_id: String, step_name: String) -> Dictionary:
+	var task = _tasks_by_id.get(task_id, {})
+	if task.is_empty():
+		return {}
+	if str(task.get("state", "")) != STATE_IN_PROGRESS:
+		return {}
+
+	var steps: Array = task.get("steps", [])
+	var target_idx := -1
+	for i in range(steps.size()):
+		if str(steps[i].get("name", "")) == step_name:
+			target_idx = i
+			break
+	if target_idx == -1:
+		return {}
+
+	for i in range(steps.size()):
+		var step: Dictionary = steps[i]
+		step["state"] = "completed" if i < target_idx else "pending"
+		steps[i] = step
+
+	task["steps"] = steps
+	task["current_step_index"] = target_idx
+	task["completed_at_ms"] = 0
+	task["state"] = STATE_IN_PROGRESS
+	_tasks_by_id[task_id] = task
+
+	var copied := _copy_task(task)
+	task_updated.emit(copied)
+	return copied
+
 func get_in_progress_tasks_for_assignee(assignee: String) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for task_id in _task_order:
@@ -413,6 +452,45 @@ func fail_task_by_customer(customer_instance_id: int, reason: String = "customer
 		if fail_task(task_id, reason):
 			changed = true
 	return changed
+
+func _fail_overdue_in_progress_tasks() -> void:
+	var now_ms := Time.get_ticks_msec()
+	var overdue_ids: Array[String] = []
+	for task_id in _task_order:
+		var task: Dictionary = _tasks_by_id.get(task_id, {})
+		if task.is_empty():
+			continue
+		if str(task.get("state", "")) != STATE_IN_PROGRESS:
+			continue
+		var deadline_ms := int(task.get("deadline_ms", 0))
+		if deadline_ms <= 0 or now_ms < deadline_ms:
+			continue
+		overdue_ids.append(task_id)
+
+	for task_id in overdue_ids:
+		var task: Dictionary = _tasks_by_id.get(task_id, {})
+		if task.is_empty():
+			continue
+		var payload: Dictionary = task.get("payload", {})
+		var order_kind := str(payload.get("order_kind", "food"))
+		var reason := "task_deadline_expired"
+		if order_kind == "drink":
+			reason = "customer_drink_timeout"
+		if not fail_task(task_id, reason):
+			continue
+		if order_kind != "food":
+			continue
+		var customer_instance_id := int(payload.get("customer_instance_id", 0))
+		if customer_instance_id <= 0:
+			continue
+		var customer = instance_from_id(customer_instance_id)
+		if customer == null or not is_instance_valid(customer):
+			continue
+		if customer.has_method("get_state_name") and str(customer.call("get_state_name")) != "WAITING_FOR_FOOD":
+			continue
+		if customer.has_method("_start_leaving"):
+			customer.set("_patience_timed_out", true)
+			customer.call("_start_leaving")
 
 func _new_task_id() -> String:
 	var id := "task_%06d" % _next_id

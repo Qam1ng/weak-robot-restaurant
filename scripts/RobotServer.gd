@@ -43,7 +43,7 @@ const CHARGING_MARKER := "RS1"
 const IDLE_WAIT_MARKER := "RG4"
 const EMERGENCY_RECHARGE_RESUME_LEVEL := 55.0
 const EMERGENCY_HANDOFF_APPROACH_DISTANCE := 120.0
-const DEADLINE_HANDOFF_TRIGGER_MS := 30_000
+const DEADLINE_HANDOFF_TRIGGER_MS := 45_000
 const ORPHAN_FOOD_ITEM_TTL_MS := 45_000
 var _active_task_id: String = ""
 var _active_task_step: String = ""
@@ -69,6 +69,7 @@ var _active_help_request_type: String = ""
 var _help_request_suppressed: bool = false
 var _overload_handoff_declined_task_id: String = ""
 var _deadline_handoff_declined_task_id: String = ""
+var _inventory_full_handoff_declined_task_id: String = ""
 var _recharge_override_active: bool = false
 var _last_recharge_notice_ms: int = 0
 var _battery_emergency_handoff_attempted_task_id: String = ""
@@ -375,6 +376,15 @@ func _sync_active_task_state() -> bool:
 		_end_current_episode(false, "task_invalid_state:" + state)
 		_clear_current_task_runtime()
 		return true
+	var payload: Dictionary = task.get("payload", {})
+	if _resolve_customer_from_payload(payload) == null:
+		if board.has_method("fail_task"):
+			board.fail_task(_active_task_id, "customer_missing")
+		_release_robot_food_for_task(_active_task_id, "customer_missing")
+		_invalidate_active_help_request("customer_missing")
+		_end_current_episode(false, "customer_missing")
+		_clear_current_task_runtime()
+		return true
 	return false
 
 func _end_current_episode(success: bool, failure_reason: String = "") -> void:
@@ -416,6 +426,8 @@ func _try_claim_next_task() -> void:
 		return
 	var task = _get_best_unassigned_food_task()
 	if task.is_empty():
+		if inventory != null and inventory.is_full() and not inventory.items.is_empty():
+			return
 		# Idle behavior by battery mode:
 		# - emergency: handled by recharge override earlier in tick loop.
 		# - conserve: no pending orders -> go charge.
@@ -487,6 +499,14 @@ func _activate_task_context(task: Dictionary) -> bool:
 		_current_food_item = "unknown"
 	return true
 
+func _customer_service_state(payload: Dictionary) -> String:
+	var customer = _resolve_customer_from_payload(payload)
+	if customer == null:
+		return "missing"
+	if customer.has_method("get_state_name"):
+		return str(customer.call("get_state_name"))
+	return "unknown"
+
 func _get_robot_assigned_food_tasks() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	var board = _task_board()
@@ -495,6 +515,17 @@ func _get_robot_assigned_food_tasks() -> Array[Dictionary]:
 	var tasks: Array[Dictionary] = board.get_in_progress_tasks_for_assignee(name)
 	for task in tasks:
 		if str(task.get("type", "")) != TASK_TYPE_FULFILL_ORDER:
+			continue
+		var payload: Dictionary = task.get("payload", {})
+		var customer_state := _customer_service_state(payload)
+		var task_id := str(task.get("id", ""))
+		if customer_state == "missing" or customer_state == "LEFT" or customer_state == "LEAVING":
+			if board.has_method("fail_task"):
+				board.fail_task(task_id, "customer_missing")
+			continue
+		if customer_state == "EATING":
+			if board.has_method("complete_task"):
+				board.complete_task(task_id)
 			continue
 		out.append(task)
 	return out
@@ -505,12 +536,17 @@ func _get_best_unassigned_food_task() -> Dictionary:
 		return {}
 	var best: Dictionary = {}
 	var best_dist := INF
+	var inventory_constrained := inventory != null and inventory.is_full() and not inventory.items.is_empty()
 	for task in board.get_all_tasks():
 		if str(task.get("type", "")) != TASK_TYPE_FULFILL_ORDER:
 			continue
 		if str(task.get("state", "")) != "unassigned":
 			continue
 		var payload: Dictionary = task.get("payload", {})
+		if inventory_constrained:
+			var wanted_item := str(payload.get("food_item", "")).strip_edges().to_lower()
+			if wanted_item == "" or inventory.find_item(wanted_item) == -1:
+				continue
 		var customer = _resolve_customer_from_payload(payload)
 		if customer == null:
 			continue
@@ -539,6 +575,26 @@ func _task_step_name(task: Dictionary) -> String:
 func _task_slack_ms(task: Dictionary) -> int:
 	return int(task.get("deadline_ms", 0)) - Time.get_ticks_msec()
 
+func _deadline_handoff_candidate() -> Dictionary:
+	var tasks := _get_robot_assigned_food_tasks()
+	var best: Dictionary = {}
+	var best_transferable := false
+	var best_slack := INF
+	for task in tasks:
+		var task_id := str(task.get("id", ""))
+		if task_id == "" or task_id == _deadline_handoff_declined_task_id:
+			continue
+		var slack := _task_slack_ms(task)
+		if slack <= 0 or slack > DEADLINE_HANDOFF_TRIGGER_MS:
+			continue
+		var step_name := _task_step_name(task)
+		var transferable := step_name == STEP_DELIVER_AND_SERVE and _inventory_has_item_for_task(task)
+		if best.is_empty() or (transferable and not best_transferable) or (transferable == best_transferable and slack < best_slack):
+			best = task
+			best_transferable = transferable
+			best_slack = slack
+	return best
+
 func _task_customer_distance(task: Dictionary) -> float:
 	var payload: Dictionary = task.get("payload", {})
 	var customer = _resolve_customer_from_payload(payload)
@@ -556,6 +612,8 @@ func _inventory_has_item_for_task(task: Dictionary) -> bool:
 	return _find_inventory_item_index_for_task(str(task.get("id", "")), item_name, true) != -1
 
 func _try_activate_take_order_task() -> bool:
+	if inventory != null and inventory.is_full() and not inventory.items.is_empty():
+		return false
 	var tasks := _get_robot_assigned_food_tasks()
 	var best: Dictionary = {}
 	var best_dist := INF
@@ -717,9 +775,6 @@ func _plan_deliver_step() -> void:
 		{"action": "navigate", "params": {"target": "customer"}},
 		{"action": "drop", "params": {}}
 	]
-	# Return to charging station only when battery is already in constrained modes.
-	if _battery_mode == BATTERY_MODE_CONSERVE or _battery_mode == BATTERY_MODE_EMERGENCY:
-		actions.append({"action": "navigate", "params": {"target": "RS1"}})
 	_set_step_plan(actions)
 	speak("Delivering now.")
 
@@ -787,6 +842,7 @@ func _clear_current_task_runtime() -> void:
 	if _get_robot_assigned_food_tasks().is_empty():
 		_overload_handoff_declined_task_id = ""
 		_deadline_handoff_declined_task_id = ""
+		_inventory_full_handoff_declined_task_id = ""
 
 func _find_inventory_item_index_for_task(task_id: String, item_name: String, allow_reusable: bool) -> int:
 	if inventory == null:
@@ -821,6 +877,19 @@ func _reserve_inventory_item_for_task(task_id: String, item_name: String) -> boo
 	inventory.emit_signal("inventory_changed", inventory.items)
 	return true
 
+func _pickup_item_meta(item_name: String) -> Dictionary:
+	if _active_task_id == "":
+		return {}
+	if _active_task_step != STEP_PICKUP_FROM_KITCHEN:
+		return {}
+	var wanted := _current_food_item.strip_edges().to_lower()
+	if wanted == "" or wanted != item_name.strip_edges().to_lower():
+		return {}
+	return {
+		"task_id": _active_task_id,
+		"orphaned_at_ms": 0
+	}
+
 func _take_inventory_item_for_active_task() -> Dictionary:
 	if inventory == null or _active_task_id == "":
 		return {}
@@ -830,7 +899,7 @@ func _take_inventory_item_for_active_task() -> Dictionary:
 	var item_name := str(payload.get("food_item", "")).strip_edges().to_lower()
 	if item_name == "":
 		item_name = _current_food_item.strip_edges().to_lower()
-	var idx := _find_inventory_item_index_for_task(_active_task_id, item_name, true)
+	var idx := _find_inventory_item_index_for_task(_active_task_id, item_name, false)
 	if idx == -1:
 		return {}
 	var item: Dictionary = inventory.items.pop_at(idx)
@@ -978,9 +1047,10 @@ func _tick_emergency_delegation() -> bool:
 		var task: Dictionary = board.get_task(_active_task_id)
 		var payload: Dictionary = task.get("payload", {})
 		item_needed = str(payload.get("food_item", "item"))
+	var handoff_mode := _handoff_mode_for_active_task(item_needed)
 
 	_ensure_help_request(HELP_TYPE_HANDOFF, {
-		"handoff_mode": "TAKEOVER_TASK",
+		"handoff_mode": handoff_mode,
 		"task_id": _active_task_id,
 		"item_needed": item_needed,
 		"reason": reason,
@@ -1055,16 +1125,14 @@ func _tick_overload_handoff_delegation() -> bool:
 	return true
 
 func _tick_deadline_handoff_delegation() -> bool:
-	if _active_task_id == "":
-		return false
-	if _deadline_handoff_declined_task_id == _active_task_id:
-		return false
 	if _waiting_for_help:
 		return true
 
-	var slack_ms := int(_constraint_input.get("slack_ms", 0))
-	if slack_ms <= 0 or slack_ms > DEADLINE_HANDOFF_TRIGGER_MS:
+	var task := _deadline_handoff_candidate()
+	if task.is_empty():
 		return false
+	var task_id := str(task.get("id", ""))
+	var slack_ms := _task_slack_ms(task)
 
 	var help_mgr = _help_manager()
 	if help_mgr == null:
@@ -1093,16 +1161,18 @@ func _tick_deadline_handoff_delegation() -> bool:
 			speak("This order is close to timing out. Coming to you for urgent handoff.")
 		return true
 
-	var board = _task_board()
 	var item_needed := "item"
-	if board and board.has_method("get_task"):
-		var task: Dictionary = board.get_task(_active_task_id)
-		var payload: Dictionary = task.get("payload", {})
+	var step_name := _task_step_name(task)
+	var payload: Dictionary = task.get("payload", {})
+	if not payload.is_empty():
 		item_needed = str(payload.get("food_item", "item"))
+	var handoff_mode := "TAKEOVER_TASK"
+	if step_name == STEP_DELIVER_AND_SERVE and _inventory_has_item_for_task(task):
+		handoff_mode = "TAKEOVER_ITEM"
 
 	_ensure_help_request(HELP_TYPE_HANDOFF, {
-		"handoff_mode": "TAKEOVER_TASK",
-		"task_id": _active_task_id,
+		"handoff_mode": handoff_mode,
+		"task_id": task_id,
 		"item_needed": item_needed,
 		"reason": "deadline_critical",
 		"slack_ms": slack_ms
@@ -1114,6 +1184,44 @@ func _tick_deadline_handoff_delegation() -> bool:
 	_waiting_for_help = true
 	speak("This order is about to time out. Please take it now.")
 	return true
+
+func _handle_pickup_inventory_full(item_name: String) -> bool:
+	if _active_task_id == "":
+		return false
+	if _inventory_full_handoff_declined_task_id == _active_task_id:
+		return false
+	if _waiting_for_help:
+		return true
+	if _try_activate_delivery_task():
+		return true
+
+	var board = _task_board()
+	var slack_ms := int(_constraint_input.get("slack_ms", 0))
+	var wanted_item := item_name
+	if board and board.has_method("get_task"):
+		var task: Dictionary = board.get_task(_active_task_id)
+		var payload: Dictionary = task.get("payload", {})
+		wanted_item = str(payload.get("food_item", item_name))
+
+	_ensure_help_request(HELP_TYPE_HANDOFF, {
+		"handoff_mode": "TAKEOVER_TASK",
+		"task_id": _active_task_id,
+		"item_needed": wanted_item,
+		"reason": "inventory_full_blocked_pickup",
+		"slack_ms": slack_ms
+	}, {
+		"cooldown_ms": 3000,
+		"max_escalation": 2,
+		"urgency": 0.85
+	})
+	_waiting_for_help = true
+	speak("My hands are full. Please pick up this order for me.")
+	return true
+
+func _handoff_mode_for_active_task(item_name: String) -> String:
+	if _active_task_step == STEP_DELIVER_AND_SERVE and _has_transferable_item_for_task(_active_task_id, item_name):
+		return "TAKEOVER_ITEM"
+	return "TAKEOVER_TASK"
 
 func _get_primary_player() -> Node2D:
 	var players := get_tree().get_nodes_in_group("player")
@@ -1319,12 +1427,16 @@ func _on_help_request_updated(request: Dictionary) -> void:
 				_overload_handoff_declined_task_id = ""
 			if _deadline_handoff_declined_task_id == task_id:
 				_deadline_handoff_declined_task_id = ""
+			if _inventory_full_handoff_declined_task_id == task_id:
+				_inventory_full_handoff_declined_task_id = ""
 		_apply_handoff_accept(request)
 	elif status == "resolved" and final_response == "decline":
 		if reason == "robot_over_threshold_post_take_order" and task_id != "":
 			_overload_handoff_declined_task_id = task_id
 		elif reason == "deadline_critical" and task_id != "":
 			_deadline_handoff_declined_task_id = task_id
+		elif reason == "inventory_full_blocked_pickup" and task_id != "":
+			_inventory_full_handoff_declined_task_id = task_id
 		else:
 			_help_request_suppressed = true
 		set_waiting_for_help(false, "")
@@ -1368,11 +1480,13 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 	# A robot-to-player task handoff already communicates the order details.
 	# Force food tasks into pickup state so the player can go straight to the
 	# kitchen without being blocked by a stale TAKE_ORDER step.
-	if mode == "TAKEOVER_TASK" and order_kind == "food" and board.has_method("complete_current_step"):
+	if mode == "TAKEOVER_TASK" and order_kind == "food":
 		var step_after_transfer := str(board.get_current_step_name(task_id)) if board.has_method("get_current_step_name") else step_before_transfer
-		if step_before_transfer == STEP_TAKE_ORDER or step_after_transfer == STEP_TAKE_ORDER:
+		if (step_before_transfer == STEP_TAKE_ORDER or step_after_transfer == STEP_TAKE_ORDER) and board.has_method("complete_current_step"):
 			board.complete_current_step(task_id, STEP_TAKE_ORDER)
 			updated = board.get_task(task_id) if board.has_method("get_task") else updated
+		elif (step_before_transfer == STEP_DELIVER_AND_SERVE or step_after_transfer == STEP_DELIVER_AND_SERVE) and board.has_method("reset_task_to_step"):
+			updated = board.reset_task_to_step(task_id, STEP_PICKUP_FROM_KITCHEN)
 
 	if task_id == _active_task_id:
 		_end_current_episode(false, "task_handoff_to_player")
@@ -1434,6 +1548,11 @@ func _transfer_item_to_player_for_handoff(payload: Dictionary) -> bool:
 	if inventory.items.is_empty():
 		bt_runner.bb["carrying_item"] = false
 	return true
+
+func _has_transferable_item_for_task(task_id: String, item_name: String) -> bool:
+	if inventory == null:
+		return false
+	return _find_inventory_item_index_for_task(task_id, item_name, false) != -1
 
 func _on_help_request_resolved(request: Dictionary) -> void:
 	if request.is_empty():
@@ -1541,9 +1660,7 @@ func set_waiting_for_help(waiting: bool, item_name: String):
 	if _help_item_needed.strip_edges() == "":
 		return
 
-	var handoff_mode := "TAKEOVER_TASK"
-	if _active_task_step == STEP_DELIVER_AND_SERVE and inventory and not inventory.items.is_empty():
-		handoff_mode = "TAKEOVER_ITEM"
+	var handoff_mode := _handoff_mode_for_active_task(_help_item_needed)
 
 	# Hand-off help is created here (e.g. BT ask_help path).
 	_ensure_help_request(HELP_TYPE_HANDOFF, {
