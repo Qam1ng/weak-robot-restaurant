@@ -21,6 +21,15 @@ var total_customers_served: int = 0
 var total_episodes_completed: int = 0
 var current_day_customers: int = 0
 
+func reset_run() -> void:
+	current_state = GameState.RUNNING
+	total_customers_served = 0
+	total_episodes_completed = 0
+	current_day_customers = 0
+	customer_spawner = null
+	if time_manager and time_manager.has_method("reset_runtime"):
+		time_manager.reset_runtime()
+
 # ==================== 生命周期 ====================
 func _ready() -> void:
 	print("[GameManager] Initializing...")

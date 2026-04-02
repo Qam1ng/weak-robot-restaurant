@@ -8,19 +8,41 @@
 
 config_version=5
 
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
+
 [application]
 
 config/name="WeakRobotRestaurant"
 run/main_scene="uid://cs4xyxmcxxpbv"
-config/features=PackedStringArray("4.5", "GL Compatibility")
+config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://icon.svg"
 config/autoload_on_startup=true
 
 [autoload]
 
 TaskBus="*res://scripts/TaskBus.gd"
+TaskBoard="*res://scripts/TaskBoard.gd"
+HelpRequestManager="*res://scripts/HelpRequestManager.gd"
+DialogueManager="*res://scripts/DialogueManager.gd"
+BubbleManager="*res://scripts/BubbleManager.gd"
 EpisodeLogger="*res://scripts/EpisodeLogger.gd"
 GameManager="*res://scripts/GameManager.gd"
+PlayerProfile="*res://scripts/PlayerProfile.gd"
+ExperimentConfig="*res://scripts/ExperimentConfig.gd"
+
+[experiment]
+
+ab_enabled=true
+ab_seed=17
+forced_variant=""
+control_variant="B"
+replay_logging_enabled=true
+help_logging_enabled=true
+llm_utterance_enabled=true
+llm_model="gpt-4o-mini"
+llm_temperature=0.4
 
 [input]
 

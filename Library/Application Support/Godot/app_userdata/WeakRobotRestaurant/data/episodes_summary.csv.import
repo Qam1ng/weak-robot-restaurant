@@ -1,0 +1,19 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://dp4vb16ox31g1"
+
+[deps]
+
+files=["res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation"]
+
+source_file="res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.csv"
+dest_files=["res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation", "res://Library/Application Support/Godot/app_userdata/WeakRobotRestaurant/data/episodes_summary.en.translation"]
+
+[params]
+
+compress=1
+delimiter=0
+unescape_keys=false
+unescape_translations=true

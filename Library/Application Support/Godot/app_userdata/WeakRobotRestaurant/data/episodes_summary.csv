@@ -1,0 +1,1 @@
+episode_id,timestamp,food_item,customer_seat,success,player_helped,help_item,duration_ms,stuck_count,stuck_total_ms,evasion_count,action_count,total_distance,failure_reason

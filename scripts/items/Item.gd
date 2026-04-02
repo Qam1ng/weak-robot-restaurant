@@ -6,6 +6,8 @@ class_name Item
 @export var atlas: Texture2D        # 可空；为空时沿用编辑器里 Sprite2D.texture
 @export var region: Rect2i = Rect2i(0, 0, 32, 32)
 @export var override_region: bool = false  # 新增：是否用导出的 region 覆盖编辑器设置
+@export var kitchen_only_pickup: bool = true
+@export var allow_manual_player_pickup: bool = false
 
 var _player_in_range: Node = null
 
@@ -34,7 +36,11 @@ func _ready() -> void:
 		$Area2D.body_exited.connect(_on_Area2D_body_exited)
 
 func on_player_interact(player: Node) -> void:
+	if not allow_manual_player_pickup:
+		return
 	if player != _player_in_range: return
+	if kitchen_only_pickup and player.global_position.y >= -150.0:
+		return
 	var inv := player.get_node_or_null("Inventory")
 	if inv == null:
 		print("[Item] player has no Inventory node"); return

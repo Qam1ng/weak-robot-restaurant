@@ -98,11 +98,6 @@ animations = [{
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_jg4o1"]
 size = Vector2(48.25, 80)
 
-[sub_resource type="NavigationPolygon" id="NavigationPolygon_hdowj"]
-vertices = PackedVector2Array(14, 86, -14, 86, -14, 34, 14, 34)
-polygons = Array[PackedInt32Array]([PackedInt32Array(0, 1, 2, 3)])
-outlines = Array[PackedVector2Array]([PackedVector2Array(-24, 24, 24, 24, 24, 96, -24, 96)])
-
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_q56ix"]
 size = Vector2(48, 8)
 
@@ -117,13 +112,11 @@ frame = 3
 frame_progress = 1.0
 
 [node name="Area2D" type="Area2D" parent="."]
+collision_mask = 7
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Area2D"]
 position = Vector2(0, 64)
 shape = SubResource("RectangleShape2D_jg4o1")
-
-[node name="NavigationRegion2D" type="NavigationRegion2D" parent="."]
-navigation_polygon = SubResource("NavigationPolygon_hdowj")
 
 [node name="StaticBody2D" type="StaticBody2D" parent="."]
 

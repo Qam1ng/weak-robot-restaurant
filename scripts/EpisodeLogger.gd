@@ -16,6 +16,12 @@ var _last_position: Vector2 = Vector2.ZERO
 # File paths
 const DATA_DIR = "user://data/episodes/"
 const CSV_FILE = "user://data/episodes_summary.csv"
+const HELP_DIR = "user://data/help_requests/"
+const HELP_JSONL_FILE = "user://data/help_requests/help_requests.jsonl"
+const REPLAY_DIR = "user://data/replay/"
+const REPLAY_JSONL_FILE = "user://data/replay/replay_events.jsonl"
+
+var _help_event_seq: int = 0
 
 signal episode_started(episode_id: String)
 signal episode_ended(episode_data: Dictionary)
@@ -23,6 +29,8 @@ signal episode_ended(episode_data: Dictionary)
 func _ready() -> void:
 	# Ensure data directory exists
 	DirAccess.make_dir_recursive_absolute(DATA_DIR.replace("user://", OS.get_user_data_dir() + "/"))
+	DirAccess.make_dir_recursive_absolute(HELP_DIR.replace("user://", OS.get_user_data_dir() + "/"))
+	DirAccess.make_dir_recursive_absolute(REPLAY_DIR.replace("user://", OS.get_user_data_dir() + "/"))
 	_ensure_csv_header()
 	print("[EpisodeLogger] Ready. Data dir: ", ProjectSettings.globalize_path(DATA_DIR))
 
@@ -187,6 +195,57 @@ func get_current_episode_id() -> String:
 		return _current_episode.get("episode_id", "")
 	return ""
 
+func log_help_request_event(event_type: String, request: Dictionary, extra: Dictionary = {}) -> void:
+	if request.is_empty():
+		return
+	var exp = _experiment_config()
+	var exp_snapshot := {}
+	if exp and exp.has_method("get_snapshot"):
+		exp_snapshot = exp.get_snapshot()
+	var record := {
+		"kind": "help_request",
+		"event_type": event_type,
+		"event_seq": _help_event_seq + 1,
+		"timestamp": Time.get_datetime_string_from_system(),
+		"timestamp_ms": Time.get_ticks_msec(),
+		"episode_id": get_current_episode_id(),
+		"request_id": str(request.get("id", "")),
+		"request_type": str(request.get("type", "")),
+		"status": str(request.get("status", "")),
+		"context_snapshot": request.get("context_snapshot", {}),
+		"strategy": str(request.get("strategy", "")),
+		"strategy_scores": request.get("strategy_scores", {}),
+		"dialogue_intent": request.get("dialogue_intent", {}),
+		"utterance": str(request.get("utterance", "")),
+		"response": str(request.get("last_response", "")),
+		"response_latency_ms": int(request.get("response_latency_ms", -1)),
+		"escalation_count": int(request.get("escalation_count", 0)),
+		"max_escalation": int(request.get("max_escalation", 0)),
+		"final_response": str(request.get("final_response", "")),
+		"final_path": str(request.get("resolution_path", "")),
+		"payload": request.get("payload", {}),
+		"robot_instance_id": int(request.get("robot_instance_id", 0)),
+		"experiment": request.get("experiment", exp_snapshot),
+		"extra": extra
+	}
+	_help_event_seq += 1
+	_append_jsonl(HELP_JSONL_FILE, record)
+	if _is_replay_logging_enabled():
+		_append_jsonl(REPLAY_JSONL_FILE, record)
+
+func log_replay_event(event_type: String, data: Dictionary = {}) -> void:
+	if not _is_replay_logging_enabled():
+		return
+	var record := {
+		"kind": "replay_event",
+		"event_type": event_type,
+		"timestamp": Time.get_datetime_string_from_system(),
+		"timestamp_ms": Time.get_ticks_msec(),
+		"episode_id": get_current_episode_id(),
+		"data": data
+	}
+	_append_jsonl(REPLAY_JSONL_FILE, record)
+
 # ==================== File I/O ====================
 
 func _save_json() -> void:
@@ -253,6 +312,27 @@ func _append_csv() -> void:
 		print("[EpisodeLogger] Appended to CSV: ", csv_path)
 	else:
 		push_error("[EpisodeLogger] Failed to open CSV: ", csv_path)
+
+func _append_jsonl(file_path: String, record: Dictionary) -> void:
+	var global_path = ProjectSettings.globalize_path(file_path)
+	var file = FileAccess.open(global_path, FileAccess.READ_WRITE)
+	if not file:
+		file = FileAccess.open(global_path, FileAccess.WRITE)
+	if not file:
+		push_error("[EpisodeLogger] Failed to open JSONL: ", global_path)
+		return
+	file.seek_end()
+	file.store_line(JSON.stringify(record))
+	file.close()
+
+func _experiment_config() -> Node:
+	return get_node_or_null("/root/ExperimentConfig")
+
+func _is_replay_logging_enabled() -> bool:
+	var exp = _experiment_config()
+	if exp and exp.has_method("is_replay_logging_enabled"):
+		return bool(exp.is_replay_logging_enabled())
+	return false
 
 # ==================== Utility ====================
 

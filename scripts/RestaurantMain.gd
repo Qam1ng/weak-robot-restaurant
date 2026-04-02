@@ -1,121 +1,164 @@
 extends Node2D
 
-# Global location data - accessible by all characters
 var all_locations: Dictionary = {}
 
-func _ready():
-	# 0. Initialize Item Names
+func _ready() -> void:
+	_init_item_display_names()
+	_discover_all_locations()
+	_force_collision_policy()
+	_build_runtime_nav_floor_from_walls()
+	_enable_tilemap_navigation_sources()
+
+	var nav_region := get_node_or_null("Navigation2D") as NavigationRegion2D
+	if nav_region:
+		nav_region.enabled = false
+
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await _setup_navigation()
+	_register_customer_spawner()
+
+func _init_item_display_names() -> void:
 	var item1 = get_node_or_null("InteractiveItems/Item1")
 	if item1:
 		item1.display_name = "hotdog"
-		print("[Restaurant] Set Item1 display_name to 'hotdog'")
-
 	var item2 = get_node_or_null("InteractiveItems/Item2")
 	if item2:
 		item2.display_name = "pizza"
-		print("[Restaurant] Set Item2 display_name to 'pizza'")
-
-	var item3 = get_node_or_null("InteractiveItems/Item3")
-	if item3:
-		item3.display_name = "skewers"
-		print("[Restaurant] Set Item3 display_name to 'skewers'")
-
 	var item4 = get_node_or_null("InteractiveItems/Item4")
 	if item4:
 		item4.display_name = "sandwich"
-		print("[Restaurant] Set Item4 display_name to 'sandwich'")
 
-	# 1. IMMEDIATELY discover all locations before anything else
-	_discover_all_locations()
-
-	# 2. Find the NavigationRegion2D
-	var nav_region = $Navigation2D
-	if nav_region:
-		_setup_and_bake_navigation(nav_region)
-	else:
-		print("[Restaurant] NavigationRegion2D not found!")
-	
-	# 3. Register CustomerSpawner with GameManager
-	_register_customer_spawner()
-
-func _discover_all_locations():
-	print("[Restaurant] Discovering ALL locations at startup...")
-	
+func _discover_all_locations() -> void:
+	all_locations.clear()
 	var markers_node = get_node_or_null("LocationMarkers")
 	if markers_node:
 		for child in markers_node.get_children():
 			if child is Marker2D:
 				all_locations[child.name] = child.global_position
-				print("  -> ", child.name, " at ", child.global_position)
-	
 	print("[Restaurant] Total locations: ", all_locations.keys())
 
-# Static accessor for other scripts to get locations
 func get_all_locations() -> Dictionary:
 	return all_locations
 
 func get_location(location_name: String) -> Vector2:
 	return all_locations.get(location_name, Vector2.ZERO)
 
-func _setup_and_bake_navigation(region: NavigationRegion2D):
-	# DON'T create NavMesh in code - it doesn't work properly
-	# Instead, just verify what exists and debug
-	
-	# 等待 NavigationServer 完成地图同步
-	for i in range(5):
+func _setup_navigation() -> void:
+	var world_map: RID = get_world_2d().navigation_map
+	await _wait_for_navigation_sync(world_map, 120)
+
+func _wait_for_navigation_sync(nav_map: RID, max_physics_frames: int = 90) -> bool:
+	for _i in range(max_physics_frames):
+		if NavigationServer2D.map_get_iteration_id(nav_map) > 0:
+			return true
 		await get_tree().physics_frame
-	
-	var poly = region.navigation_polygon
-	if not poly:
-		print("[Restaurant] ERROR: No NavigationPolygon in scene!")
-		return
-	
-	var nav_map = region.get_navigation_map()
-	print("[Restaurant] Using scene NavigationPolygon:")
-	print("  - Polygons: ", poly.get_polygon_count())
-	print("  - Vertices: ", poly.vertices.size())
-	print("  - Outlines: ", poly.get_outline_count())
-	print("  - Map active: ", NavigationServer2D.map_is_active(nav_map))
-	
-	# Test navigation
-	var robot_pos = Vector2(99, -84)
-	var pizza_pos = Vector2(-168, -328)
-	
-	var closest_robot = NavigationServer2D.map_get_closest_point(nav_map, robot_pos)
-	var closest_pizza = NavigationServer2D.map_get_closest_point(nav_map, pizza_pos)
-	
-	print("  Robot ", robot_pos, " -> ", closest_robot)
-	print("  Pizza ", pizza_pos, " -> ", closest_pizza)
-	
-	var path = NavigationServer2D.map_get_path(nav_map, robot_pos, pizza_pos, true)
-	print("  Path: ", path.size(), " waypoints")
-	
-	if path.size() == 0:
-		print("[Restaurant] No path found - NavMesh is disconnected or invalid")
+	return false
 
-func _recursively_add_to_group(node: Node, group: String):
-	# Exclude Doors from the navigation mesh source so they don't cut holes in the mesh.
-	# This allows the robot to plan a path *through* the door, but get blocked by physics,
-	# which triggers the "Stuck" -> "Ask Help" logic.
-	if "Door" in node.name:
-		print("[Restaurant] Excluding ", node.name, " from nav bake.")
-		return
-
-	node.add_to_group(group)
-	for child in node.get_children():
-		_recursively_add_to_group(child, group)
-
-func _register_customer_spawner():
-	# Find CustomerSpawner in scene
+func _register_customer_spawner() -> void:
 	var spawner = get_node_or_null("CustomerSpawner")
 	if not spawner:
-		print("[Restaurant] CustomerSpawner not found in scene!")
 		return
-	
-	# Register with GameManager (Autoload)
 	var game_manager = get_node_or_null("/root/GameManager")
 	if game_manager and game_manager.has_method("register_customer_spawner"):
 		game_manager.register_customer_spawner(spawner)
-		print("[Restaurant] CustomerSpawner registered with GameManager")
-	else:
-		print("[Restaurant] GameManager not found or doesn't have register_customer_spawner method")
+
+func _node_has_property(node: Object, prop_name: String) -> bool:
+	for p in node.get_property_list():
+		if str(p.get("name", "")) == prop_name:
+			return true
+	return false
+
+func _enable_tilemap_navigation_sources() -> void:
+	var enabled_count := 0
+	var disabled_count := 0
+	var tilemap_root := get_node_or_null("TileMap")
+	if tilemap_root == null:
+		return
+
+	var stack: Array = [tilemap_root]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		for c in n.get_children():
+			stack.append(c)
+
+		if _node_has_property(n, "navigation_enabled"):
+			var should_enable := (n is TileMapLayer) and String(n.name) == "__NavFloorRuntime"
+			n.set("navigation_enabled", should_enable)
+			if should_enable:
+				enabled_count += 1
+			else:
+				disabled_count += 1
+		if _node_has_property(n, "navigation_visibility_mode"):
+			n.set("navigation_visibility_mode", 0)
+		if _node_has_property(n, "navigation_layers"):
+			n.set("navigation_layers", 1)
+
+	print("[Restaurant][NavSource] enabled=", enabled_count, " disabled=", disabled_count)
+
+func _build_runtime_nav_floor_from_walls() -> void:
+	var tilemap_root := get_node_or_null("TileMap") as Node
+	if tilemap_root == null:
+		return
+
+	var floor := tilemap_root.get_node_or_null("LayerFloor") as TileMapLayer
+	var walls := tilemap_root.get_node_or_null("LayerWalls") as TileMapLayer
+	if floor == null:
+		return
+
+	var old_runtime := tilemap_root.get_node_or_null("__NavFloorRuntime")
+	if old_runtime:
+		old_runtime.queue_free()
+
+	var nav_floor := floor.duplicate() as TileMapLayer
+	if nav_floor == null:
+		return
+	nav_floor.name = "__NavFloorRuntime"
+	nav_floor.visible = false
+	nav_floor.y_sort_enabled = false
+	nav_floor.z_index = -100
+	var removed := 0
+	var blockers: Array[TileMapLayer] = []
+	if walls:
+		blockers.append(walls)
+	var furniture_carpet := tilemap_root.get_node_or_null("LayerFurnitureCarpet") as TileMapLayer
+	var furniture_bot := tilemap_root.get_node_or_null("LayerFurnitureCarpet/LayerFurnitureBot") as TileMapLayer
+	var furniture_top := tilemap_root.get_node_or_null("LayerFurnitureCarpet/LayerFurnitureBot/LayerFurnitureTop") as TileMapLayer
+	if furniture_carpet:
+		blockers.append(furniture_carpet)
+	if furniture_bot:
+		blockers.append(furniture_bot)
+	if furniture_top:
+		blockers.append(furniture_top)
+
+	var blocker_cells := {}
+	for layer in blockers:
+		for c in layer.get_used_cells():
+			blocker_cells[c] = true
+
+	for c in blocker_cells.keys():
+		var cell := c as Vector2i
+		if nav_floor.get_cell_source_id(cell) != -1:
+			nav_floor.erase_cell(cell)
+			removed += 1
+	tilemap_root.add_child(nav_floor)
+	print("[Restaurant][NavCarve] removed_blocker_cells=", removed, " blocker_layers=", blockers.size())
+
+func _force_collision_policy() -> void:
+	var tilemap_root := get_node_or_null("TileMap")
+	if tilemap_root == null:
+		return
+	var nonwall_paths := [
+		"LayerFloor",
+		"LayerFurnitureCarpet",
+		"LayerFurnitureCarpet/LayerFurnitureBot",
+		"LayerFurnitureCarpet/LayerFurnitureBot/LayerFurnitureTop",
+		"__NavFloorRuntime"
+	]
+	for p in nonwall_paths:
+		var layer := tilemap_root.get_node_or_null(p)
+		if layer and _node_has_property(layer, "collision_enabled"):
+			layer.set("collision_enabled", false)
+	var walls := tilemap_root.get_node_or_null("LayerWalls")
+	if walls and _node_has_property(walls, "collision_enabled"):
+		walls.set("collision_enabled", true)
