@@ -27,17 +27,15 @@ var dialogue_title: Label
 var dialogue_log: RichTextLabel
 var player_dialogue_overlay: PanelContainer
 var player_dialogue_overlay_label: RichTextLabel
+var help_prompt_stack: VBoxContainer
 var player_dialogue_info_stack: VBoxContainer
 var player_dialogue_overlay_buttons: HBoxContainer
 var player_dialogue_overlay_accept_btn: Button
 var player_dialogue_overlay_decline_btn: Button
 var player_dialogue_overlay_later_btn: Button
-var _player_dialogue_overlay_tween: Tween
 var _player_dialogue_info_cards: Array[Dictionary] = []
+var _help_prompt_cards: Array[Dictionary] = []
 var _left_panel_width: float = 0.0
-var _active_request_id: String = ""
-var _active_request_type: String = ""
-var _last_utterance_by_request: Dictionary = {}
 var _auto_open_in_flight: Dictionary = {}
 var _popup_mode: String = "none"
 var _kitchen_pick_options: Array[String] = []
@@ -56,7 +54,6 @@ var _mbti_scores := {
 const FEED_COLOR_DIALOGUE := Color(0.84, 0.95, 1.0, 1.0)
 const HANDOFF_PROMPT_DISTANCE := 120.0
 const POPUP_MODE_NONE := "none"
-const POPUP_MODE_HELP := "help"
 const POPUP_MODE_KITCHEN_PICK := "kitchen_pick"
 const POPUP_MODE_GAME_OVER := "game_over"
 const CUSTOMER_TAB_LIVE := "live"
@@ -69,7 +66,7 @@ const PLAYER_DIALOGUE_OVERLAY_WIDTH := 520.0
 const PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT := 72.0
 const PLAYER_DIALOGUE_OVERLAY_SHOW_SEC := 5.0
 const PLAYER_DIALOGUE_STACK_GAP := 10.0
-const PLAYER_DIALOGUE_MAX_STACK := 3
+const HELP_PROMPT_MAX_STACK := 2
 const DIALOGUE_PANEL_WIDTH := 340.0
 var _customer_tab: String = CUSTOMER_TAB_LIVE
 var _score: int = 0
@@ -309,6 +306,12 @@ func _setup_dialogue_feed_ui() -> void:
 	_update_gameplay_panel_layout()
 
 func _setup_player_dialogue_overlay_ui() -> void:
+	help_prompt_stack = VBoxContainer.new()
+	help_prompt_stack.name = "HelpPromptStack"
+	help_prompt_stack.visible = false
+	help_prompt_stack.add_theme_constant_override("separation", PLAYER_DIALOGUE_STACK_GAP)
+	add_child(help_prompt_stack)
+
 	player_dialogue_info_stack = VBoxContainer.new()
 	player_dialogue_info_stack.name = "PlayerDialogueInfoStack"
 	player_dialogue_info_stack.visible = false
@@ -426,8 +429,6 @@ func _check_score_game_over() -> void:
 	_score_game_over = true
 	get_tree().paused = true
 	_popup_mode = POPUP_MODE_GAME_OVER
-	_active_request_id = ""
-	_active_request_type = ""
 	_show_player_dialogue_prompt(
 		"Game Over",
 		"Score reached %d (threshold %d).\nShift failed." % [_score, SCORE_FAIL_THRESHOLD],
@@ -526,15 +527,22 @@ func _update_gameplay_panel_layout() -> void:
 	var dialogue_w := maxf(_left_panel_width, dialogue_panel.custom_minimum_size.x)
 	dialogue_panel.position = Vector2(view_size.x - dialogue_w - SIDE_PANEL_MARGIN, TOP_PANEL_Y)
 	dialogue_panel.custom_minimum_size.x = maxf(DIALOGUE_PANEL_WIDTH, _left_panel_width)
+	var centered_x := (view_size.x - PLAYER_DIALOGUE_OVERLAY_WIDTH) * 0.5
+	var stack_y := PLAYER_DIALOGUE_OVERLAY_Y
+	if help_prompt_stack:
+		help_prompt_stack.position = Vector2(centered_x, PLAYER_DIALOGUE_OVERLAY_Y)
+		help_prompt_stack.custom_minimum_size.x = PLAYER_DIALOGUE_OVERLAY_WIDTH
+		if help_prompt_stack.visible:
+			var help_h := maxf(help_prompt_stack.size.y, help_prompt_stack.get_combined_minimum_size().y)
+			stack_y += help_h + PLAYER_DIALOGUE_STACK_GAP
 	if player_dialogue_overlay:
 		var overlay_w := player_dialogue_overlay.custom_minimum_size.x
-		player_dialogue_overlay.position = Vector2((view_size.x - overlay_w) * 0.5, PLAYER_DIALOGUE_OVERLAY_Y)
-	if player_dialogue_info_stack:
-		var stack_y := PLAYER_DIALOGUE_OVERLAY_Y
-		if player_dialogue_overlay and player_dialogue_overlay.visible:
+		player_dialogue_overlay.position = Vector2((view_size.x - overlay_w) * 0.5, stack_y)
+		if player_dialogue_overlay.visible:
 			var prompt_h := maxf(player_dialogue_overlay.size.y, player_dialogue_overlay.get_combined_minimum_size().y)
 			stack_y += prompt_h + PLAYER_DIALOGUE_STACK_GAP
-		player_dialogue_info_stack.position = Vector2((view_size.x - PLAYER_DIALOGUE_OVERLAY_WIDTH) * 0.5, stack_y)
+	if player_dialogue_info_stack:
+		player_dialogue_info_stack.position = Vector2(centered_x, stack_y)
 		player_dialogue_info_stack.custom_minimum_size.x = PLAYER_DIALOGUE_OVERLAY_WIDTH
 
 func _update_robot_task_panel() -> void:
@@ -948,12 +956,7 @@ func _get_player_capacity() -> int:
 func show_help_request(request: Dictionary) -> void:
 	if request.is_empty():
 		return
-
-	_popup_mode = POPUP_MODE_HELP
-	_active_request_id = str(request.get("id", ""))
-	_active_request_type = str(request.get("type", ""))
-	_reset_help_buttons()
-	_show_player_dialogue_prompt("Robot Request", _build_help_text(request), ["Accept", "Decline", "Later"], true)
+	_show_or_update_help_request_card(request)
 	_maybe_show_help_bubble(request)
 
 func _build_help_text(request: Dictionary) -> String:
@@ -984,13 +987,6 @@ func _respond(response: String) -> void:
 				_on_game_over_quit()
 		return
 
-	if _active_request_id == "":
-		return
-	var help_mgr = get_node_or_null("/root/HelpRequestManager")
-	if not help_mgr:
-		return
-	help_mgr.respond(_active_request_id, response)
-
 func _on_help_request_updated(request: Dictionary) -> void:
 	if request.is_empty():
 		return
@@ -998,18 +994,14 @@ func _on_help_request_updated(request: Dictionary) -> void:
 
 	var status = str(request.get("status", ""))
 	if status == "accepted":
-		if rid == _active_request_id:
-			_hide_player_dialogue_overlay()
-			_popup_mode = POPUP_MODE_NONE
+		_remove_help_request_card(rid)
 	elif status == "cooldown":
-		if rid == _active_request_id:
-			_hide_player_dialogue_overlay()
-			_popup_mode = POPUP_MODE_NONE
+		_remove_help_request_card(rid)
 	elif status == "pending":
-		if rid != _active_request_id:
-			_auto_open_help_request(request)
+		if _has_help_request_card(rid):
+			_show_or_update_help_request_card(request)
 		else:
-			_show_player_dialogue_prompt("Robot Request", _build_help_text(request), ["Accept", "Decline", "Later"], true)
+			_auto_open_help_request(request)
 			_maybe_show_help_bubble(request)
 
 func _on_help_request_created(request: Dictionary) -> void:
@@ -1023,13 +1015,7 @@ func _on_help_request_resolved(request: Dictionary) -> void:
 	if request.is_empty():
 		return
 	var rid = str(request.get("id", ""))
-	if rid != _active_request_id:
-		return
-	_active_request_id = ""
-	_active_request_type = ""
-	_hide_player_dialogue_overlay()
-	_popup_mode = POPUP_MODE_NONE
-	_reset_help_buttons()
+	_remove_help_request_card(rid)
 
 func show_kitchen_pick_popup(options: Array[String], title: String = "Kitchen Pickup") -> void:
 	if options.size() < 3:
@@ -1038,8 +1024,6 @@ func show_kitchen_pick_popup(options: Array[String], title: String = "Kitchen Pi
 	_kitchen_pick_options.clear()
 	for i in range(3):
 		_kitchen_pick_options.append(str(options[i]))
-	_active_request_id = ""
-	_active_request_type = ""
 	_show_player_dialogue_prompt(
 		title,
 		"Take the item you need.\nTap an option to add +1.\nPress E to close.",
@@ -1063,7 +1047,7 @@ func is_kitchen_pick_popup_visible() -> bool:
 	return _popup_mode == POPUP_MODE_KITCHEN_PICK and player_dialogue_overlay != null and player_dialogue_overlay.visible
 
 func is_help_request_popup_visible() -> bool:
-	return _popup_mode == POPUP_MODE_HELP and player_dialogue_overlay != null and player_dialogue_overlay.visible
+	return help_prompt_stack != null and help_prompt_stack.visible and not _help_prompt_cards.is_empty()
 
 func show_quick_notice(text: String) -> void:
 	_append_feed_line("Notice", text)
@@ -1234,6 +1218,8 @@ func _set_gameplay_panels_visible(visible: bool) -> void:
 		inventory_panel.visible = visible
 	if dialogue_panel:
 		dialogue_panel.visible = visible
+	if help_prompt_stack and not visible:
+		help_prompt_stack.visible = false
 	if player_dialogue_overlay and not visible:
 		player_dialogue_overlay.visible = false
 	if player_dialogue_info_stack and not visible:
@@ -1249,12 +1235,12 @@ func _auto_open_help_request(request: Dictionary) -> void:
 		return
 	if bool(_auto_open_in_flight.get(rid, false)):
 		return
-	if rid == _active_request_id and player_dialogue_overlay != null and player_dialogue_overlay.visible:
+	if _has_help_request_card(rid):
+		return
+	if _help_prompt_cards.size() >= HELP_PROMPT_MAX_STACK:
 		return
 
 	_auto_open_in_flight[rid] = true
-	_active_request_id = rid
-	_active_request_type = str(request.get("type", ""))
 	var help_mgr = get_node_or_null("/root/HelpRequestManager")
 	if help_mgr and help_mgr.has_method("mark_prompted"):
 		help_mgr.mark_prompted(rid)
@@ -1283,14 +1269,9 @@ func _can_auto_open_request(request: Dictionary) -> bool:
 	return robot_node.global_position.distance_to(player_node.global_position) <= HANDOFF_PROMPT_DISTANCE
 
 func _maybe_show_help_bubble(request: Dictionary) -> void:
-	var rid := str(request.get("id", ""))
 	var utterance := str(request.get("utterance", "")).strip_edges()
 	if utterance == "":
 		return
-	var previous := str(_last_utterance_by_request.get(rid, ""))
-	if previous == utterance:
-		return
-	_last_utterance_by_request[rid] = utterance
 
 	var bubble_mgr = get_node_or_null("/root/BubbleManager")
 	if bubble_mgr == null or not bubble_mgr.has_method("say"):
@@ -1341,7 +1322,7 @@ func _is_player_related_dialogue(source: Node2D, recipient: Node2D, kind: String
 func _should_skip_player_overlay_message(source: Node2D, recipient: Node2D, kind: String, recipient_kind: String) -> bool:
 	if not _is_player_related_dialogue(source, recipient, kind, recipient_kind):
 		return true
-	if _popup_mode == POPUP_MODE_HELP and kind == "robot" and recipient_kind == "player":
+	if kind == "robot" and recipient_kind == "player":
 		return true
 	if _popup_mode == POPUP_MODE_KITCHEN_PICK or _popup_mode == POPUP_MODE_GAME_OVER:
 		return true
@@ -1399,20 +1380,16 @@ func _show_player_dialogue_overlay(speaker: String, text: String, kind: String) 
 	card.modulate = Color(1, 1, 1, 1)
 	card.scale = Vector2(0.95, 0.95)
 	var tween := create_tween()
-	tween.set_parallel(true)
 	tween.tween_property(card, "scale", Vector2(1.0, 1.0), 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tween.chain().tween_interval(PLAYER_DIALOGUE_OVERLAY_SHOW_SEC)
-	tween.set_parallel(true)
+	tween.tween_interval(PLAYER_DIALOGUE_OVERLAY_SHOW_SEC)
 	tween.tween_property(card, "modulate:a", 0.0, 0.22).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	tween.chain().tween_callback(func():
+	tween.tween_callback(func():
 		_remove_player_dialogue_info_card(card)
 	)
 
 func _show_player_dialogue_prompt(title: String, body: String, button_texts: Array[String] = [], show_third_button: bool = true) -> void:
 	if player_dialogue_overlay == null or player_dialogue_overlay_label == null:
 		return
-	if _player_dialogue_overlay_tween and _player_dialogue_overlay_tween.is_valid():
-		_player_dialogue_overlay_tween.kill()
 	player_dialogue_overlay.visible = true
 	player_dialogue_overlay.modulate = Color(1, 1, 1, 1)
 	player_dialogue_overlay.scale = Vector2(1.0, 1.0)
@@ -1435,6 +1412,149 @@ func _show_player_dialogue_prompt(title: String, body: String, button_texts: Arr
 	_trim_player_dialogue_info_cards()
 	_update_gameplay_panel_layout()
 
+func _create_help_prompt_card(request: Dictionary) -> Dictionary:
+	var rid := str(request.get("id", ""))
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.11, 0.16, 0.92)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = Color(1.0, 0.84, 0.36, 0.95)
+	style.corner_radius_top_left = 12
+	style.corner_radius_top_right = 12
+	style.corner_radius_bottom_right = 12
+	style.corner_radius_bottom_left = 12
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	card.add_theme_stylebox_override("panel", style)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	card.add_child(vbox)
+
+	var label := RichTextLabel.new()
+	label.bbcode_enabled = false
+	label.fit_content = true
+	label.scroll_active = false
+	label.selection_enabled = false
+	label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT - 20.0)
+	vbox.add_child(label)
+	label.push_color(Color(1.0, 0.84, 0.36, 1.0))
+	label.add_text("Robot Request")
+	label.pop()
+	label.add_text("\n\n" + _build_help_text(request))
+
+	var buttons := HBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_child(buttons)
+
+	var accept_btn := Button.new()
+	accept_btn.text = "Accept"
+	accept_btn.pressed.connect(func():
+		var help_mgr = get_node_or_null("/root/HelpRequestManager")
+		if help_mgr:
+			help_mgr.respond(rid, "accept")
+	)
+	buttons.add_child(accept_btn)
+
+	var decline_btn := Button.new()
+	decline_btn.text = "Decline"
+	decline_btn.pressed.connect(func():
+		var help_mgr = get_node_or_null("/root/HelpRequestManager")
+		if help_mgr:
+			help_mgr.respond(rid, "decline")
+	)
+	buttons.add_child(decline_btn)
+
+	var later_btn := Button.new()
+	later_btn.text = "Later"
+	later_btn.pressed.connect(func():
+		var help_mgr = get_node_or_null("/root/HelpRequestManager")
+		if help_mgr:
+			help_mgr.respond(rid, "later")
+	)
+	buttons.add_child(later_btn)
+
+	return {
+		"request_id": rid,
+		"node": card,
+		"label": label
+	}
+
+func _find_help_request_card_index(request_id: String) -> int:
+	for i in range(_help_prompt_cards.size()):
+		if str(_help_prompt_cards[i].get("request_id", "")) == request_id:
+			return i
+	return -1
+
+func _has_help_request_card(request_id: String) -> bool:
+	return _find_help_request_card_index(request_id) >= 0
+
+func _show_or_update_help_request_card(request: Dictionary) -> void:
+	if help_prompt_stack == null:
+		return
+	var rid := str(request.get("id", ""))
+	if rid == "":
+		return
+	var idx := _find_help_request_card_index(rid)
+	if idx >= 0:
+		var entry: Dictionary = _help_prompt_cards[idx]
+		var label: RichTextLabel = entry.get("label", null)
+		if label != null:
+			label.clear()
+			label.push_color(Color(1.0, 0.84, 0.36, 1.0))
+			label.add_text("Robot Request")
+			label.pop()
+			label.add_text("\n\n" + _build_help_text(request))
+		_help_prompt_cards[idx] = entry
+	else:
+		if _help_prompt_cards.size() >= HELP_PROMPT_MAX_STACK:
+			return
+		var created := _create_help_prompt_card(request)
+		_help_prompt_cards.append(created)
+		help_prompt_stack.add_child(created.get("node"))
+	help_prompt_stack.visible = not _help_prompt_cards.is_empty()
+	_update_gameplay_panel_layout()
+
+func _remove_help_request_card(request_id: String) -> void:
+	var idx := _find_help_request_card_index(request_id)
+	if idx < 0:
+		_fill_help_prompt_slots()
+		return
+	var entry: Dictionary = _help_prompt_cards[idx]
+	_help_prompt_cards.remove_at(idx)
+	var node: Control = entry.get("node", null)
+	if node != null and is_instance_valid(node):
+		node.queue_free()
+	if help_prompt_stack:
+		help_prompt_stack.visible = not _help_prompt_cards.is_empty()
+	_update_gameplay_panel_layout()
+	_fill_help_prompt_slots()
+
+func _fill_help_prompt_slots() -> void:
+	if help_prompt_stack == null or _help_prompt_cards.size() >= HELP_PROMPT_MAX_STACK:
+		return
+	var help_mgr = get_node_or_null("/root/HelpRequestManager")
+	if help_mgr == null or not help_mgr.has_method("get_promptable_request_for_robot"):
+		return
+	var robots := get_tree().get_nodes_in_group("robot")
+	for robot in robots:
+		if _help_prompt_cards.size() >= HELP_PROMPT_MAX_STACK:
+			break
+		var request: Dictionary = help_mgr.get_promptable_request_for_robot(robot)
+		if request.is_empty():
+			continue
+		var rid := str(request.get("id", ""))
+		if rid == "" or _has_help_request_card(rid):
+			continue
+		_auto_open_help_request(request)
+
 func _hide_player_dialogue_overlay_buttons() -> void:
 	if player_dialogue_overlay_buttons:
 		player_dialogue_overlay_buttons.visible = false
@@ -1449,15 +1569,11 @@ func _hide_player_dialogue_overlay() -> void:
 	_update_gameplay_panel_layout()
 
 func _trim_player_dialogue_info_cards() -> void:
-	var allowed := PLAYER_DIALOGUE_MAX_STACK
-	if player_dialogue_overlay and player_dialogue_overlay.visible:
-		allowed -= 1
-	allowed = maxi(allowed, 0)
-	while _player_dialogue_info_cards.size() > allowed:
-		var oldest: Dictionary = _player_dialogue_info_cards.pop_front()
-		var node = oldest.get("node", null)
-		if node != null and is_instance_valid(node):
-			node.queue_free()
+	for i in range(_player_dialogue_info_cards.size() - 1, -1, -1):
+		var entry: Dictionary = _player_dialogue_info_cards[i]
+		var node = entry.get("node", null)
+		if node == null or not is_instance_valid(node):
+			_player_dialogue_info_cards.remove_at(i)
 
 func _remove_player_dialogue_info_card(card: Control) -> void:
 	for i in range(_player_dialogue_info_cards.size()):

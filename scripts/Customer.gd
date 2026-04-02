@@ -39,6 +39,7 @@ var _final_target: Vector2 = Vector2.ZERO
 var _task_deadline_ms: int = 0
 var _patience_timed_out: bool = false
 var _pending_player_line_request_id: String = ""
+var _pending_customer_line_request_id: String = ""
 var _drink_request_text: String = ""
 var _drink_item: String = ""
 var _drink_required: bool = false
@@ -590,6 +591,7 @@ func _deliver_player_task_item(player: Node2D, player_inventory: Node, task: Dic
 			}
 		)
 		receive_drink(item_name)
+		_thank_player_for_drink(player, item_name)
 	else:
 		_request_player_line(
 			player,
@@ -604,6 +606,50 @@ func _deliver_player_task_item(player: Node2D, player_inventory: Node, task: Dic
 		receive_item(item)
 	task_board.complete_current_step(task_id, "DELIVER_AND_SERVE")
 	_refresh_order_bubble()
+
+func _thank_player_for_drink(player: Node2D, item_name: String) -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	var line := "Thanks."
+	match item_name.strip_edges().to_lower():
+		"coffee":
+			line = "Thanks for the coffee."
+		"tea":
+			line = "Thanks for the tea."
+		"cola":
+			line = "Thanks for the cola."
+	_request_customer_line(
+		player,
+		"customer_thank_for_drink",
+		line,
+		{
+			"item_name": item_name,
+			"context_note": "The customer is thanking the player for delivering the requested drink."
+		}
+	)
+
+func _complain_about_missed_drink() -> void:
+	var players := get_tree().get_nodes_in_group("player")
+	if players.is_empty() or not (players[0] is Node2D):
+		return
+	var player := players[0] as Node2D
+	var line := "I've been waiting too long for that drink."
+	match _drink_item.strip_edges().to_lower():
+		"coffee":
+			line = "I've been waiting too long for that coffee."
+		"tea":
+			line = "I've been waiting too long for that tea."
+		"cola":
+			line = "I've been waiting too long for that cola."
+	_request_customer_line(
+		player,
+		"customer_missed_drink",
+		line,
+		{
+			"item_name": _drink_item,
+			"context_note": "The customer is complaining because the requested drink arrived too late."
+		}
+	)
 
 func _take_player_order(_player: Node2D, task: Dictionary) -> void:
 	var task_board = get_node_or_null("/root/TaskBoard")
@@ -742,6 +788,7 @@ func _tick_order_timeouts() -> void:
 	if task_board and task_board.has_method("fail_task"):
 		task_board.fail_task(str(drink_task.get("id", "")), "customer_drink_timeout")
 	_drink_required = false
+	_complain_about_missed_drink()
 	_notify_player("Drink order expired for " + current_seat + ".")
 	_refresh_order_bubble()
 	_try_begin_eating_if_ready()
@@ -794,14 +841,39 @@ func _request_player_line(player: Node2D, recipient: Node2D, intent_type: String
 	}
 	dm.realize_directed_utterance(request)
 
-func _on_directed_utterance_generated(request_id: String, utterance: String, _meta: Dictionary) -> void:
-	if request_id != _pending_player_line_request_id:
+func _request_customer_line(player: Node2D, intent_type: String, fallback: String, payload: Dictionary = {}) -> void:
+	var dm = get_node_or_null("/root/DialogueManager")
+	var bubble_mgr = get_node_or_null("/root/BubbleManager")
+	if bubble_mgr == null or player == null or not is_instance_valid(player):
 		return
-	_pending_player_line_request_id = ""
+	if dm == null or not dm.has_method("realize_directed_utterance"):
+		if bubble_mgr.has_method("say_to"):
+			bubble_mgr.say_to(self, player, fallback, 2.6, Color(0.92, 0.98, 1.0, 1.0))
+		return
+	_pending_customer_line_request_id = "customer_to_player_%s_%d" % [str(get_instance_id()), Time.get_ticks_msec()]
+	var request := {
+		"id": _pending_customer_line_request_id,
+		"source_role": "customer",
+		"recipient_role": "player",
+		"intent_type": intent_type,
+		"fallback": fallback,
+		"item_name": str(payload.get("item_name", "")),
+		"context_note": str(payload.get("context_note", ""))
+	}
+	dm.realize_directed_utterance(request)
+
+func _on_directed_utterance_generated(request_id: String, utterance: String, _meta: Dictionary) -> void:
 	var players := get_tree().get_nodes_in_group("player")
 	if players.is_empty() or not (players[0] is Node2D):
 		return
 	var player := players[0] as Node2D
 	var bubble_mgr = get_node_or_null("/root/BubbleManager")
-	if bubble_mgr and bubble_mgr.has_method("say_to"):
+	if bubble_mgr == null or not bubble_mgr.has_method("say_to"):
+		return
+	if request_id == _pending_player_line_request_id:
+		_pending_player_line_request_id = ""
 		bubble_mgr.say_to(player, self, utterance, 2.6, Color(1.0, 0.94, 0.78, 1.0))
+		return
+	if request_id == _pending_customer_line_request_id:
+		_pending_customer_line_request_id = ""
+		bubble_mgr.say_to(self, player, utterance, 2.6, Color(0.92, 0.98, 1.0, 1.0))
