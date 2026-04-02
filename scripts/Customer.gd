@@ -60,7 +60,9 @@ const ARRIVAL_DIST: float = 30.0  # 默认到达判定距离
 const ARRIVAL_DIST_SEAT: float = 56.0  # 入座判定半径（seat 点可在不可走区边缘）
 const ARRIVAL_DIST_STUCK: float = 80.0  # 导航结束但与目标有偏差时的容错
 const ENTERING_STUCK_TIMEOUT_SEC: float = 3.0
+const LEAVING_STUCK_TIMEOUT_SEC: float = 3.0
 var _path_initialized: bool = false
+var _leaving_repath_attempted: bool = false
 
 # ==================== 生命周期 ====================
 func _ready() -> void:
@@ -162,6 +164,9 @@ func _start_leaving() -> void:
 	_arrived = false
 	_target_set = false
 	_path_initialized = false
+	_stuck_timer = 0.0
+	_last_pos = global_position
+	_leaving_repath_attempted = false
 	
 	var cs1 = _find_exit_point()
 	_final_target = cs1.global_position if cs1 else _spawn_position
@@ -294,6 +299,25 @@ func _physics_process(dt: float) -> void:
 			print("[Customer] Entering stuck for %.1fs, reselecting seat..." % ENTERING_STUCK_TIMEOUT_SEC)
 			_pick_seat_and_go()
 			return
+	elif current_state == State.LEAVING:
+		var moved_dist := global_position.distance_to(_last_pos)
+		if moved_dist < 0.8:
+			_stuck_timer += dt
+		else:
+			_stuck_timer = 0.0
+		_last_pos = global_position
+		if _stuck_timer >= LEAVING_STUCK_TIMEOUT_SEC:
+			_stuck_timer = 0.0
+			agent.set_velocity(Vector2.ZERO)
+			if not _leaving_repath_attempted:
+				_leaving_repath_attempted = true
+				_path_initialized = false
+				_target_set = true
+				print("[Customer] Leaving stuck for %.1fs, replanning exit..." % LEAVING_STUCK_TIMEOUT_SEC)
+			else:
+				print("[Customer] Leaving still stuck, forcing exit.")
+				_finish_leaving_now()
+			return
 
 	var dist = global_position.distance_to(_final_target)
 	var arrival_dist := ARRIVAL_DIST
@@ -353,14 +377,17 @@ func _on_reached() -> void:
 		_post_taskboard_request()
 		
 	elif current_state == State.LEAVING:
-		_arrived = true
-		_target_set = false
-		_path_initialized = false
-		velocity = Vector2.ZERO
-		current_state = State.LEFT
-		print("[Customer] Left the restaurant.")
-		customer_left.emit(self)
-		queue_free()
+		_finish_leaving_now()
+
+func _finish_leaving_now() -> void:
+	_arrived = true
+	_target_set = false
+	_path_initialized = false
+	velocity = Vector2.ZERO
+	current_state = State.LEFT
+	print("[Customer] Left the restaurant.")
+	customer_left.emit(self)
+	queue_free()
 
 func _post_taskboard_request() -> void:
 	var task_board = get_node_or_null("/root/TaskBoard")
