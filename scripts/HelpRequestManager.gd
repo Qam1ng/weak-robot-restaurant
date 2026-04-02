@@ -64,7 +64,6 @@ func _process(_dt: float) -> void:
 		_requests_by_id[request_id] = req
 		_log_help_event("cooldown_expired", req)
 		request_updated.emit(_copy(req))
-
 func create_request(request_type: String, robot: Node, payload: Dictionary = {}, options: Dictionary = {}) -> Dictionary:
 	if robot == null or not is_instance_valid(robot):
 		return {}
@@ -97,8 +96,10 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"strategy": "",
 		"strategy_scores": {},
 		"dialogue_intent": {},
+		"system_notice": "",
 		"utterance": "",
 		"utterance_source": "template",
+		"utterance_pending": false,
 		"last_response": "",
 		"experiment": {}
 	}
@@ -121,14 +122,18 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 	req["strategy"] = persuasion.get("strategy", "")
 	req["strategy_scores"] = persuasion.get("strategy_scores", {})
 	req["dialogue_intent"] = persuasion.get("dialogue_intent", {})
+	req["system_notice"] = _build_system_notice(payload)
 	req["utterance"] = persuasion.get("utterance", "")
 	req["utterance_source"] = "template"
+	if _should_request_help_utterance(req):
+		req["utterance_pending"] = true
 
 	_requests_by_id[request_id] = req
 	_order.append(request_id)
 	print("[HelpRequest] Created ", request_id, " type=", request_type)
 	_log_help_event("created", req)
-	_request_utterance_realization(req)
+	if bool(req.get("utterance_pending", false)):
+		_request_utterance_realization(req)
 
 	var copied := _copy(req)
 	request_created.emit(copied)
@@ -172,37 +177,10 @@ func mark_prompted(request_id: String) -> void:
 	var req: Dictionary = _requests_by_id.get(request_id, {})
 	if req.is_empty():
 		return
-	var robot = _robot_from_request(req)
-	if robot:
-		var context = _build_context(robot, req, {})
-		req["context_snapshot"] = context
-		var persuasion = PersuasionEngineScript.generate_dialogue(
-			str(req.get("type", TYPE_HANDOFF)),
-			context,
-			int(req.get("escalation_count", 0)),
-			req.get("payload", {})
-		)
-		var exp = _experiment_config()
-		if exp and exp.has_method("apply_dialogue_variant"):
-			var variant := str(req.get("experiment", {}).get("assigned_variant", "A"))
-			persuasion = exp.apply_dialogue_variant(
-				variant,
-				str(req.get("type", TYPE_HANDOFF)),
-				persuasion,
-				req.get("payload", {}),
-				int(req.get("escalation_count", 0))
-			)
-		req["strategy"] = persuasion.get("strategy", "")
-		req["strategy_scores"] = persuasion.get("strategy_scores", {})
-		req["dialogue_intent"] = persuasion.get("dialogue_intent", {})
-		req["utterance"] = persuasion.get("utterance", "")
-		req["utterance_source"] = "template"
-
 	req["last_prompt_ms"] = Time.get_ticks_msec()
 	req["updated_at_ms"] = req["last_prompt_ms"]
 	_requests_by_id[request_id] = req
 	_log_help_event("prompted", req)
-	_request_utterance_realization(req)
 	request_updated.emit(_copy(req))
 
 func respond(request_id: String, response: String) -> Dictionary:
@@ -443,10 +421,22 @@ func _log_help_event(event_type: String, req: Dictionary, extra: Dictionary = {}
 		return
 	logger.log_help_request_event(event_type, req, extra)
 
+func _should_request_help_utterance(req: Dictionary) -> bool:
+	if req.is_empty():
+		return false
+	if str(req.get("strategy", "")) == "control_neutral":
+		return false
+	var dm = _dialogue_manager()
+	if dm == null:
+		return false
+	if dm.has_method("_is_llm_enabled") and not bool(dm._is_llm_enabled()):
+		return false
+	if dm.has_method("has_api_key") and not bool(dm.has_api_key()):
+		return false
+	return dm.has_method("realize_help_utterance")
+
 func _request_utterance_realization(req: Dictionary) -> void:
 	if req.is_empty():
-		return
-	if str(req.get("strategy", "")) == "control_neutral":
 		return
 	var dm = _dialogue_manager()
 	if dm == null or not dm.has_method("realize_help_utterance"):
@@ -459,13 +449,40 @@ func _on_utterance_generated(request_id: String, utterance: String, meta: Dictio
 		return
 	if str(req.get("status", "")) == STATUS_RESOLVED:
 		return
-	if utterance == "":
-		_log_help_event("utterance_realization_failed", req, meta)
+	if int(req.get("last_prompt_ms", 0)) > 0:
+		req["utterance_pending"] = false
+		_requests_by_id[request_id] = req
+		_log_help_event("utterance_ignored_after_prompt", req, meta)
 		return
-
-	req["utterance"] = utterance
-	req["utterance_source"] = str(meta.get("provider", "llm"))
+	req["utterance_pending"] = false
+	if utterance != "":
+		req["utterance"] = utterance
+		req["utterance_source"] = str(meta.get("provider", "llm"))
+		req["updated_at_ms"] = Time.get_ticks_msec()
+		_requests_by_id[request_id] = req
+		_log_help_event("utterance_realized", req, meta)
+		request_updated.emit(_copy(req))
+		return
 	req["updated_at_ms"] = Time.get_ticks_msec()
 	_requests_by_id[request_id] = req
-	_log_help_event("utterance_realized", req, meta)
+	_log_help_event("utterance_realization_failed", req, meta)
 	request_updated.emit(_copy(req))
+
+func _build_system_notice(payload: Dictionary) -> String:
+	var reason := str(payload.get("reason", "")).strip_edges()
+	var item := str(payload.get("item_needed", "item")).strip_edges()
+	if item == "":
+		item = "item"
+	match reason:
+		"deadline_critical":
+			return "Priority order handling requires immediate handoff of %s." % item
+		"battery_emergency":
+			return "Battery critical. Delegation requested for %s." % item
+		"robot_over_threshold_post_take_order":
+			return "Task load threshold exceeded. Delegation requested for %s." % item
+		"inventory_full_blocked_pickup":
+			return "Inventory full. Delegation requested for %s." % item
+		"robot_stuck_or_pick_fail":
+			return "Pickup blocked. Delegation requested for %s." % item
+		_:
+			return ""

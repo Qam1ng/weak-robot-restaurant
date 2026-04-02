@@ -45,8 +45,8 @@ func realize_help_utterance(request: Dictionary) -> void:
 	var escalation := int(request.get("escalation_count", 0))
 	var item := str(payload.get("item_needed", "item"))
 
-	var system_prompt := "You rewrite robot help requests in one short sentence for an in-game dialogue. Keep it polite, concrete, and under 24 words. Do not add options."
-	var user_prompt := "request_type=%s strategy=%s urgency=%s escalation=%d mbti=%s item=%s template=%s" % [
+	var system_prompt := "Write one short in-game delegation line from robot to player. Keep it natural, concrete, polite, and under 18 words. No quotes. No options."
+	var user_prompt := "request_type=%s strategy=%s urgency=%s escalation=%d mbti=%s item=%s fallback=%s" % [
 		request_type,
 		strategy,
 		urgency,
@@ -63,7 +63,7 @@ func realize_help_utterance(request: Dictionary) -> void:
 			{"role": "user", "content": user_prompt}
 		],
 		"temperature": _llm_temperature(),
-		"max_tokens": 80
+		"max_tokens": 60
 	}
 	var headers: PackedStringArray = PackedStringArray([
 		"Content-Type: application/json",
@@ -77,7 +77,7 @@ func realize_help_utterance(request: Dictionary) -> void:
 	if err != OK:
 		http.queue_free()
 		utterance_generated.emit(request_id, "", {
-			"provider": "openai",
+			"provider": "fallback",
 			"status": "request_error",
 			"fallback": fallback
 		})
@@ -150,7 +150,7 @@ func _on_request_completed(_result: int, code: int, _headers: PackedStringArray,
 
 	if code < 200 or code >= 300:
 		utterance_generated.emit(request_id, "", {
-			"provider": "openai",
+			"provider": "fallback",
 			"status": "http_error",
 			"http_code": code,
 			"fallback": fallback
@@ -160,7 +160,7 @@ func _on_request_completed(_result: int, code: int, _headers: PackedStringArray,
 	var top = JSON.parse_string(body.get_string_from_utf8())
 	if not (top is Dictionary):
 		utterance_generated.emit(request_id, "", {
-			"provider": "openai",
+			"provider": "fallback",
 			"status": "parse_error",
 			"fallback": fallback
 		})
@@ -169,7 +169,7 @@ func _on_request_completed(_result: int, code: int, _headers: PackedStringArray,
 	var choices: Array = top.get("choices", [])
 	if choices.is_empty():
 		utterance_generated.emit(request_id, "", {
-			"provider": "openai",
+			"provider": "fallback",
 			"status": "empty_choices",
 			"fallback": fallback
 		})
@@ -180,7 +180,7 @@ func _on_request_completed(_result: int, code: int, _headers: PackedStringArray,
 	content = content.replace("\n", " ")
 	if content == "":
 		utterance_generated.emit(request_id, "", {
-			"provider": "openai",
+			"provider": "fallback",
 			"status": "empty_content",
 			"fallback": fallback
 		})

@@ -1072,13 +1072,12 @@ func _tick_emergency_delegation() -> bool:
 		"item_needed": item_needed,
 		"reason": reason,
 		"slack_ms": slack_ms
-	}, {
-		"cooldown_ms": 2500,
-		"max_escalation": 1,
-		"urgency": 1.0
-	})
+		}, {
+			"cooldown_ms": 2500,
+			"max_escalation": 1,
+			"urgency": 1.0
+		})
 	_waiting_for_help = true
-	speak("Battery critical. Please take this order while I recharge.")
 	return true
 
 func _tick_overload_handoff_delegation() -> bool:
@@ -1389,38 +1388,6 @@ func _ensure_help_request(request_type: String, payload: Dictionary = {}, option
 	_active_help_request_id = str(req.get("id", ""))
 	_active_help_request_type = request_type
 	_waiting_for_help = true
-
-func open_help_request_ui(_player: Node) -> bool:
-	var help_mgr = _help_manager()
-	if not help_mgr:
-		return false
-
-	var req: Dictionary = {}
-	if _active_help_request_id != "":
-		req = help_mgr.get_request(_active_help_request_id)
-		if not req.is_empty() and str(req.get("status", "")) == "cooldown":
-			return false
-		if req.is_empty() or str(req.get("status", "")) == "resolved":
-			req = {}
-
-	if req.is_empty():
-		req = help_mgr.get_promptable_request_for_robot(self)
-		if req.is_empty():
-			return false
-		_active_help_request_id = str(req.get("id", ""))
-		_active_help_request_type = str(req.get("type", ""))
-
-	help_mgr.mark_prompted(_active_help_request_id)
-	_show_help_request_ui(req)
-	return true
-
-func _show_help_request_ui(request: Dictionary) -> void:
-	var huds = get_tree().get_nodes_in_group("hud")
-	if huds.is_empty():
-		return
-	var hud = huds[0]
-	if hud and hud.has_method("show_help_request"):
-		hud.show_help_request(request)
 
 func _on_help_request_updated(request: Dictionary) -> void:
 	if request.is_empty():

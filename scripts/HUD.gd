@@ -36,6 +36,8 @@ var player_dialogue_overlay_later_btn: Button
 var _player_dialogue_info_cards: Array[Dictionary] = []
 var _help_prompt_cards: Array[Dictionary] = []
 var _left_panel_width: float = 0.0
+var _last_help_bubble_utterance_by_request: Dictionary = {}
+var _shown_help_system_notice_by_request: Dictionary = {}
 var _auto_open_in_flight: Dictionary = {}
 var _popup_mode: String = "none"
 var _kitchen_pick_options: Array[String] = []
@@ -956,6 +958,7 @@ func _get_player_capacity() -> int:
 func show_help_request(request: Dictionary) -> void:
 	if request.is_empty():
 		return
+	_maybe_append_help_system_notice(request)
 	_show_or_update_help_request_card(request)
 	_maybe_show_help_bubble(request)
 
@@ -998,17 +1001,18 @@ func _on_help_request_updated(request: Dictionary) -> void:
 	elif status == "cooldown":
 		_remove_help_request_card(rid)
 	elif status == "pending":
+		_maybe_append_help_system_notice(request)
 		if _has_help_request_card(rid):
 			_show_or_update_help_request_card(request)
 		else:
 			_auto_open_help_request(request)
-			_maybe_show_help_bubble(request)
 
 func _on_help_request_created(request: Dictionary) -> void:
 	if request.is_empty():
 		return
 	if str(request.get("status", "")) != "pending":
 		return
+	_maybe_append_help_system_notice(request)
 	_auto_open_help_request(request)
 
 func _on_help_request_resolved(request: Dictionary) -> void:
@@ -1230,6 +1234,8 @@ func _auto_open_help_request(request: Dictionary) -> void:
 		return
 	if not _can_auto_open_request(request):
 		return
+	if _should_wait_for_help_utterance(request):
+		return
 	var rid := str(request.get("id", ""))
 	if rid == "":
 		return
@@ -1247,6 +1253,11 @@ func _auto_open_help_request(request: Dictionary) -> void:
 		request = help_mgr.get_request(rid)
 	show_help_request(request)
 	_auto_open_in_flight.erase(rid)
+
+func _should_wait_for_help_utterance(request: Dictionary) -> bool:
+	if str(request.get("type", "")) != "HANDOFF":
+		return false
+	return bool(request.get("utterance_pending", false))
 
 func _can_auto_open_request(request: Dictionary) -> bool:
 	var req_type := str(request.get("type", ""))
@@ -1269,9 +1280,15 @@ func _can_auto_open_request(request: Dictionary) -> bool:
 	return robot_node.global_position.distance_to(player_node.global_position) <= HANDOFF_PROMPT_DISTANCE
 
 func _maybe_show_help_bubble(request: Dictionary) -> void:
+	var rid := str(request.get("id", "")).strip_edges()
 	var utterance := str(request.get("utterance", "")).strip_edges()
 	if utterance == "":
 		return
+	if rid != "":
+		var previous := str(_last_help_bubble_utterance_by_request.get(rid, ""))
+		if previous == utterance:
+			return
+		_last_help_bubble_utterance_by_request[rid] = utterance
 
 	var bubble_mgr = get_node_or_null("/root/BubbleManager")
 	if bubble_mgr == null or not bubble_mgr.has_method("say"):
@@ -1287,6 +1304,16 @@ func _maybe_show_help_bubble(request: Dictionary) -> void:
 			bubble_mgr.say_to(robot, player, utterance, 2.8, Color(0.94, 0.98, 1.0, 1.0))
 		else:
 			bubble_mgr.say(robot, utterance, 2.8, Color(0.94, 0.98, 1.0, 1.0))
+
+func _maybe_append_help_system_notice(request: Dictionary) -> void:
+	var rid := str(request.get("id", "")).strip_edges()
+	var notice := str(request.get("system_notice", "")).strip_edges()
+	if rid == "" or notice == "":
+		return
+	if bool(_shown_help_system_notice_by_request.get(rid, false)):
+		return
+	_shown_help_system_notice_by_request[rid] = true
+	_append_feed_line("System", notice)
 
 func _on_bubble_message(source: Node2D, recipient: Node2D, speaker: String, text: String, kind: String, recipient_kind: String) -> void:
 	if kind == "system":
@@ -1525,6 +1552,8 @@ func _show_or_update_help_request_card(request: Dictionary) -> void:
 func _remove_help_request_card(request_id: String) -> void:
 	var idx := _find_help_request_card_index(request_id)
 	if idx < 0:
+		_last_help_bubble_utterance_by_request.erase(request_id)
+		_shown_help_system_notice_by_request.erase(request_id)
 		_fill_help_prompt_slots()
 		return
 	var entry: Dictionary = _help_prompt_cards[idx]
@@ -1534,6 +1563,8 @@ func _remove_help_request_card(request_id: String) -> void:
 		node.queue_free()
 	if help_prompt_stack:
 		help_prompt_stack.visible = not _help_prompt_cards.is_empty()
+	_last_help_bubble_utterance_by_request.erase(request_id)
+	_shown_help_system_notice_by_request.erase(request_id)
 	_update_gameplay_panel_layout()
 	_fill_help_prompt_slots()
 

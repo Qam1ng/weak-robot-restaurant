@@ -133,17 +133,17 @@ static func _render_template(intent: Dictionary, payload: Dictionary) -> String:
 
 	match strategy:
 		STRATEGY_AUTHORITY:
-			return intro + "Priority order handling requires immediate handoff of %s." % item
+			return intro + "Please hand off %s right away." % item
 		STRATEGY_SOCIAL_PROOF:
-			return intro + "When the floor is busy, the team usually hands over %s immediately." % item
+			return intro + "Please hand off %s now so we can keep service moving." % item
 		STRATEGY_LIKING:
-			return intro + "Could you please pass me %s? Your help really keeps things moving." % item
+			return intro + "Could you please hand off %s? Your help really keeps things moving." % item
 		STRATEGY_RECIPROCITY:
-			return intro + "If you hand me %s now, I can finish this table and reduce your load next." % item
+			return intro + "Please hand over %s now, and I can clear this table for you next." % item
 		STRATEGY_COMMITMENT:
-			return intro + "You have been reliable with these handoffs; can you pass %s again?" % item
+			return intro + "You have handled these handoffs well before; could you take %s again?" % item
 		_:
-			return intro + "I may miss the service window without %s. Please hand it over now." % item
+			return intro + "Please hand off %s now, or this order may miss the service window." % item
 
 static func _default_cta(request_type: String, payload: Dictionary) -> String:
 	return "Provide requested item: %s" % str(payload.get("item_needed", "item"))
