@@ -2,3 +2,7 @@
 .godot/
 /android/
 secrets/
+
+.DS_Store
+
+.DS_Store
