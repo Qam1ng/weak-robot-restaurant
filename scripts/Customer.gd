@@ -769,16 +769,14 @@ func _load_order_icon_texture(key: String) -> Texture2D:
 	var path := str(ORDER_ICON_PATHS.get(key, "")).strip_edges()
 	if path == "":
 		return null
-	var bytes := FileAccess.get_file_as_bytes(path)
-	if bytes.is_empty():
-		push_warning("[Customer] Failed to read order icon: %s" % path)
+	var resource := ResourceLoader.load(path)
+	if resource == null:
+		push_warning("[Customer] Failed to load order icon resource: %s" % path)
 		return null
-	var image := Image.new()
-	var err := image.load_png_from_buffer(bytes)
-	if err != OK:
-		push_warning("[Customer] Failed to decode order icon: %s" % path)
+	if not (resource is Texture2D):
+		push_warning("[Customer] Order icon is not a Texture2D: %s" % path)
 		return null
-	var texture := ImageTexture.create_from_image(image)
+	var texture := resource as Texture2D
 	_order_icon_textures[key] = texture
 	return texture
 
