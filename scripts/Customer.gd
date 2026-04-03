@@ -47,7 +47,17 @@ var _drink_order_activated: bool = false
 var _drink_timeout_handled: bool = false
 var _order_bubble_root: Node2D = null
 var _order_bubble_panel: PanelContainer = null
-var _order_bubble_label: Label = null
+var _order_bubble_icon: TextureRect = null
+
+const ORDER_ICON_PATHS := {
+	"pizza": "res://assets/icons/orders/pizza.png",
+	"hotdog": "res://assets/icons/orders/hotdog.png",
+	"sandwich": "res://assets/icons/orders/sandwich.png",
+	"coffee": "res://assets/icons/orders/coffee.png",
+	"tea": "res://assets/icons/orders/tea.png",
+	"cola": "res://assets/icons/orders/cola.png"
+}
+var _order_icon_textures: Dictionary = {}
 
 # 座位信息
 var current_seat: String = ""
@@ -255,15 +265,15 @@ func _setup_order_bubble() -> void:
 	style.content_margin_right = 8
 	style.content_margin_bottom = 4
 	_order_bubble_panel.add_theme_stylebox_override("panel", style)
-	_order_bubble_panel.size = Vector2(56, 56)
+	_order_bubble_panel.size = Vector2(48, 48)
 
-	_order_bubble_label = Label.new()
-	_order_bubble_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_order_bubble_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_order_bubble_label.position = Vector2(4, 4)
-	_order_bubble_label.size = Vector2(48, 48)
-	_order_bubble_label.add_theme_font_size_override("font_size", 28)
-	_order_bubble_panel.add_child(_order_bubble_label)
+	_order_bubble_icon = TextureRect.new()
+	_order_bubble_icon.position = Vector2(14, 14)
+	_order_bubble_icon.custom_minimum_size = Vector2(20, 20)
+	_order_bubble_icon.size = Vector2(20, 20)
+	_order_bubble_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_order_bubble_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_order_bubble_panel.add_child(_order_bubble_icon)
 	_refresh_order_bubble()
 
 func _physics_process(dt: float) -> void:
@@ -689,7 +699,7 @@ func _task_payload_item_name(payload: Dictionary) -> String:
 	return str(payload.get("food_item", payload.get("display_item", "food"))).strip_edges().to_lower()
 
 func _refresh_order_bubble() -> void:
-	if _order_bubble_panel == null or _order_bubble_label == null:
+	if _order_bubble_panel == null or _order_bubble_icon == null:
 		return
 	if current_state != State.WAITING_FOR_FOOD:
 		_order_bubble_panel.visible = false
@@ -697,7 +707,7 @@ func _refresh_order_bubble() -> void:
 
 	var food_task := _get_open_task_by_kind("food")
 	var drink_task := _get_open_task_by_kind("drink")
-	var label_text := ""
+	var icon_texture: Texture2D = null
 	var label_color := Color(0.22, 0.26, 0.32, 1.0)
 	var task_board = get_node_or_null("/root/TaskBoard")
 	var border_color := Color(0.18, 0.22, 0.28, 0.95)
@@ -707,25 +717,25 @@ func _refresh_order_bubble() -> void:
 		if task_board and task_board.has_method("get_current_step_name"):
 			drink_step = str(task_board.get_current_step_name(str(drink_task.get("id", ""))))
 		if drink_step == "TAKE_ORDER":
-			label_text = _order_icon_for("drink", _drink_item)
+			icon_texture = _order_icon_texture_for("drink", _drink_item)
 			label_color = Color(0.18, 0.44, 0.72, 1.0)
 			border_color = label_color
 
-	if label_text == "" and not food_task.is_empty():
+	if icon_texture == null and not food_task.is_empty():
 		var food_step := ""
 		if task_board and task_board.has_method("get_current_step_name"):
 			food_step = str(task_board.get_current_step_name(str(food_task.get("id", ""))))
 		if food_step == "TAKE_ORDER":
-			label_text = _order_icon_for("food", _extract_food_from_request(request_text))
+			icon_texture = _order_icon_texture_for("food", _extract_food_from_request(request_text))
 			label_color = Color(0.72, 0.28, 0.16, 1.0)
 			border_color = label_color
 
-	if label_text == "":
+	if icon_texture == null:
 		_order_bubble_panel.visible = false
 		return
 
-	_order_bubble_label.text = label_text
-	_order_bubble_label.add_theme_color_override("font_color", label_color)
+	_order_bubble_icon.texture = icon_texture
+	_order_bubble_icon.modulate = Color(1, 1, 1, 1)
 	var panel_style := _order_bubble_panel.get_theme_stylebox("panel")
 	if panel_style is StyleBoxFlat:
 		var bubble_style := panel_style.duplicate() as StyleBoxFlat
@@ -733,25 +743,44 @@ func _refresh_order_bubble() -> void:
 		_order_bubble_panel.add_theme_stylebox_override("panel", bubble_style)
 	_order_bubble_panel.visible = true
 
-func _order_icon_for(order_kind: String, item_name: String) -> String:
+func _order_icon_texture_for(order_kind: String, item_name: String) -> Texture2D:
 	var item := item_name.strip_edges().to_lower()
 	if order_kind == "drink":
 		match item:
 			"cola":
-				return "🥤"
+				return _load_order_icon_texture("cola")
 			"tea":
-				return "🍵"
+				return _load_order_icon_texture("tea")
 			"coffee":
-				return "☕"
-		return "🥤"
+				return _load_order_icon_texture("coffee")
+		return _load_order_icon_texture("cola")
 	match item:
 		"pizza":
-			return "🍕"
+			return _load_order_icon_texture("pizza")
 		"hotdog":
-			return "🌭"
+			return _load_order_icon_texture("hotdog")
 		"sandwich":
-			return "🥪"
-	return "🍽"
+			return _load_order_icon_texture("sandwich")
+	return null
+
+func _load_order_icon_texture(key: String) -> Texture2D:
+	if _order_icon_textures.has(key):
+		return _order_icon_textures.get(key, null)
+	var path := str(ORDER_ICON_PATHS.get(key, "")).strip_edges()
+	if path == "":
+		return null
+	var bytes := FileAccess.get_file_as_bytes(path)
+	if bytes.is_empty():
+		push_warning("[Customer] Failed to read order icon: %s" % path)
+		return null
+	var image := Image.new()
+	var err := image.load_png_from_buffer(bytes)
+	if err != OK:
+		push_warning("[Customer] Failed to decode order icon: %s" % path)
+		return null
+	var texture := ImageTexture.create_from_image(image)
+	_order_icon_textures[key] = texture
+	return texture
 
 func _tick_order_timeouts() -> void:
 	if current_state != State.WAITING_FOR_FOOD:
