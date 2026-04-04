@@ -23,6 +23,7 @@ const REPLAY_JSONL_FILE = "user://data/replay/replay_events.jsonl"
 
 var _help_event_seq: int = 0
 var _session_id: String = ""
+const API_LOG_URL := "/api/log"
 
 signal episode_started(episode_id: String)
 signal episode_ended(episode_data: Dictionary)
@@ -374,7 +375,7 @@ func _post_remote_log(event_type: String, payload: Dictionary = {}) -> void:
 		"user_agent": "",
 		"payload": payload
 	}
-	var err := http.request("/api/log", PackedStringArray([
+	var err := http.request(API_LOG_URL, PackedStringArray([
 		"Content-Type: application/json"
 	]), HTTPClient.METHOD_POST, JSON.stringify(body))
 	if err != OK:

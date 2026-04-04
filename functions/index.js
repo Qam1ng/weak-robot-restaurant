@@ -1,15 +1,18 @@
 /* eslint-disable require-jsdoc, max-len */
 const {setGlobalOptions} = require("firebase-functions/v2");
 const {onRequest} = require("firebase-functions/v2/https");
+const {defineSecret} = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
+const {getFirestore, FieldValue} = require("firebase-admin/firestore");
 
 admin.initializeApp();
 
-const db = admin.firestore();
+const db = getFirestore();
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_TEMPERATURE = 0.4;
+const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
 
 setGlobalOptions({
   maxInstances: 10,
@@ -122,7 +125,7 @@ function buildDialoguePrompts(body) {
 }
 
 async function requestOpenAI(dialogueRequest) {
-  const apiKey = sanitizeText(process.env.OPENAI_API_KEY, "");
+  const apiKey = sanitizeText(OPENAI_API_KEY.value(), "");
   if (apiKey === "") {
     return {
       utterance: dialogueRequest.fallback,
@@ -194,7 +197,7 @@ async function requestOpenAI(dialogueRequest) {
   };
 }
 
-exports.apiDialogue = onRequest(async (req, res) => {
+exports.apiDialogue = onRequest({secrets: [OPENAI_API_KEY]}, async (req, res) => {
   applyCors(res);
   if (handleOptions(req, res)) {
     return;
@@ -270,22 +273,26 @@ exports.apiLog = onRequest(async (req, res) => {
   const eventRef = sessionRef.collection("events").doc();
 
   try {
-    await sessionRef.set({
+    const sessionSnapshot = await sessionRef.get();
+    const sessionData = {
       session_id: sessionId,
       build_version: sanitizeText(body.build_version, ""),
       platform: sanitizeText(body.platform, "web"),
       user_agent: sanitizeText(body.user_agent, ""),
-      created_at: admin.firestore.FieldValue.serverTimestamp(),
-      updated_at: admin.firestore.FieldValue.serverTimestamp(),
+      updated_at: FieldValue.serverTimestamp(),
       last_event_type: eventType,
       last_client_ts: clientTs,
-    }, {merge: true});
+    };
+    if (!sessionSnapshot.exists) {
+      sessionData.created_at = FieldValue.serverTimestamp();
+    }
+    await sessionRef.set(sessionData, {merge: true});
 
     await eventRef.set({
       type: eventType,
       ts: clientTs,
       payload,
-      created_at: admin.firestore.FieldValue.serverTimestamp(),
+      created_at: FieldValue.serverTimestamp(),
     });
 
     res.status(200).json({
