@@ -278,7 +278,6 @@ exports.apiLog = onRequest(async (req, res) => {
       session_id: sessionId,
       build_version: sanitizeText(body.build_version, ""),
       platform: sanitizeText(body.platform, "web"),
-      user_agent: sanitizeText(body.user_agent, ""),
       updated_at: FieldValue.serverTimestamp(),
       last_event_type: eventType,
       last_client_ts: clientTs,
