@@ -4,6 +4,7 @@ signal utterance_generated(request_id: String, utterance: String, meta: Dictiona
 signal directed_utterance_generated(request_id: String, utterance: String, meta: Dictionary)
 
 const OPENAI_URL := "https://api.openai.com/v1/chat/completions"
+const API_DIALOGUE_URL := "/api/dialogue"
 const DEFAULT_MODEL := "gpt-4o-mini"
 const KEY_FILE_PATH := "res://secrets/openai_api_key.txt"
 
@@ -11,13 +12,15 @@ var _api_key: String = ""
 
 func _ready() -> void:
 	_api_key = _load_api_key()
-	if _api_key == "":
+	if _use_backend_api():
+		print("[DialogueManager] Ready. Using backend dialogue API.")
+	elif _api_key == "":
 		push_warning("[DialogueManager] OpenAI API key not found. Using template utterances.")
 	else:
 		print("[DialogueManager] Ready with API key from local secret source.")
 
 func has_api_key() -> bool:
-	return _api_key != ""
+	return _use_backend_api() or _api_key != ""
 
 func realize_help_utterance(request: Dictionary) -> void:
 	if request.is_empty():
@@ -44,6 +47,22 @@ func realize_help_utterance(request: Dictionary) -> void:
 	var urgency := str(intent.get("urgency_level", "medium"))
 	var escalation := int(request.get("escalation_count", 0))
 	var item := str(payload.get("item_needed", "item"))
+
+	if _use_backend_api():
+		_request_dialogue_via_backend(request_id, {
+			"kind": "help_utterance",
+			"request_id": request_id,
+			"fallback": fallback,
+			"model": _llm_model(),
+			"temperature": _llm_temperature(),
+			"strategy": strategy,
+			"urgency": urgency,
+			"escalation": escalation,
+			"mbti": mbti,
+			"item": item,
+			"request_type": request_type
+		}, false, fallback)
+		return
 
 	var system_prompt := "Write one short in-game delegation line from robot to player. Keep it natural, concrete, polite, and under 18 words. No quotes. No options."
 	var user_prompt := "request_type=%s strategy=%s urgency=%s escalation=%d mbti=%s item=%s fallback=%s" % [
@@ -107,6 +126,21 @@ func realize_directed_utterance(request: Dictionary) -> void:
 	var intent_type := str(request.get("intent_type", "directed_reply")).strip_edges()
 	var item_name := str(request.get("item_name", "")).strip_edges()
 	var context_note := str(request.get("context_note", "")).strip_edges()
+
+	if _use_backend_api():
+		_request_dialogue_via_backend(request_id, {
+			"kind": "directed_utterance",
+			"request_id": request_id,
+			"fallback": fallback,
+			"model": _llm_model(),
+			"temperature": _llm_temperature(),
+			"source_role": source_role,
+			"recipient_role": recipient_role,
+			"intent_type": intent_type,
+			"item_name": item_name,
+			"context_note": context_note
+		}, true, fallback)
+		return
 
 	var system_prompt := "Write one short in-game line of direct speech. Keep it natural, concrete, polite, and under 18 words. No quotes. No stage directions."
 	var user_prompt := "speaker=%s recipient=%s intent=%s item=%s context=%s fallback=%s" % [
@@ -240,6 +274,54 @@ func _on_directed_request_completed(_result: int, code: int, _headers: PackedStr
 		"model": _llm_model()
 	})
 
+func _request_dialogue_via_backend(request_id: String, body: Dictionary, directed: bool, fallback: String) -> void:
+	var http := HTTPRequest.new()
+	add_child(http)
+	http.request_completed.connect(_on_backend_dialogue_completed.bind(http, request_id, directed, fallback))
+	var err := http.request(API_DIALOGUE_URL, PackedStringArray([
+		"Content-Type: application/json"
+	]), HTTPClient.METHOD_POST, JSON.stringify(body))
+	if err != OK:
+		if is_instance_valid(http):
+			http.queue_free()
+		_emit_dialogue_fallback(request_id, directed, "request_error", fallback)
+
+func _on_backend_dialogue_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, request_id: String, directed: bool, fallback: String) -> void:
+	if is_instance_valid(http):
+		http.queue_free()
+
+	if code < 200 or code >= 300:
+		_emit_dialogue_fallback(request_id, directed, "http_error", fallback, code)
+		return
+
+	var top = JSON.parse_string(body.get_string_from_utf8())
+	if not (top is Dictionary):
+		_emit_dialogue_fallback(request_id, directed, "parse_error", fallback)
+		return
+
+	var utterance := str(top.get("utterance", "")).strip_edges()
+	var meta: Dictionary = top.get("meta", {})
+	if utterance == "":
+		_emit_dialogue_fallback(request_id, directed, str(meta.get("status", "empty_content")), fallback)
+		return
+	if directed:
+		directed_utterance_generated.emit(request_id, utterance, meta)
+	else:
+		utterance_generated.emit(request_id, utterance, meta)
+
+func _emit_dialogue_fallback(request_id: String, directed: bool, status: String, fallback: String, http_code: int = -1) -> void:
+	var meta := {
+		"provider": "fallback",
+		"status": status,
+		"fallback": fallback
+	}
+	if http_code >= 0:
+		meta["http_code"] = http_code
+	if directed:
+		directed_utterance_generated.emit(request_id, fallback, meta)
+	else:
+		utterance_generated.emit(request_id, fallback, meta)
+
 func _load_api_key() -> String:
 	var env_key := OS.get_environment("OPENAI_API_KEY").strip_edges()
 	if env_key != "":
@@ -261,6 +343,9 @@ func _is_llm_enabled() -> bool:
 	if exp and exp.has_method("is_llm_utterance_enabled"):
 		return bool(exp.is_llm_utterance_enabled())
 	return true
+
+func _use_backend_api() -> bool:
+	return OS.has_feature("web")
 
 func _llm_model() -> String:
 	var exp = _experiment_config()
