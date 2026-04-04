@@ -2,3 +2,11 @@
 .godot/
 /android/
 secrets/
+
+.DS_Store
+
+
+dist/
+firestore-debug.log
+firebase-debug.log
+firebase-debug.*.log

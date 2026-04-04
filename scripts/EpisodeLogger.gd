@@ -22,17 +22,23 @@ const REPLAY_DIR = "user://data/replay/"
 const REPLAY_JSONL_FILE = "user://data/replay/replay_events.jsonl"
 
 var _help_event_seq: int = 0
+var _session_id: String = ""
+const API_LOG_URL := "/api/log"
 
 signal episode_started(episode_id: String)
 signal episode_ended(episode_data: Dictionary)
 
 func _ready() -> void:
-	# Ensure data directory exists
-	DirAccess.make_dir_recursive_absolute(DATA_DIR.replace("user://", OS.get_user_data_dir() + "/"))
-	DirAccess.make_dir_recursive_absolute(HELP_DIR.replace("user://", OS.get_user_data_dir() + "/"))
-	DirAccess.make_dir_recursive_absolute(REPLAY_DIR.replace("user://", OS.get_user_data_dir() + "/"))
-	_ensure_csv_header()
-	print("[EpisodeLogger] Ready. Data dir: ", ProjectSettings.globalize_path(DATA_DIR))
+	_session_id = _generate_session_id()
+	if _should_write_local_files():
+		# Ensure data directory exists
+		DirAccess.make_dir_recursive_absolute(DATA_DIR.replace("user://", OS.get_user_data_dir() + "/"))
+		DirAccess.make_dir_recursive_absolute(HELP_DIR.replace("user://", OS.get_user_data_dir() + "/"))
+		DirAccess.make_dir_recursive_absolute(REPLAY_DIR.replace("user://", OS.get_user_data_dir() + "/"))
+		_ensure_csv_header()
+		print("[EpisodeLogger] Ready. Data dir: ", ProjectSettings.globalize_path(DATA_DIR))
+	else:
+		print("[EpisodeLogger] Ready. Web mode uses remote logging only.")
 
 func _ensure_csv_header() -> void:
 	var csv_path = ProjectSettings.globalize_path(CSV_FILE)
@@ -97,6 +103,11 @@ func start_episode(food_item: String, customer_seat: String, customer_pos: Vecto
 	_episode_active = true
 	
 	log_event("episode_start", {
+		"food_item": food_item,
+		"customer_seat": customer_seat
+	})
+	_post_remote_log("episode_started", {
+		"episode_id": episode_id,
 		"food_item": food_item,
 		"customer_seat": customer_seat
 	})
@@ -169,9 +180,16 @@ func end_episode(success: bool, failure_reason: String = "") -> Dictionary:
 		"failure_reason": failure_reason
 	})
 	
-	# Save to files
-	_save_json()
-	_append_csv()
+	if _should_write_local_files():
+		_save_json()
+		_append_csv()
+	_post_remote_log("episode_ended", {
+		"episode_id": _current_episode.get("episode_id", ""),
+		"success": success,
+		"failure_reason": failure_reason,
+		"duration_ms": duration_ms,
+		"player_helped": bool(_current_episode.get("outcome", {}).get("player_helped", false))
+	})
 	
 	var result = _current_episode.duplicate(true)
 	
@@ -229,12 +247,24 @@ func log_help_request_event(event_type: String, request: Dictionary, extra: Dict
 		"extra": extra
 	}
 	_help_event_seq += 1
-	_append_jsonl(HELP_JSONL_FILE, record)
-	if _is_replay_logging_enabled():
+	if _should_write_local_files():
+		_append_jsonl(HELP_JSONL_FILE, record)
+	_post_remote_log("help_request_" + event_type, {
+		"request_id": record.get("request_id", ""),
+		"request_type": record.get("request_type", ""),
+		"status": record.get("status", ""),
+		"strategy": record.get("strategy", ""),
+		"response": record.get("response", ""),
+		"final_response": record.get("final_response", ""),
+		"resolution_path": record.get("final_path", ""),
+		"payload": record.get("payload", {}),
+		"extra": extra
+	})
+	if _should_write_local_files() and _is_replay_logging_enabled():
 		_append_jsonl(REPLAY_JSONL_FILE, record)
 
 func log_replay_event(event_type: String, data: Dictionary = {}) -> void:
-	if not _is_replay_logging_enabled():
+	if not _should_write_local_files() or not _is_replay_logging_enabled():
 		return
 	var record := {
 		"kind": "replay_event",
@@ -324,6 +354,49 @@ func _append_jsonl(file_path: String, record: Dictionary) -> void:
 	file.seek_end()
 	file.store_line(JSON.stringify(record))
 	file.close()
+
+func get_session_id() -> String:
+	return _session_id
+
+func _generate_session_id() -> String:
+	var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace("T", "").replace(" ", "")
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	return "sess_%s_%06d" % [stamp, rng.randi_range(0, 999999)]
+
+func _post_remote_log(event_type: String, payload: Dictionary = {}) -> void:
+	if not _should_post_remote_logs():
+		return
+	var http := HTTPRequest.new()
+	add_child(http)
+	http.request_completed.connect(_on_remote_log_completed.bind(http, event_type))
+	var body := {
+		"session_id": _session_id,
+		"type": event_type,
+		"ts": Time.get_ticks_msec(),
+		"platform": "web" if OS.has_feature("web") else OS.get_name().to_lower(),
+		"build_version": str(ProjectSettings.get_setting("application/config/version", "")),
+		"payload": payload
+	}
+	var err := http.request(API_LOG_URL, PackedStringArray([
+		"Content-Type: application/json"
+	]), HTTPClient.METHOD_POST, JSON.stringify(body))
+	if err != OK:
+		if is_instance_valid(http):
+			http.queue_free()
+		push_warning("[EpisodeLogger] Failed to queue remote log: %s" % event_type)
+
+func _on_remote_log_completed(_result: int, code: int, _headers: PackedStringArray, _body: PackedByteArray, http: HTTPRequest, event_type: String) -> void:
+	if is_instance_valid(http):
+		http.queue_free()
+	if code < 200 or code >= 300:
+		push_warning("[EpisodeLogger] Remote log failed (%s): %d" % [event_type, code])
+
+func _should_post_remote_logs() -> bool:
+	return OS.has_feature("web")
+
+func _should_write_local_files() -> bool:
+	return not OS.has_feature("web")
 
 func _experiment_config() -> Node:
 	return get_node_or_null("/root/ExperimentConfig")

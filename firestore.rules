@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Client-side Firestore access is not used in this project.
+    // All writes go through Cloud Functions using the Admin SDK.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
