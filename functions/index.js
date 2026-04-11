@@ -81,7 +81,7 @@ function buildDialoguePrompts(body) {
     const strategy = sanitizeText(body.strategy, "");
     const urgency = sanitizeText(body.urgency, "medium");
     const escalation = asNumber(body.escalation, 0);
-    const mbti = sanitizeText(body.mbti, "");
+    const personalityHint = sanitizeText(body.personality_hint, "");
     const item = sanitizeText(body.item, "item");
     const requestType = sanitizeText(body.request_type, "HANDOFF");
 
@@ -95,7 +95,7 @@ function buildDialoguePrompts(body) {
         `strategy=${strategy}`,
         `urgency=${urgency}`,
         `escalation=${escalation}`,
-        `mbti=${mbti}`,
+        `personality=${personalityHint}`,
         `item=${item}`,
         `fallback=${fallback}`,
       ].join(" "),

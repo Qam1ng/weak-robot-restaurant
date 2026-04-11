@@ -6,49 +6,41 @@
 script = ExtResource("1_hud_script")
 layer = 10
 
-[node name="MBTIPanel" type="PanelContainer" parent="."]
+[node name="SurveyPanel" type="PanelContainer" parent="."]
 offset_left = 280.0
 offset_top = 120.0
 offset_right = 1000.0
 offset_bottom = 560.0
 
-[node name="Margin" type="MarginContainer" parent="MBTIPanel"]
+[node name="Margin" type="MarginContainer" parent="SurveyPanel"]
 theme_override_constants/margin_left = 16
 theme_override_constants/margin_top = 16
 theme_override_constants/margin_right = 16
 theme_override_constants/margin_bottom = 16
 
-[node name="VBox" type="VBoxContainer" parent="MBTIPanel/Margin"]
+[node name="VBox" type="VBoxContainer" parent="SurveyPanel/Margin"]
 theme_override_constants/separation = 12
 
-[node name="Title" type="Label" parent="MBTIPanel/Margin/VBox"]
-text = "Pre-game MBTI Survey"
+[node name="Title" type="Label" parent="SurveyPanel/Margin/VBox"]
+text = "Pre-game Personality Survey (TIPI)"
 
-[node name="Progress" type="Label" parent="MBTIPanel/Margin/VBox"]
-text = "Question 1 / 8"
+[node name="Progress" type="Label" parent="SurveyPanel/Margin/VBox"]
+text = "Question 1 / 10"
 
-[node name="Question" type="Label" parent="MBTIPanel/Margin/VBox"]
+[node name="Question" type="Label" parent="SurveyPanel/Margin/VBox"]
 custom_minimum_size = Vector2(660, 90)
 autowrap_mode = 2
 text = "Question text"
 
-[node name="Options" type="HBoxContainer" parent="MBTIPanel/Margin/VBox"]
-theme_override_constants/separation = 10
+[node name="Options" type="HBoxContainer" parent="SurveyPanel/Margin/VBox"]
+theme_override_constants/separation = 6
 
-[node name="OptionA" type="Button" parent="MBTIPanel/Margin/VBox/Options"]
-custom_minimum_size = Vector2(320, 56)
-text = "Option A"
-
-[node name="OptionB" type="Button" parent="MBTIPanel/Margin/VBox/Options"]
-custom_minimum_size = Vector2(320, 56)
-text = "Option B"
-
-[node name="Result" type="Label" parent="MBTIPanel/Margin/VBox"]
+[node name="Result" type="Label" parent="SurveyPanel/Margin/VBox"]
 visible = false
 autowrap_mode = 2
 text = "Result"
 
-[node name="Confirm" type="Button" parent="MBTIPanel/Margin/VBox"]
+[node name="Confirm" type="Button" parent="SurveyPanel/Margin/VBox"]
 visible = false
 custom_minimum_size = Vector2(240, 52)
 text = "Start Shift"

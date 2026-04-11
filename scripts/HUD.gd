@@ -2,13 +2,13 @@ extends CanvasLayer
 
 signal kitchen_pick_selected(item_name: String)
 
-@onready var mbti_panel: PanelContainer = $MBTIPanel
-@onready var mbti_progress: Label = $MBTIPanel/Margin/VBox/Progress
-@onready var mbti_question: Label = $MBTIPanel/Margin/VBox/Question
-@onready var mbti_option_a: Button = $MBTIPanel/Margin/VBox/Options/OptionA
-@onready var mbti_option_b: Button = $MBTIPanel/Margin/VBox/Options/OptionB
-@onready var mbti_result: Label = $MBTIPanel/Margin/VBox/Result
-@onready var mbti_confirm: Button = $MBTIPanel/Margin/VBox/Confirm
+@onready var survey_panel: PanelContainer = $SurveyPanel
+@onready var survey_title: Label = $SurveyPanel/Margin/VBox/Title
+@onready var survey_progress: Label = $SurveyPanel/Margin/VBox/Progress
+@onready var survey_question: Label = $SurveyPanel/Margin/VBox/Question
+@onready var survey_options: HBoxContainer = $SurveyPanel/Margin/VBox/Options
+@onready var survey_result: Label = $SurveyPanel/Margin/VBox/Result
+@onready var survey_confirm: Button = $SurveyPanel/Margin/VBox/Confirm
 
 var inventory_panel: PanelContainer
 var inventory_list: VBoxContainer
@@ -41,18 +41,10 @@ var _shown_help_system_notice_by_request: Dictionary = {}
 var _auto_open_in_flight: Dictionary = {}
 var _popup_mode: String = "none"
 var _kitchen_pick_options: Array[String] = []
-var _mbti_questions: Array[Dictionary] = []
-var _mbti_index: int = 0
-var _mbti_scores := {
-	"E": 0,
-	"I": 0,
-	"S": 0,
-	"N": 0,
-	"T": 0,
-	"F": 0,
-	"J": 0,
-	"P": 0
-}
+var _tipi_questions: Array[Dictionary] = []
+var _tipi_index: int = 0
+var _tipi_responses := {}
+var _survey_scale_buttons: Array[Button] = []
 const FEED_COLOR_DIALOGUE := Color(0.84, 0.95, 1.0, 1.0)
 const HANDOFF_PROMPT_DISTANCE := 120.0
 const POPUP_MODE_NONE := "none"
@@ -79,21 +71,20 @@ const SCORE_PER_FAILURE := -6
 const SCORE_PER_DRINK_SUCCESS := 1
 const SCORE_PER_DRINK_FAILURE := -3
 const SCORE_FAIL_THRESHOLD := -30
-const MBTI_PANEL_BASE_SIZE := Vector2(720.0, 440.0)
-const MBTI_PANEL_MARGIN := 24.0
-const MBTI_PANEL_OFFSET_X := 23.0
+const SURVEY_PANEL_BASE_SIZE := Vector2(720.0, 440.0)
+const SURVEY_PANEL_MARGIN := 24.0
+const SURVEY_PANEL_OFFSET_X := 23.0
 var _score_game_over: bool = false
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	add_to_group("hud")
 
-	if mbti_panel:
-		mbti_panel.hide()
+	if survey_panel:
+		survey_panel.hide()
 
-	mbti_option_a.pressed.connect(func(): _choose_mbti("A"))
-	mbti_option_b.pressed.connect(func(): _choose_mbti("B"))
-	mbti_confirm.pressed.connect(_finish_mbti_and_start)
+	_setup_survey_scale_buttons()
+	survey_confirm.pressed.connect(_finish_survey_and_start)
 
 	_setup_inventory_ui()
 	_setup_dialogue_feed_ui()
@@ -105,7 +96,7 @@ func _ready() -> void:
 	_connect_robot_inventory()
 	_connect_player_inventory()
 	_connect_score_signals()
-	call_deferred("_setup_mbti_survey")
+	call_deferred("_setup_tipi_survey")
 
 func _connect_viewport_resize() -> void:
 	var vp := get_viewport()
@@ -113,14 +104,14 @@ func _connect_viewport_resize() -> void:
 		return
 	if not vp.size_changed.is_connected(_on_viewport_size_changed):
 		vp.size_changed.connect(_on_viewport_size_changed)
-	_recenter_mbti_panel()
+	_recenter_survey_panel()
 
 func _on_viewport_size_changed() -> void:
-	_recenter_mbti_panel()
+	_recenter_survey_panel()
 	_update_gameplay_panel_layout()
 
-func _recenter_mbti_panel() -> void:
-	if mbti_panel == null:
+func _recenter_survey_panel() -> void:
+	if survey_panel == null:
 		return
 	var vp := get_viewport()
 	if vp == null:
@@ -128,11 +119,11 @@ func _recenter_mbti_panel() -> void:
 	var view_size: Vector2 = vp.get_visible_rect().size
 	if view_size.x <= 0.0 or view_size.y <= 0.0:
 		return
-	var target_w := clampf(MBTI_PANEL_BASE_SIZE.x, 360.0, maxf(360.0, view_size.x - MBTI_PANEL_MARGIN * 2.0))
-	var target_h := clampf(MBTI_PANEL_BASE_SIZE.y, 260.0, maxf(260.0, view_size.y - MBTI_PANEL_MARGIN * 2.0))
-	mbti_panel.custom_minimum_size = Vector2(target_w, target_h)
-	mbti_panel.size = Vector2(target_w, target_h)
-	mbti_panel.position = (view_size - mbti_panel.size) * 0.5 + Vector2(MBTI_PANEL_OFFSET_X, 0.0)
+	var target_w := clampf(SURVEY_PANEL_BASE_SIZE.x, 360.0, maxf(360.0, view_size.x - SURVEY_PANEL_MARGIN * 2.0))
+	var target_h := clampf(SURVEY_PANEL_BASE_SIZE.y, 260.0, maxf(260.0, view_size.y - SURVEY_PANEL_MARGIN * 2.0))
+	survey_panel.custom_minimum_size = Vector2(target_w, target_h)
+	survey_panel.size = Vector2(target_w, target_h)
+	survey_panel.position = (view_size - survey_panel.size) * 0.5 + Vector2(SURVEY_PANEL_OFFSET_X, 0.0)
 
 func _connect_help_signals() -> void:
 	var help_mgr = get_node_or_null("/root/HelpRequestManager")
@@ -1066,70 +1057,56 @@ func _reset_help_buttons() -> void:
 	if player_dialogue_overlay_later_btn:
 		player_dialogue_overlay_later_btn.visible = true
 
-func _setup_mbti_survey() -> void:
-	_mbti_questions = [
-		{
-			"text": "At shift start, you are more likely to:",
-			"A": {"label": "Talk with teammates first", "trait": "E"},
-			"B": {"label": "Settle in quietly first", "trait": "I"}
-		},
-		{
-			"text": "When helping the robot, you trust:",
-			"A": {"label": "Concrete details and exact steps", "trait": "S"},
-			"B": {"label": "Big-picture intent and patterns", "trait": "N"}
-		},
-		{
-			"text": "If service pressure rises, you decide mainly by:",
-			"A": {"label": "Efficiency and objective impact", "trait": "T"},
-			"B": {"label": "How everyone feels and fairness", "trait": "F"}
-		},
-		{
-			"text": "Your work style is usually:",
-			"A": {"label": "Plan first, then execute", "trait": "J"},
-			"B": {"label": "Adapt as things happen", "trait": "P"}
-		},
-		{
-			"text": "In crowded periods, you prefer to:",
-			"A": {"label": "Coordinate actively with others", "trait": "E"},
-			"B": {"label": "Focus independently", "trait": "I"}
-		},
-		{
-			"text": "For a new situation, you first look for:",
-			"A": {"label": "Known examples and practical cues", "trait": "S"},
-			"B": {"label": "Possible alternatives and ideas", "trait": "N"}
-		},
-		{
-			"text": "When robot asks for help, what persuades you more?",
-			"A": {"label": "Strong evidence it is necessary", "trait": "T"},
-			"B": {"label": "A respectful and warm request", "trait": "F"}
-		},
-		{
-			"text": "During a long shift, you feel better with:",
-			"A": {"label": "Clear schedule and closure", "trait": "J"},
-			"B": {"label": "Flexible pace and options", "trait": "P"}
-		}
+func _setup_survey_scale_buttons() -> void:
+	if survey_options == null:
+		return
+	for child in survey_options.get_children():
+		child.queue_free()
+	_survey_scale_buttons.clear()
+	for i in range(1, 8):
+		var button := Button.new()
+		button.custom_minimum_size = Vector2(84, 56)
+		button.text = str(i)
+		button.pressed.connect(_on_tipi_scale_pressed.bind(i))
+		survey_options.add_child(button)
+		_survey_scale_buttons.append(button)
+
+func _on_tipi_scale_pressed(response_value: int) -> void:
+	_choose_tipi(response_value)
+
+func _setup_tipi_survey() -> void:
+	_tipi_questions = [
+		{"item": 1, "text": "I see myself as: Extraverted, enthusiastic."},
+		{"item": 2, "text": "I see myself as: Critical, quarrelsome."},
+		{"item": 3, "text": "I see myself as: Dependable, self-disciplined."},
+		{"item": 4, "text": "I see myself as: Anxious, easily upset."},
+		{"item": 5, "text": "I see myself as: Open to new experiences, complex."},
+		{"item": 6, "text": "I see myself as: Reserved, quiet."},
+		{"item": 7, "text": "I see myself as: Sympathetic, warm."},
+		{"item": 8, "text": "I see myself as: Disorganized, careless."},
+		{"item": 9, "text": "I see myself as: Calm, emotionally stable."},
+		{"item": 10, "text": "I see myself as: Conventional, uncreative."},
 	]
 
 	var profile = get_node_or_null("/root/PlayerProfile")
-	if profile and profile.has_method("has_mbti") and bool(profile.has_mbti()):
+	if profile and profile.has_method("has_tipi") and bool(profile.has_tipi()):
 		_set_gameplay_panels_visible(true)
 		return
 
-	# Let player camera settle before pausing, to avoid post-survey camera jump.
-	await _stabilize_player_camera_before_mbti()
+	await _stabilize_player_camera_before_survey()
 
-	_mbti_index = 0
-	for k in _mbti_scores.keys():
-		_mbti_scores[k] = 0
+	_tipi_index = 0
+	_tipi_responses.clear()
 
 	get_tree().paused = true
-	_recenter_mbti_panel()
-	mbti_panel.show()
-	mbti_result.hide()
-	mbti_confirm.hide()
-	mbti_option_a.show()
-	mbti_option_b.show()
-	_refresh_mbti_question()
+	_recenter_survey_panel()
+	survey_title.text = "Pre-game Personality Survey (TIPI)"
+	survey_panel.show()
+	survey_result.hide()
+	survey_confirm.hide()
+	for button in _survey_scale_buttons:
+		button.show()
+	_refresh_tipi_question()
 
 func _focus_player_camera_now() -> void:
 	var players = get_tree().get_nodes_in_group("player")
@@ -1145,7 +1122,7 @@ func _focus_player_camera_now() -> void:
 	camera.make_current()
 	camera.force_update_scroll()
 
-func _stabilize_player_camera_before_mbti() -> void:
+func _stabilize_player_camera_before_survey() -> void:
 	# Wait for a few frames until player camera is current to avoid startup top-edge framing.
 	for _i in range(6):
 		_focus_player_camera_now()
@@ -1157,63 +1134,52 @@ func _stabilize_player_camera_before_mbti() -> void:
 	_focus_player_camera_now()
 	await get_tree().process_frame
 
-func _refresh_mbti_question() -> void:
-	if _mbti_index < 0 or _mbti_index >= _mbti_questions.size():
+func _refresh_tipi_question() -> void:
+	if _tipi_index < 0 or _tipi_index >= _tipi_questions.size():
 		return
-	var q: Dictionary = _mbti_questions[_mbti_index]
-	mbti_progress.text = "Question %d / %d" % [_mbti_index + 1, _mbti_questions.size()]
-	mbti_question.text = str(q.get("text", ""))
-	var a: Dictionary = q.get("A", {})
-	var b: Dictionary = q.get("B", {})
-	mbti_option_a.text = str(a.get("label", "Option A"))
-	mbti_option_b.text = str(b.get("label", "Option B"))
+	var q: Dictionary = _tipi_questions[_tipi_index]
+	survey_progress.text = "Question %d / %d   |   1 = disagree strongly, 7 = agree strongly" % [_tipi_index + 1, _tipi_questions.size()]
+	survey_question.text = str(q.get("text", ""))
 
-func _choose_mbti(option_key: String) -> void:
-	if _mbti_index < 0 or _mbti_index >= _mbti_questions.size():
+func _choose_tipi(response_value: int) -> void:
+	if _tipi_index < 0 or _tipi_index >= _tipi_questions.size():
 		return
-	var q: Dictionary = _mbti_questions[_mbti_index]
-	var option: Dictionary = q.get(option_key, {})
-	var trait_key := str(option.get("trait", ""))
-	if trait_key != "" and _mbti_scores.has(trait_key):
-		_mbti_scores[trait_key] = int(_mbti_scores[trait_key]) + 1
-	_mbti_index += 1
+	var q: Dictionary = _tipi_questions[_tipi_index]
+	var item_index := int(q.get("item", 0))
+	if item_index > 0:
+		_tipi_responses[item_index] = clampi(response_value, 1, 7)
+	_tipi_index += 1
 
-	if _mbti_index >= _mbti_questions.size():
-		_show_mbti_result()
+	if _tipi_index >= _tipi_questions.size():
+		_show_tipi_result()
 	else:
-		_refresh_mbti_question()
+		_refresh_tipi_question()
 
-func _show_mbti_result() -> void:
-	var mbti = _compute_mbti_type()
+func _show_tipi_result() -> void:
 	var profile = get_node_or_null("/root/PlayerProfile")
-	if profile and profile.has_method("set_mbti"):
-		profile.set_mbti(mbti, _mbti_scores.duplicate(true), _mbti_questions.size())
+	if profile and profile.has_method("set_tipi"):
+		profile.set_tipi(_tipi_responses.duplicate(true), _tipi_questions.size())
 
-	mbti_progress.text = "Survey Complete"
-	mbti_question.text = "Your MBTI result: %s" % mbti
-	mbti_result.text = "This profile is now used by the persuasion strategy engine."
-	mbti_result.show()
-	mbti_option_a.hide()
-	mbti_option_b.hide()
-	mbti_confirm.show()
+	var tipi_scores := {}
+	if profile and profile.has_method("get_profile"):
+		tipi_scores = profile.get_profile().get("tipi_scores", {})
 
-func _compute_mbti_type() -> String:
-	var ei := "I"
-	if int(_mbti_scores["E"]) >= int(_mbti_scores["I"]):
-		ei = "E"
-	var sn := "N"
-	if int(_mbti_scores["S"]) >= int(_mbti_scores["N"]):
-		sn = "S"
-	var tf := "F"
-	if int(_mbti_scores["T"]) >= int(_mbti_scores["F"]):
-		tf = "T"
-	var jp := "P"
-	if int(_mbti_scores["J"]) >= int(_mbti_scores["P"]):
-		jp = "J"
-	return ei + sn + tf + jp
+	survey_progress.text = "Survey Complete"
+	survey_question.text = "Your TIPI profile has been recorded."
+	survey_result.text = "O: %.1f   C: %.1f   E: %.1f   A: %.1f   N: %.1f\nThis profile now provides a small weighting signal for persuasion strategy selection." % [
+		float(tipi_scores.get("O", 4.0)),
+		float(tipi_scores.get("C", 4.0)),
+		float(tipi_scores.get("E", 4.0)),
+		float(tipi_scores.get("A", 4.0)),
+		float(tipi_scores.get("N", 4.0)),
+	]
+	survey_result.show()
+	for button in _survey_scale_buttons:
+		button.hide()
+	survey_confirm.show()
 
-func _finish_mbti_and_start() -> void:
-	mbti_panel.hide()
+func _finish_survey_and_start() -> void:
+	survey_panel.hide()
 	get_tree().paused = false
 	_set_gameplay_panels_visible(true)
 
@@ -1230,7 +1196,7 @@ func _set_gameplay_panels_visible(visible: bool) -> void:
 		player_dialogue_info_stack.visible = false
 
 func _auto_open_help_request(request: Dictionary) -> void:
-	if mbti_panel and mbti_panel.visible:
+	if survey_panel and survey_panel.visible:
 		return
 	if not _can_auto_open_request(request):
 		return
