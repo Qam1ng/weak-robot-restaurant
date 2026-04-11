@@ -19,28 +19,50 @@ theme_override_constants/margin_right = 16
 theme_override_constants/margin_bottom = 16
 
 [node name="VBox" type="VBoxContainer" parent="SurveyPanel/Margin"]
-theme_override_constants/separation = 12
+theme_override_constants/separation = 4
+
+[node name="TopSpacer" type="Control" parent="SurveyPanel/Margin/VBox"]
+size_flags_vertical = 3
 
 [node name="Title" type="Label" parent="SurveyPanel/Margin/VBox"]
 text = "Pre-game Personality Survey (TIPI)"
+
+[node name="TitleSpacer" type="Control" parent="SurveyPanel/Margin/VBox"]
+custom_minimum_size = Vector2(0, 10)
 
 [node name="Progress" type="Label" parent="SurveyPanel/Margin/VBox"]
 text = "Question 1 / 10"
 
 [node name="Question" type="Label" parent="SurveyPanel/Margin/VBox"]
-custom_minimum_size = Vector2(660, 90)
+custom_minimum_size = Vector2(660, 56)
 autowrap_mode = 2
 text = "Question text"
+
+[node name="ScaleHint" type="Label" parent="SurveyPanel/Margin/VBox"]
+custom_minimum_size = Vector2(660, 68)
+autowrap_mode = 2
+text = "1 = disagree strongly\n4 = neutral\n7 = agree strongly"
+
+[node name="ScaleSpacer" type="Control" parent="SurveyPanel/Margin/VBox"]
+custom_minimum_size = Vector2(0, 16)
 
 [node name="Options" type="HBoxContainer" parent="SurveyPanel/Margin/VBox"]
 theme_override_constants/separation = 6
 
 [node name="Result" type="Label" parent="SurveyPanel/Margin/VBox"]
 visible = false
+custom_minimum_size = Vector2(660, 0)
 autowrap_mode = 2
 text = "Result"
+
+[node name="ResultSpacer" type="Control" parent="SurveyPanel/Margin/VBox"]
+visible = false
+custom_minimum_size = Vector2(0, 22)
 
 [node name="Confirm" type="Button" parent="SurveyPanel/Margin/VBox"]
 visible = false
 custom_minimum_size = Vector2(240, 52)
-text = "Start Shift"
+text = "Start Game"
+
+[node name="BottomSpacer" type="Control" parent="SurveyPanel/Margin/VBox"]
+size_flags_vertical = 3

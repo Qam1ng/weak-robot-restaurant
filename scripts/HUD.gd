@@ -3,11 +3,12 @@ extends CanvasLayer
 signal kitchen_pick_selected(item_name: String)
 
 @onready var survey_panel: PanelContainer = $SurveyPanel
-@onready var survey_title: Label = $SurveyPanel/Margin/VBox/Title
 @onready var survey_progress: Label = $SurveyPanel/Margin/VBox/Progress
 @onready var survey_question: Label = $SurveyPanel/Margin/VBox/Question
+@onready var survey_scale_hint: Label = $SurveyPanel/Margin/VBox/ScaleHint
 @onready var survey_options: HBoxContainer = $SurveyPanel/Margin/VBox/Options
 @onready var survey_result: Label = $SurveyPanel/Margin/VBox/Result
+@onready var survey_result_spacer: Control = $SurveyPanel/Margin/VBox/ResultSpacer
 @onready var survey_confirm: Button = $SurveyPanel/Margin/VBox/Confirm
 
 var inventory_panel: PanelContainer
@@ -71,7 +72,7 @@ const SCORE_PER_FAILURE := -6
 const SCORE_PER_DRINK_SUCCESS := 1
 const SCORE_PER_DRINK_FAILURE := -3
 const SCORE_FAIL_THRESHOLD := -30
-const SURVEY_PANEL_BASE_SIZE := Vector2(720.0, 440.0)
+const SURVEY_PANEL_BASE_SIZE := Vector2(720.0, 340.0)
 const SURVEY_PANEL_MARGIN := 24.0
 const SURVEY_PANEL_OFFSET_X := 23.0
 var _score_game_over: bool = false
@@ -1100,10 +1101,13 @@ func _setup_tipi_survey() -> void:
 
 	get_tree().paused = true
 	_recenter_survey_panel()
-	survey_title.text = "Pre-game Personality Survey (TIPI)"
 	survey_panel.show()
 	survey_result.hide()
+	if survey_result_spacer:
+		survey_result_spacer.hide()
 	survey_confirm.hide()
+	if survey_scale_hint:
+		survey_scale_hint.show()
 	for button in _survey_scale_buttons:
 		button.show()
 	_refresh_tipi_question()
@@ -1138,8 +1142,11 @@ func _refresh_tipi_question() -> void:
 	if _tipi_index < 0 or _tipi_index >= _tipi_questions.size():
 		return
 	var q: Dictionary = _tipi_questions[_tipi_index]
-	survey_progress.text = "Question %d / %d   |   1 = disagree strongly, 7 = agree strongly" % [_tipi_index + 1, _tipi_questions.size()]
+	survey_progress.text = "Question %d / %d" % [_tipi_index + 1, _tipi_questions.size()]
+	survey_question.custom_minimum_size = Vector2(660, 56)
 	survey_question.text = str(q.get("text", ""))
+	if survey_scale_hint:
+		survey_scale_hint.text = "1 = disagree strongly\n4 = neutral\n7 = agree strongly"
 
 func _choose_tipi(response_value: int) -> void:
 	if _tipi_index < 0 or _tipi_index >= _tipi_questions.size():
@@ -1165,8 +1172,11 @@ func _show_tipi_result() -> void:
 		tipi_scores = profile.get_profile().get("tipi_scores", {})
 
 	survey_progress.text = "Survey Complete"
-	survey_question.text = "Your TIPI profile has been recorded."
-	survey_result.text = "O: %.1f   C: %.1f   E: %.1f   A: %.1f   N: %.1f\nThis profile now provides a small weighting signal for persuasion strategy selection." % [
+	survey_question.custom_minimum_size = Vector2(660, 24)
+	survey_question.text = "Your TIPI profile has been recorded.\nThis profile will be taken into account in the robot's persuasion."
+	if survey_scale_hint:
+		survey_scale_hint.hide()
+	survey_result.text = "Openness (O): %.1f\nConscientiousness (C): %.1f\nExtraversion (E): %.1f\nAgreeableness (A): %.1f\nNeuroticism (N): %.1f" % [
 		float(tipi_scores.get("O", 4.0)),
 		float(tipi_scores.get("C", 4.0)),
 		float(tipi_scores.get("E", 4.0)),
@@ -1174,6 +1184,8 @@ func _show_tipi_result() -> void:
 		float(tipi_scores.get("N", 4.0)),
 	]
 	survey_result.show()
+	if survey_result_spacer:
+		survey_result_spacer.show()
 	for button in _survey_scale_buttons:
 		button.hide()
 	survey_confirm.show()
