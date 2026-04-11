@@ -424,8 +424,6 @@ func _log_help_event(event_type: String, req: Dictionary, extra: Dictionary = {}
 func _should_request_help_utterance(req: Dictionary) -> bool:
 	if req.is_empty():
 		return false
-	if str(req.get("strategy", "")) == "control_neutral":
-		return false
 	var dm = _dialogue_manager()
 	if dm == null:
 		return false
