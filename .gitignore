@@ -10,3 +10,4 @@ dist/
 firestore-debug.log
 firebase-debug.log
 firebase-debug.*.log
+.firebase/
