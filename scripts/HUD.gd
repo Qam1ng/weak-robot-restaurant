@@ -46,6 +46,9 @@ var _tipi_questions: Array[Dictionary] = []
 var _tipi_index: int = 0
 var _tipi_responses := {}
 var _survey_scale_buttons: Array[Button] = []
+var _player_task_notice_player: AudioStreamPlayer
+var _last_player_live_task_ids: Dictionary = {}
+var _player_task_notice_initialized: bool = false
 const FEED_COLOR_DIALOGUE := Color(0.84, 0.95, 1.0, 1.0)
 const HANDOFF_PROMPT_DISTANCE := 120.0
 const POPUP_MODE_NONE := "none"
@@ -90,6 +93,7 @@ func _ready() -> void:
 	_setup_inventory_ui()
 	_setup_dialogue_feed_ui()
 	_setup_player_dialogue_overlay_ui()
+	_setup_player_task_notice_audio()
 	_set_gameplay_panels_visible(false)
 	_connect_viewport_resize()
 	_connect_help_signals()
@@ -767,6 +771,7 @@ func _update_player_task_panel() -> void:
 
 	var board = get_node_or_null("/root/TaskBoard")
 	if board == null or not board.has_method("get_in_progress_tasks_for_assignee"):
+		_track_player_live_task_ids([])
 		var empty_fallback := Label.new()
 		empty_fallback.text = "(None)"
 		empty_fallback.add_theme_color_override("font_color", Color.GRAY)
@@ -774,6 +779,7 @@ func _update_player_task_panel() -> void:
 		return
 
 	var tasks: Array[Dictionary] = board.get_in_progress_tasks_for_assignee("player")
+	_track_player_live_task_ids(tasks)
 	if tasks.is_empty():
 		var empty := Label.new()
 		empty.text = "(None)"
@@ -799,6 +805,59 @@ func _update_player_task_panel() -> void:
 		if eta == "0s":
 			line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
 		player_tasks_box.add_child(line)
+
+func _setup_player_task_notice_audio() -> void:
+	_player_task_notice_player = AudioStreamPlayer.new()
+	_player_task_notice_player.name = "PlayerTaskNotice"
+	var generator := AudioStreamGenerator.new()
+	generator.mix_rate = 44100.0
+	generator.buffer_length = 0.25
+	_player_task_notice_player.stream = generator
+	_player_task_notice_player.bus = &"Master"
+	add_child(_player_task_notice_player)
+
+func _track_player_live_task_ids(tasks: Array[Dictionary]) -> void:
+	var current_ids := {}
+	for task in tasks:
+		var task_id := str(task.get("id", "")).strip_edges()
+		if task_id != "":
+			current_ids[task_id] = true
+
+	if not _player_task_notice_initialized:
+		_last_player_live_task_ids = current_ids
+		_player_task_notice_initialized = true
+		return
+
+	for task_id in current_ids.keys():
+		if not _last_player_live_task_ids.has(task_id):
+			_play_player_task_notice()
+			break
+
+	_last_player_live_task_ids = current_ids
+
+func _play_player_task_notice() -> void:
+	if _player_task_notice_player == null:
+		return
+	var stream := _player_task_notice_player.stream
+	if stream == null or not (stream is AudioStreamGenerator):
+		return
+
+	_player_task_notice_player.stop()
+	_player_task_notice_player.play()
+	var playback = _player_task_notice_player.get_stream_playback()
+	if playback == null or not (playback is AudioStreamGeneratorPlayback):
+		return
+
+	var generator := stream as AudioStreamGenerator
+	var gen_playback := playback as AudioStreamGeneratorPlayback
+	var mix_rate := float(generator.mix_rate)
+	var duration_sec := 0.12
+	var frame_count := int(duration_sec * mix_rate)
+	for i in range(frame_count):
+		var t := float(i) / mix_rate
+		var envelope := exp(-18.0 * t)
+		var sample := sin(TAU * 1046.5 * t) * 0.22 * envelope
+		gen_playback.push_frame(Vector2(sample, sample))
 
 func _extract_food_from_request(request: String) -> String:
 	var text := request.to_lower()
