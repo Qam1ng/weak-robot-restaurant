@@ -9,7 +9,7 @@ layer = 10
 [node name="SurveyPanel" type="PanelContainer" parent="."]
 offset_left = 280.0
 offset_top = 120.0
-offset_right = 1000.0
+offset_right = 860.0
 offset_bottom = 560.0
 
 [node name="Margin" type="MarginContainer" parent="SurveyPanel"]
@@ -19,39 +19,68 @@ theme_override_constants/margin_right = 16
 theme_override_constants/margin_bottom = 16
 
 [node name="VBox" type="VBoxContainer" parent="SurveyPanel/Margin"]
-theme_override_constants/separation = 4
+theme_override_constants/separation = 10
 
 [node name="TopSpacer" type="Control" parent="SurveyPanel/Margin/VBox"]
 size_flags_vertical = 3
 
 [node name="Title" type="Label" parent="SurveyPanel/Margin/VBox"]
+horizontal_alignment = 1
 text = "Pre-game Personality Survey (TIPI)"
 
 [node name="TitleSpacer" type="Control" parent="SurveyPanel/Margin/VBox"]
 custom_minimum_size = Vector2(0, 10)
 
-[node name="Progress" type="Label" parent="SurveyPanel/Margin/VBox"]
-text = "Question 1 / 10"
+[node name="QuestionTitle" type="RichTextLabel" parent="SurveyPanel/Margin/VBox"]
+custom_minimum_size = Vector2(532, 24)
+bbcode_enabled = true
+fit_content = true
+scroll_active = false
+selection_enabled = false
+text = "[b]Question[/b]"
 
 [node name="Question" type="Label" parent="SurveyPanel/Margin/VBox"]
-custom_minimum_size = Vector2(660, 56)
+custom_minimum_size = Vector2(532, 48)
 autowrap_mode = 2
 text = "Question text"
 
+[node name="ScaleTitle" type="RichTextLabel" parent="SurveyPanel/Margin/VBox"]
+custom_minimum_size = Vector2(532, 24)
+bbcode_enabled = true
+fit_content = true
+scroll_active = false
+selection_enabled = false
+text = "[b]Scale Guide[/b]"
+
 [node name="ScaleHint" type="Label" parent="SurveyPanel/Margin/VBox"]
-custom_minimum_size = Vector2(660, 68)
+custom_minimum_size = Vector2(532, 60)
 autowrap_mode = 2
 text = "1 = disagree strongly\n4 = neutral\n7 = agree strongly"
 
 [node name="ScaleSpacer" type="Control" parent="SurveyPanel/Margin/VBox"]
-custom_minimum_size = Vector2(0, 16)
+custom_minimum_size = Vector2(0, 10)
 
 [node name="Options" type="HBoxContainer" parent="SurveyPanel/Margin/VBox"]
 theme_override_constants/separation = 6
 
-[node name="Result" type="Label" parent="SurveyPanel/Margin/VBox"]
+[node name="ResultGroupSpacer" type="Control" parent="SurveyPanel/Margin/VBox"]
 visible = false
-custom_minimum_size = Vector2(660, 0)
+custom_minimum_size = Vector2(0, 12)
+
+[node name="ResultGroup" type="VBoxContainer" parent="SurveyPanel/Margin/VBox"]
+visible = false
+theme_override_constants/separation = 10
+
+[node name="ResultTitle" type="RichTextLabel" parent="SurveyPanel/Margin/VBox/ResultGroup"]
+custom_minimum_size = Vector2(532, 24)
+bbcode_enabled = true
+fit_content = true
+scroll_active = false
+selection_enabled = false
+text = "[b]TIPI Profile[/b]"
+
+[node name="Result" type="Label" parent="SurveyPanel/Margin/VBox/ResultGroup"]
+custom_minimum_size = Vector2(532, 0)
 autowrap_mode = 2
 text = "Result"
 

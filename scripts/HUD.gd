@@ -3,11 +3,16 @@ extends CanvasLayer
 signal kitchen_pick_selected(item_name: String)
 
 @onready var survey_panel: PanelContainer = $SurveyPanel
-@onready var survey_progress: Label = $SurveyPanel/Margin/VBox/Progress
+@onready var survey_question_title: RichTextLabel = $SurveyPanel/Margin/VBox/QuestionTitle
 @onready var survey_question: Label = $SurveyPanel/Margin/VBox/Question
+@onready var survey_scale_title: RichTextLabel = $SurveyPanel/Margin/VBox/ScaleTitle
 @onready var survey_scale_hint: Label = $SurveyPanel/Margin/VBox/ScaleHint
+@onready var survey_scale_spacer: Control = $SurveyPanel/Margin/VBox/ScaleSpacer
 @onready var survey_options: HBoxContainer = $SurveyPanel/Margin/VBox/Options
-@onready var survey_result: Label = $SurveyPanel/Margin/VBox/Result
+@onready var survey_result_group_spacer: Control = $SurveyPanel/Margin/VBox/ResultGroupSpacer
+@onready var survey_result_group: VBoxContainer = $SurveyPanel/Margin/VBox/ResultGroup
+@onready var survey_result_title: RichTextLabel = $SurveyPanel/Margin/VBox/ResultGroup/ResultTitle
+@onready var survey_result: Label = $SurveyPanel/Margin/VBox/ResultGroup/Result
 @onready var survey_result_spacer: Control = $SurveyPanel/Margin/VBox/ResultSpacer
 @onready var survey_confirm: Button = $SurveyPanel/Margin/VBox/Confirm
 
@@ -26,6 +31,11 @@ var customer_items_box: VBoxContainer
 var dialogue_panel: PanelContainer
 var dialogue_title: Label
 var dialogue_log: RichTextLabel
+var tutorial_panel: PanelContainer
+var tutorial_body: RichTextLabel
+var tutorial_start_button: Button
+var tutorial_close_button: Button
+var tutorial_toggle_button: Button
 var player_dialogue_overlay: PanelContainer
 var player_dialogue_overlay_label: RichTextLabel
 var help_prompt_stack: VBoxContainer
@@ -56,9 +66,13 @@ const POPUP_MODE_KITCHEN_PICK := "kitchen_pick"
 const POPUP_MODE_GAME_OVER := "game_over"
 const CUSTOMER_TAB_LIVE := "live"
 const CUSTOMER_TAB_HISTORY := "history"
-const LEFT_PANEL_GAP_Y := 16.0
 const SIDE_PANEL_MARGIN := 20.0
-const TOP_PANEL_Y := 60.0
+const GAMEPLAY_REFERENCE_HEIGHT := 720.0
+const GAMEPLAY_TOP_OFFSET := -60.0
+const GAMEPLAY_BAND_WIDTH := 760.0
+const GAMEPLAY_SIDE_GAP := 24.0
+const SYSTEM_PANEL_X_OFFSET := 40.0
+const SYSTEM_PANEL_WIDTH_REDUCTION := 28.0
 const PLAYER_DIALOGUE_OVERLAY_Y := 84.0
 const PLAYER_DIALOGUE_OVERLAY_WIDTH := 520.0
 const PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT := 72.0
@@ -66,6 +80,10 @@ const PLAYER_DIALOGUE_OVERLAY_SHOW_SEC := 5.0
 const PLAYER_DIALOGUE_STACK_GAP := 10.0
 const HELP_PROMPT_MAX_STACK := 2
 const DIALOGUE_PANEL_WIDTH := 340.0
+const TUTORIAL_PANEL_WIDTH := 620.0
+const TUTORIAL_PANEL_MIN_HEIGHT := 420.0
+const TUTORIAL_TOGGLE_SIZE := 44.0
+const TUTORIAL_TEXT := "[b]Controls[/b]\nWASD / Arrow Keys: move\nE: interact (take orders, open the cabinet, deliver items)\n\n[b]Goal[/b]\nServe customers before the deadline\n\n[b]Robot Handoffs[/b]\nThe robot may hand off tasks when it is overloaded, running out of time, charging, stuck, or carrying a full backpack.\n\n[b]Player Reminders[/b]\nCheck your assigned tasks\nRespond to robot handoff popups (notice how the robot asks for help)"
 var _customer_tab: String = CUSTOMER_TAB_LIVE
 var _score: int = 0
 var _success_count: int = 0
@@ -75,10 +93,13 @@ const SCORE_PER_FAILURE := -6
 const SCORE_PER_DRINK_SUCCESS := 1
 const SCORE_PER_DRINK_FAILURE := -3
 const SCORE_FAIL_THRESHOLD := -30
-const SURVEY_PANEL_BASE_SIZE := Vector2(720.0, 340.0)
+const SURVEY_PANEL_BASE_SIZE := Vector2(580.0, 300.0)
 const SURVEY_PANEL_MARGIN := 24.0
-const SURVEY_PANEL_OFFSET_X := 23.0
+const SURVEY_PANEL_OFFSET_X := 20.0
+const SURVEY_QUESTION_Y_OFFSET := -34.0
+const SURVEY_RESULT_Y_OFFSET := -20.0
 var _score_game_over: bool = false
+var _tutorial_started: bool = false
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -93,6 +114,7 @@ func _ready() -> void:
 	_setup_inventory_ui()
 	_setup_dialogue_feed_ui()
 	_setup_player_dialogue_overlay_ui()
+	_setup_tutorial_ui()
 	_setup_player_task_notice_audio()
 	_set_gameplay_panels_visible(false)
 	_connect_viewport_resize()
@@ -128,7 +150,10 @@ func _recenter_survey_panel() -> void:
 	var target_h := clampf(SURVEY_PANEL_BASE_SIZE.y, 260.0, maxf(260.0, view_size.y - SURVEY_PANEL_MARGIN * 2.0))
 	survey_panel.custom_minimum_size = Vector2(target_w, target_h)
 	survey_panel.size = Vector2(target_w, target_h)
-	survey_panel.position = (view_size - survey_panel.size) * 0.5 + Vector2(SURVEY_PANEL_OFFSET_X, 0.0)
+	var survey_y_offset := SURVEY_QUESTION_Y_OFFSET
+	if survey_result != null and survey_result.visible:
+		survey_y_offset = SURVEY_RESULT_Y_OFFSET
+	survey_panel.position = (view_size - survey_panel.size) * 0.5 + Vector2(SURVEY_PANEL_OFFSET_X, survey_y_offset)
 
 func _connect_help_signals() -> void:
 	var help_mgr = get_node_or_null("/root/HelpRequestManager")
@@ -171,7 +196,7 @@ func _setup_inventory_ui() -> void:
 	inventory_panel = PanelContainer.new()
 	inventory_panel.name = "InventoryPanel"
 	add_child(inventory_panel)
-	inventory_panel.position = Vector2(SIDE_PANEL_MARGIN, TOP_PANEL_Y)
+	inventory_panel.position = Vector2(SIDE_PANEL_MARGIN, 0.0)
 
 	var style = StyleBoxFlat.new()
 	style.bg_color = Color(0, 0, 0, 0.5)
@@ -185,8 +210,9 @@ func _setup_inventory_ui() -> void:
 	inventory_panel.add_child(inventory_list)
 
 	var title = Label.new()
-	title.text = "INVENTORY"
-	title.add_theme_color_override("font_color", Color.YELLOW)
+	title.text = "SYSTEM"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_color_override("font_color", Color(0.75, 0.95, 1.0, 1.0))
 	inventory_list.add_child(title)
 
 	score_label = Label.new()
@@ -269,14 +295,14 @@ func _setup_inventory_ui() -> void:
 	customer_items_box = VBoxContainer.new()
 	inventory_list.add_child(customer_items_box)
 
-	_left_panel_width = maxf(250.0, inventory_panel.get_combined_minimum_size().x + 26.0)
+	_left_panel_width = maxf(216.0, inventory_panel.get_combined_minimum_size().x + 6.0)
 	inventory_panel.custom_minimum_size = Vector2(_left_panel_width, 0.0)
 
 func _setup_dialogue_feed_ui() -> void:
 	dialogue_panel = PanelContainer.new()
 	dialogue_panel.name = "DialogueFeedPanel"
 	add_child(dialogue_panel)
-	dialogue_panel.position = Vector2(SIDE_PANEL_MARGIN, TOP_PANEL_Y)
+	dialogue_panel.position = Vector2(SIDE_PANEL_MARGIN, 0.0)
 	dialogue_panel.custom_minimum_size = Vector2(maxf(DIALOGUE_PANEL_WIDTH, _left_panel_width), 210)
 
 	var style = StyleBoxFlat.new()
@@ -292,6 +318,7 @@ func _setup_dialogue_feed_ui() -> void:
 
 	dialogue_title = Label.new()
 	dialogue_title.text = "DIALOGUE"
+	dialogue_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	dialogue_title.add_theme_color_override("font_color", Color(0.75, 0.95, 1.0, 1.0))
 	vbox.add_child(dialogue_title)
 
@@ -468,10 +495,7 @@ func _on_robot_inventory_changed(items: Array) -> void:
 	robot_items_box.add_child(holding)
 
 	if items.is_empty():
-		var l = Label.new()
-		l.text = "(Empty)"
-		l.add_theme_color_override("font_color", Color.GRAY)
-		robot_items_box.add_child(l)
+		_add_blank_row(robot_items_box)
 	else:
 		for i in range(items.size()):
 			var item = items[i]
@@ -493,10 +517,7 @@ func _on_player_inventory_changed(items: Array) -> void:
 	player_items_box.add_child(holding)
 
 	if items.is_empty():
-		var l = Label.new()
-		l.text = "(Empty)"
-		l.add_theme_color_override("font_color", Color.GRAY)
-		player_items_box.add_child(l)
+		_add_blank_row(player_items_box)
 	else:
 		for i in range(items.size()):
 			var item = items[i]
@@ -521,12 +542,25 @@ func _update_gameplay_panel_layout() -> void:
 	var view_size := vp.get_visible_rect().size
 	if view_size.x <= 0.0 or view_size.y <= 0.0:
 		return
-	inventory_panel.position = Vector2(SIDE_PANEL_MARGIN, TOP_PANEL_Y)
-	var dialogue_w := maxf(_left_panel_width, dialogue_panel.custom_minimum_size.x)
-	dialogue_panel.position = Vector2(view_size.x - dialogue_w - SIDE_PANEL_MARGIN, TOP_PANEL_Y)
-	dialogue_panel.custom_minimum_size.x = maxf(DIALOGUE_PANEL_WIDTH, _left_panel_width)
-	var centered_x := (view_size.x - PLAYER_DIALOGUE_OVERLAY_WIDTH) * 0.5
-	var stack_y := PLAYER_DIALOGUE_OVERLAY_Y
+	var panel_w: float = maxf(_left_panel_width, DIALOGUE_PANEL_WIDTH)
+	var system_panel_w: float = maxf(200.0, panel_w - SYSTEM_PANEL_WIDTH_REDUCTION)
+	inventory_panel.custom_minimum_size.x = system_panel_w
+	dialogue_panel.custom_minimum_size.x = panel_w
+	var center_x: float = view_size.x * 0.5
+	var gameplay_top_y: float = maxf(0.0, (view_size.y - GAMEPLAY_REFERENCE_HEIGHT) * 0.5) + GAMEPLAY_TOP_OFFSET
+	var left_x: float = maxf(
+		SIDE_PANEL_MARGIN,
+		center_x - GAMEPLAY_BAND_WIDTH * 0.5 - GAMEPLAY_SIDE_GAP - panel_w
+	)
+	var dialogue_x: float = minf(
+		view_size.x - SIDE_PANEL_MARGIN - panel_w,
+		center_x + GAMEPLAY_BAND_WIDTH * 0.5 + GAMEPLAY_SIDE_GAP
+	)
+	var system_right_x: float = left_x + SYSTEM_PANEL_X_OFFSET + panel_w
+	inventory_panel.position = Vector2(system_right_x - system_panel_w, gameplay_top_y)
+	dialogue_panel.position = Vector2(dialogue_x, gameplay_top_y)
+	var centered_x: float = (view_size.x - PLAYER_DIALOGUE_OVERLAY_WIDTH) * 0.5
+	var stack_y: float = PLAYER_DIALOGUE_OVERLAY_Y
 	if help_prompt_stack:
 		help_prompt_stack.position = Vector2(centered_x, PLAYER_DIALOGUE_OVERLAY_Y)
 		help_prompt_stack.custom_minimum_size.x = PLAYER_DIALOGUE_OVERLAY_WIDTH
@@ -542,6 +576,19 @@ func _update_gameplay_panel_layout() -> void:
 	if player_dialogue_info_stack:
 		player_dialogue_info_stack.position = Vector2(centered_x, stack_y)
 		player_dialogue_info_stack.custom_minimum_size.x = PLAYER_DIALOGUE_OVERLAY_WIDTH
+	if tutorial_panel:
+		tutorial_panel.custom_minimum_size = Vector2(TUTORIAL_PANEL_WIDTH, TUTORIAL_PANEL_MIN_HEIGHT)
+		tutorial_panel.size = tutorial_panel.custom_minimum_size
+		tutorial_panel.position = Vector2((view_size.x - tutorial_panel.size.x) * 0.5, maxf(56.0, (view_size.y - tutorial_panel.size.y) * 0.5))
+	if tutorial_toggle_button:
+		tutorial_toggle_button.size = Vector2(TUTORIAL_TOGGLE_SIZE, TUTORIAL_TOGGLE_SIZE)
+		var panel_size := inventory_panel.size
+		if panel_size.x <= 0.0 or panel_size.y <= 0.0:
+			panel_size = inventory_panel.get_combined_minimum_size()
+		tutorial_toggle_button.position = Vector2(
+			inventory_panel.position.x + panel_size.x - TUTORIAL_TOGGLE_SIZE * 0.55 - 36.0,
+			inventory_panel.position.y - TUTORIAL_TOGGLE_SIZE * 0.2 + 20.0
+		)
 
 func _update_robot_task_panel() -> void:
 	if robot_tasks_box == null:
@@ -552,19 +599,13 @@ func _update_robot_task_panel() -> void:
 	var board = get_node_or_null("/root/TaskBoard")
 	var robots := get_tree().get_nodes_in_group("robot")
 	if board == null or not board.has_method("get_in_progress_tasks_for_assignee") or robots.is_empty():
-		var empty_fallback := Label.new()
-		empty_fallback.text = "(None)"
-		empty_fallback.add_theme_color_override("font_color", Color.GRAY)
-		robot_tasks_box.add_child(empty_fallback)
+		_add_blank_row(robot_tasks_box)
 		return
 
 	var assignee := str(robots[0].name)
 	var tasks: Array[Dictionary] = board.get_in_progress_tasks_for_assignee(assignee)
 	if tasks.is_empty():
-		var empty := Label.new()
-		empty.text = "(None)"
-		empty.add_theme_color_override("font_color", Color.GRAY)
-		robot_tasks_box.add_child(empty)
+		_add_blank_row(robot_tasks_box)
 		return
 
 	for task in tasks:
@@ -621,10 +662,7 @@ func _update_customer_panel() -> void:
 
 	var customers := get_tree().get_nodes_in_group("customer")
 	if customers.is_empty():
-		var empty_label := Label.new()
-		empty_label.text = "(None)"
-		empty_label.add_theme_color_override("font_color", Color.GRAY)
-		customer_items_box.add_child(empty_label)
+		_add_blank_row(customer_items_box)
 		return
 
 	var board = get_node_or_null("/root/TaskBoard")
@@ -697,18 +735,12 @@ func _update_customer_panel() -> void:
 		shown_count += 1
 
 	if shown_count == 0:
-		var empty_after_filter := Label.new()
-		empty_after_filter.text = "(None)"
-		empty_after_filter.add_theme_color_override("font_color", Color.GRAY)
-		customer_items_box.add_child(empty_after_filter)
+		_add_blank_row(customer_items_box)
 
 func _update_customer_history_panel() -> void:
 	var board = get_node_or_null("/root/TaskBoard")
 	if board == null or not board.has_method("get_all_tasks"):
-		var empty_fallback := Label.new()
-		empty_fallback.text = "(No history)"
-		empty_fallback.add_theme_color_override("font_color", Color.GRAY)
-		customer_items_box.add_child(empty_fallback)
+		_add_blank_row(customer_items_box)
 		return
 
 	var tasks: Array[Dictionary] = board.get_all_tasks()
@@ -724,10 +756,7 @@ func _update_customer_history_panel() -> void:
 	customer_items_box.add_child(summary)
 
 	if ended.is_empty():
-		var empty := Label.new()
-		empty.text = "(No finished tasks)"
-		empty.add_theme_color_override("font_color", Color.GRAY)
-		customer_items_box.add_child(empty)
+		_add_blank_row(customer_items_box)
 		return
 
 	ended.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
@@ -771,20 +800,13 @@ func _update_player_task_panel() -> void:
 
 	var board = get_node_or_null("/root/TaskBoard")
 	if board == null or not board.has_method("get_in_progress_tasks_for_assignee"):
-		_track_player_live_task_ids([])
-		var empty_fallback := Label.new()
-		empty_fallback.text = "(None)"
-		empty_fallback.add_theme_color_override("font_color", Color.GRAY)
-		player_tasks_box.add_child(empty_fallback)
+		_add_blank_row(player_tasks_box)
 		return
 
 	var tasks: Array[Dictionary] = board.get_in_progress_tasks_for_assignee("player")
 	_track_player_live_task_ids(tasks)
 	if tasks.is_empty():
-		var empty := Label.new()
-		empty.text = "(None)"
-		empty.add_theme_color_override("font_color", Color.GRAY)
-		player_tasks_box.add_child(empty)
+		_add_blank_row(player_tasks_box)
 		return
 
 	for task in tasks:
@@ -815,6 +837,13 @@ func _setup_player_task_notice_audio() -> void:
 	_player_task_notice_player.stream = generator
 	_player_task_notice_player.bus = &"Master"
 	add_child(_player_task_notice_player)
+
+func _add_blank_row(container: Container, min_height: float = 18.0) -> void:
+	if container == null:
+		return
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(0.0, min_height)
+	container.add_child(spacer)
 
 func _track_player_live_task_ids(tasks: Array[Dictionary]) -> void:
 	var current_ids := {}
@@ -1125,7 +1154,7 @@ func _setup_survey_scale_buttons() -> void:
 	_survey_scale_buttons.clear()
 	for i in range(1, 8):
 		var button := Button.new()
-		button.custom_minimum_size = Vector2(84, 56)
+		button.custom_minimum_size = Vector2(64, 44)
 		button.text = str(i)
 		button.pressed.connect(_on_tipi_scale_pressed.bind(i))
 		survey_options.add_child(button)
@@ -1150,7 +1179,7 @@ func _setup_tipi_survey() -> void:
 
 	var profile = get_node_or_null("/root/PlayerProfile")
 	if profile and profile.has_method("has_tipi") and bool(profile.has_tipi()):
-		_set_gameplay_panels_visible(true)
+		_show_tutorial_before_game()
 		return
 
 	await _stabilize_player_camera_before_survey()
@@ -1161,10 +1190,19 @@ func _setup_tipi_survey() -> void:
 	get_tree().paused = true
 	_recenter_survey_panel()
 	survey_panel.show()
-	survey_result.hide()
+	if survey_result_group_spacer:
+		survey_result_group_spacer.hide()
+	if survey_result_group:
+		survey_result_group.hide()
 	if survey_result_spacer:
 		survey_result_spacer.hide()
 	survey_confirm.hide()
+	if survey_question_title:
+		survey_question_title.show()
+	if survey_scale_title:
+		survey_scale_title.show()
+	if survey_scale_spacer:
+		survey_scale_spacer.show()
 	if survey_scale_hint:
 		survey_scale_hint.show()
 	for button in _survey_scale_buttons:
@@ -1201,11 +1239,18 @@ func _refresh_tipi_question() -> void:
 	if _tipi_index < 0 or _tipi_index >= _tipi_questions.size():
 		return
 	var q: Dictionary = _tipi_questions[_tipi_index]
-	survey_progress.text = "Question %d / %d" % [_tipi_index + 1, _tipi_questions.size()]
-	survey_question.custom_minimum_size = Vector2(660, 56)
+	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 48)
 	survey_question.text = str(q.get("text", ""))
+	if survey_question_title:
+		survey_question_title.text = "[b]Question[/b] (%d/%d)" % [_tipi_index + 1, _tipi_questions.size()]
+	if survey_scale_title:
+		survey_scale_title.text = "[b]Scale Guide[/b]"
 	if survey_scale_hint:
 		survey_scale_hint.text = "1 = disagree strongly\n4 = neutral\n7 = agree strongly"
+	if survey_result_group_spacer:
+		survey_result_group_spacer.hide()
+	if survey_result_group:
+		survey_result_group.hide()
 
 func _choose_tipi(response_value: int) -> void:
 	if _tipi_index < 0 or _tipi_index >= _tipi_questions.size():
@@ -1230,11 +1275,21 @@ func _show_tipi_result() -> void:
 	if profile and profile.has_method("get_profile"):
 		tipi_scores = profile.get_profile().get("tipi_scores", {})
 
-	survey_progress.text = "Survey Complete"
-	survey_question.custom_minimum_size = Vector2(660, 24)
-	survey_question.text = "Your TIPI profile has been recorded.\nThis profile will be taken into account in the robot's persuasion."
+	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 24)
+	survey_question.text = "Your TIPI profile has been recorded.\nIt will be taken into account in the robot delegation."
+	if survey_question_title:
+		survey_question_title.show()
+		survey_question_title.text = "[b]Question Finished[/b]"
+	if survey_scale_title:
+		survey_scale_title.hide()
+	if survey_scale_spacer:
+		survey_scale_spacer.hide()
 	if survey_scale_hint:
 		survey_scale_hint.hide()
+	if survey_result_group_spacer:
+		survey_result_group_spacer.show()
+	if survey_result_title:
+		survey_result_title.text = "[b]TIPI Profile[/b]"
 	survey_result.text = "Openness (O): %.1f\nConscientiousness (C): %.1f\nExtraversion (E): %.1f\nAgreeableness (A): %.1f\nNeuroticism (N): %.1f" % [
 		float(tipi_scores.get("O", 4.0)),
 		float(tipi_scores.get("C", 4.0)),
@@ -1242,17 +1297,153 @@ func _show_tipi_result() -> void:
 		float(tipi_scores.get("A", 4.0)),
 		float(tipi_scores.get("N", 4.0)),
 	]
-	survey_result.show()
+	if survey_result_group:
+		survey_result_group.show()
 	if survey_result_spacer:
 		survey_result_spacer.show()
 	for button in _survey_scale_buttons:
 		button.hide()
+	survey_confirm.text = "Continue"
 	survey_confirm.show()
+	_recenter_survey_panel()
 
 func _finish_survey_and_start() -> void:
 	survey_panel.hide()
+	_show_tutorial_before_game()
+
+func _setup_tutorial_ui() -> void:
+	tutorial_panel = PanelContainer.new()
+	tutorial_panel.name = "TutorialPanel"
+	tutorial_panel.visible = false
+	add_child(tutorial_panel)
+
+	var style = StyleBoxFlat.new()
+	style.bg_color = Color(0, 0, 0, 0.72)
+	style.content_margin_left = 18
+	style.content_margin_right = 18
+	style.content_margin_top = 18
+	style.content_margin_bottom = 18
+	tutorial_panel.add_theme_stylebox_override("panel", style)
+
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	tutorial_panel.add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vbox.add_theme_constant_override("separation", 12)
+	margin.add_child(vbox)
+
+	var title := Label.new()
+	title.text = "Tutorial"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(title)
+
+	tutorial_body = RichTextLabel.new()
+	tutorial_body.bbcode_enabled = true
+	tutorial_body.fit_content = true
+	tutorial_body.scroll_active = false
+	tutorial_body.selection_enabled = false
+	tutorial_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tutorial_body.custom_minimum_size = Vector2(TUTORIAL_PANEL_WIDTH - 48.0, 260.0)
+	tutorial_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tutorial_body.text = TUTORIAL_TEXT
+	vbox.add_child(tutorial_body)
+
+	var button_row := HBoxContainer.new()
+	button_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	button_row.add_theme_constant_override("separation", 12)
+	button_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_child(button_row)
+
+	tutorial_start_button = Button.new()
+	tutorial_start_button.text = "Start Game"
+	tutorial_start_button.custom_minimum_size = Vector2(0, 52)
+	tutorial_start_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tutorial_start_button.pressed.connect(_start_game_from_tutorial)
+	button_row.add_child(tutorial_start_button)
+
+	tutorial_close_button = Button.new()
+	tutorial_close_button.text = "Close"
+	tutorial_close_button.custom_minimum_size = Vector2(180, 48)
+	tutorial_close_button.visible = false
+	tutorial_close_button.pressed.connect(_close_tutorial_overlay)
+	button_row.add_child(tutorial_close_button)
+
+	tutorial_toggle_button = Button.new()
+	tutorial_toggle_button.name = "TutorialToggle"
+	tutorial_toggle_button.text = "?"
+	tutorial_toggle_button.visible = false
+	tutorial_toggle_button.custom_minimum_size = Vector2(TUTORIAL_TOGGLE_SIZE, TUTORIAL_TOGGLE_SIZE)
+	tutorial_toggle_button.tooltip_text = "Tutorial"
+	tutorial_toggle_button.add_theme_font_size_override("font_size", 22)
+	tutorial_toggle_button.add_theme_color_override("font_color", Color(1.0, 0.97, 0.78, 1.0))
+	var toggle_style := StyleBoxFlat.new()
+	toggle_style.bg_color = Color(0.08, 0.08, 0.08, 0.92)
+	toggle_style.corner_radius_top_left = 10
+	toggle_style.corner_radius_top_right = 10
+	toggle_style.corner_radius_bottom_right = 10
+	toggle_style.corner_radius_bottom_left = 10
+	toggle_style.border_width_left = 1
+	toggle_style.border_width_top = 1
+	toggle_style.border_width_right = 1
+	toggle_style.border_width_bottom = 1
+	toggle_style.border_color = Color(1.0, 0.97, 0.78, 0.35)
+	tutorial_toggle_button.add_theme_stylebox_override("normal", toggle_style)
+	var toggle_hover := toggle_style.duplicate() as StyleBoxFlat
+	toggle_hover.bg_color = Color(0.16, 0.16, 0.16, 0.96)
+	toggle_hover.border_color = Color(1.0, 0.97, 0.78, 0.6)
+	tutorial_toggle_button.add_theme_stylebox_override("hover", toggle_hover)
+	var toggle_pressed := toggle_style.duplicate() as StyleBoxFlat
+	toggle_pressed.bg_color = Color(0.22, 0.22, 0.22, 0.98)
+	tutorial_toggle_button.add_theme_stylebox_override("pressed", toggle_pressed)
+	tutorial_toggle_button.pressed.connect(_open_tutorial_overlay)
+	add_child(tutorial_toggle_button)
+
+func _show_tutorial_before_game() -> void:
+	get_tree().paused = true
+	_set_gameplay_panels_visible(false)
+	if tutorial_panel:
+		tutorial_panel.show()
+	if tutorial_start_button:
+		tutorial_start_button.show()
+	if tutorial_close_button:
+		tutorial_close_button.hide()
+	if tutorial_toggle_button:
+		tutorial_toggle_button.hide()
+	_update_gameplay_panel_layout()
+
+func _start_game_from_tutorial() -> void:
+	_tutorial_started = true
+	if tutorial_panel:
+		tutorial_panel.hide()
+	if tutorial_toggle_button:
+		tutorial_toggle_button.show()
 	get_tree().paused = false
 	_set_gameplay_panels_visible(true)
+
+func _open_tutorial_overlay() -> void:
+	if not _tutorial_started:
+		return
+	get_tree().paused = true
+	if tutorial_panel:
+		tutorial_panel.show()
+	if tutorial_start_button:
+		tutorial_start_button.hide()
+	if tutorial_close_button:
+		tutorial_close_button.show()
+	if tutorial_toggle_button:
+		tutorial_toggle_button.hide()
+	_update_gameplay_panel_layout()
+
+func _close_tutorial_overlay() -> void:
+	if tutorial_panel:
+		tutorial_panel.hide()
+	if tutorial_close_button:
+		tutorial_close_button.hide()
+	if tutorial_toggle_button:
+		tutorial_toggle_button.show()
+	get_tree().paused = false
 
 func _set_gameplay_panels_visible(visible: bool) -> void:
 	if inventory_panel:
