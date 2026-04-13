@@ -1365,7 +1365,8 @@ func _setup_tutorial_ui() -> void:
 
 	tutorial_close_button = Button.new()
 	tutorial_close_button.text = "Close"
-	tutorial_close_button.custom_minimum_size = Vector2(180, 48)
+	tutorial_close_button.custom_minimum_size = Vector2(0, 52)
+	tutorial_close_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tutorial_close_button.visible = false
 	tutorial_close_button.pressed.connect(_close_tutorial_overlay)
 	button_row.add_child(tutorial_close_button)

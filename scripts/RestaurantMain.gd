@@ -1,8 +1,10 @@
 extends Node2D
 
 var all_locations: Dictionary = {}
+const MIN_WINDOW_SIZE := Vector2i(1600, 1000)
 
 func _ready() -> void:
+	_apply_window_constraints()
 	_init_item_display_names()
 	_discover_all_locations()
 	_force_collision_policy()
@@ -17,6 +19,16 @@ func _ready() -> void:
 	await get_tree().physics_frame
 	await _setup_navigation()
 	_register_customer_spawner()
+
+func _apply_window_constraints() -> void:
+	var window := get_window()
+	if window == null:
+		return
+	window.min_size = MIN_WINDOW_SIZE
+	window.size = Vector2i(
+		maxi(window.size.x, MIN_WINDOW_SIZE.x),
+		maxi(window.size.y, MIN_WINDOW_SIZE.y)
+	)
 
 func _init_item_display_names() -> void:
 	var item1 = get_node_or_null("InteractiveItems/Item1")
