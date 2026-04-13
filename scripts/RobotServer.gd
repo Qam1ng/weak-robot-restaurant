@@ -76,6 +76,7 @@ var _battery_emergency_handoff_attempted_task_id: String = ""
 var _last_emergency_approach_notice_ms: int = 0
 var _last_overload_approach_notice_ms: int = 0
 var _pending_player_line_request_id: String = ""
+var _idle_charge_cycle_complete: bool = false
 
 func _has_property(obj: Object, prop_name: String) -> bool:
 	for p in obj.get_property_list():
@@ -430,21 +431,24 @@ func _try_claim_next_task() -> void:
 	if task.is_empty():
 		if inventory != null and inventory.is_full() and not inventory.items.is_empty():
 			return
-		# Idle behavior by battery mode:
-		# - emergency: handled by recharge override earlier in tick loop.
-		# - conserve: no pending orders -> go charge.
-		# - normal: stay on dining side for quicker next-customer response.
-		if _battery_mode == BATTERY_MODE_CONSERVE:
+		if _battery_is_full_enough():
+			_idle_charge_cycle_complete = true
+		var has_idle_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
+		if not _idle_charge_cycle_complete:
 			if not _is_near_recharge_station():
-				_plan_navigate_to_location(CHARGING_MARKER)
-				_try_speak_recharge_notice("Battery low. Recharging while idle.")
+				if not has_idle_plan:
+					_plan_navigate_to_location(CHARGING_MARKER)
+				_try_speak_recharge_notice("No pending tasks. Charging up.")
+			else:
+				bt_runner.bb["planned_actions"] = []
 			return
-		if _battery_mode == BATTERY_MODE_NORMAL and not _is_in_dining_side():
+		if not _is_in_dining_side():
 			var locations: Dictionary = bt_runner.bb.get("locations", {})
 			if locations.has(IDLE_WAIT_MARKER):
 				_plan_navigate_to_location(IDLE_WAIT_MARKER)
 		return
 	# Pending work exists: in conserve/normal we should still serve orders.
+	_idle_charge_cycle_complete = false
 	if _battery_mode == BATTERY_MODE_EMERGENCY:
 		var task_slack_ms = int(task.get("deadline_ms", Time.get_ticks_msec()) - Time.get_ticks_msec())
 		if task_slack_ms > 20_000:
@@ -468,6 +472,7 @@ func _tick_offer_take_order_handoff() -> void:
 func _start_claimed_task(task: Dictionary) -> void:
 	if not _activate_task_context(task):
 		return
+	_idle_charge_cycle_complete = false
 	if not _episode_active:
 		var payload: Dictionary = task.get("payload", {})
 		var customer = _resolve_customer_from_payload(payload)
@@ -1272,6 +1277,7 @@ func _update_battery_mode() -> void:
 		_battery_mode = BATTERY_MODE_EMERGENCY
 	elif battery_level <= battery_conserve_threshold:
 		_battery_mode = BATTERY_MODE_CONSERVE
+		_idle_charge_cycle_complete = false
 	else:
 		_battery_mode = BATTERY_MODE_NORMAL
 
@@ -1294,6 +1300,9 @@ func _is_near_recharge_station() -> bool:
 		return false
 	# Navigation arrival often stops around 40-50px from exact marker.
 	return global_position.distance_to(station) <= 60.0
+
+func _battery_is_full_enough() -> bool:
+	return battery_level >= battery_capacity - 0.5
 
 func _estimate_help_urgency() -> float:
 	var slack_ms := int(_constraint_input.get("slack_ms", 0))
