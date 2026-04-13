@@ -20,11 +20,6 @@ config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://icon.svg"
 config/autoload_on_startup=true
 
-[display]
-
-window/size/viewport_width=1600
-window/size/viewport_height=1000
-
 [autoload]
 
 TaskBus="*res://scripts/TaskBus.gd"
@@ -36,6 +31,11 @@ EpisodeLogger="*res://scripts/EpisodeLogger.gd"
 GameManager="*res://scripts/GameManager.gd"
 PlayerProfile="*res://scripts/PlayerProfile.gd"
 ExperimentConfig="*res://scripts/ExperimentConfig.gd"
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=1000
 
 [experiment]
 

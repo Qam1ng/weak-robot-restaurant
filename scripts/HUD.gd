@@ -77,7 +77,7 @@ const GAMEPLAY_BAND_WIDTH := 760.0
 const GAMEPLAY_SIDE_GAP := 24.0
 const SYSTEM_PANEL_X_OFFSET := 40.0
 const SYSTEM_PANEL_WIDTH_REDUCTION := 28.0
-const PLAYER_DIALOGUE_OVERLAY_Y := 84.0
+const PLAYER_DIALOGUE_OVERLAY_Y_OFFSET := 4.0
 const PLAYER_DIALOGUE_OVERLAY_WIDTH := 520.0
 const PLAYER_DIALOGUE_OVERLAY_SHOW_SEC := 5.0
 const PLAYER_DIALOGUE_STACK_GAP := 10.0
@@ -632,9 +632,10 @@ func _update_gameplay_panel_layout() -> void:
 	dialogue_panel.custom_minimum_size.y = dialogue_panel_h
 	dialogue_panel.size.y = dialogue_panel_h
 	var centered_x: float = (view_size.x - PLAYER_DIALOGUE_OVERLAY_WIDTH) * 0.5
-	var stack_y: float = PLAYER_DIALOGUE_OVERLAY_Y
+	var stack_origin_y: float = gameplay_top_y + PLAYER_DIALOGUE_OVERLAY_Y_OFFSET
+	var stack_y: float = stack_origin_y
 	if help_prompt_stack:
-		help_prompt_stack.position = Vector2(centered_x, PLAYER_DIALOGUE_OVERLAY_Y)
+		help_prompt_stack.position = Vector2(centered_x, stack_origin_y)
 		help_prompt_stack.custom_minimum_size.x = PLAYER_DIALOGUE_OVERLAY_WIDTH
 		if help_prompt_stack.visible:
 			var help_h := maxf(help_prompt_stack.size.y, help_prompt_stack.get_combined_minimum_size().y)
@@ -1777,7 +1778,6 @@ func _show_player_dialogue_prompt(title: String, body: String, button_texts: Arr
 	player_dialogue_overlay.visible = true
 	player_dialogue_overlay.modulate = Color(1, 1, 1, 1)
 	player_dialogue_overlay.scale = Vector2(1.0, 1.0)
-	player_dialogue_overlay.position = Vector2(player_dialogue_overlay.position.x, PLAYER_DIALOGUE_OVERLAY_Y)
 	player_dialogue_overlay_label.clear()
 	player_dialogue_overlay_label.push_color(Color(1.0, 0.84, 0.36, 1.0))
 	player_dialogue_overlay_label.add_text(title)
@@ -1953,7 +1953,6 @@ func _hide_player_dialogue_overlay() -> void:
 	_hide_player_dialogue_overlay_buttons()
 	player_dialogue_overlay.visible = false
 	player_dialogue_overlay.modulate = Color(1, 1, 1, 1)
-	player_dialogue_overlay.position = Vector2(player_dialogue_overlay.position.x, PLAYER_DIALOGUE_OVERLAY_Y)
 	_update_gameplay_panel_layout()
 
 func _trim_player_dialogue_info_cards() -> void:
