@@ -105,6 +105,8 @@ const SURVEY_RESULT_Y_OFFSET := -20.0
 var _score_game_over: bool = false
 var _tutorial_started: bool = false
 var _customer_history_page: int = 0
+var _pending_day_notice: int = 0
+var _initial_day_notice_shown: bool = false
 const CUSTOMER_HISTORY_PAGE_SIZE := 5
 
 func _ready() -> void:
@@ -129,6 +131,7 @@ func _ready() -> void:
 	_connect_robot_inventory()
 	_connect_player_inventory()
 	_connect_score_signals()
+	_connect_time_signals()
 	call_deferred("_setup_tipi_survey")
 
 func _connect_viewport_resize() -> void:
@@ -447,6 +450,32 @@ func _connect_score_signals() -> void:
 	if board.has_signal("task_failed") and not board.task_failed.is_connected(_on_task_failed):
 		board.task_failed.connect(_on_task_failed)
 	_refresh_score_label()
+
+func _connect_time_signals() -> void:
+	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
+	if time_mgr == null:
+		return
+	if time_mgr.has_signal("day_changed") and not time_mgr.day_changed.is_connected(_on_day_changed_notice):
+		time_mgr.day_changed.connect(_on_day_changed_notice)
+	call_deferred("_cache_initial_day_notice")
+
+func _cache_initial_day_notice() -> void:
+	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
+	if time_mgr == null:
+		return
+	_pending_day_notice = int(time_mgr.get("current_day"))
+
+func _on_day_changed_notice(day: int) -> void:
+	if day <= 0:
+		return
+	if not _tutorial_started:
+		_pending_day_notice = day
+		return
+	_initial_day_notice_shown = true
+	var message := "You have entered Day %d." % day
+	if day == 1:
+		message = "Welcome to the restaurant. You have entered Day 1."
+	_show_player_dialogue_overlay("System", message, "system")
 
 func _on_task_completed(task: Dictionary) -> void:
 	_success_count += 1
@@ -1512,6 +1541,14 @@ func _start_game_from_tutorial() -> void:
 		tutorial_toggle_button.show()
 	get_tree().paused = false
 	_set_gameplay_panels_visible(true)
+	_show_pending_day_notice()
+
+func _show_pending_day_notice() -> void:
+	if _initial_day_notice_shown:
+		return
+	if _pending_day_notice <= 0:
+		return
+	_on_day_changed_notice(_pending_day_notice)
 
 func _open_tutorial_overlay() -> void:
 	if not _tutorial_started:
@@ -1685,6 +1722,8 @@ func _show_player_dialogue_overlay(speaker: String, text: String, kind: String) 
 		speaker_color = Color(0.76, 0.95, 1.0, 1.0)
 	elif kind == "customer":
 		speaker_color = Color(1.0, 0.85, 0.78, 1.0)
+	elif kind == "system":
+		speaker_color = Color(1.0, 0.84, 0.36, 1.0)
 
 	var card := PanelContainer.new()
 	card.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT)
