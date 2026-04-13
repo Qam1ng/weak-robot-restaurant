@@ -349,16 +349,11 @@ func _build_context(robot: Node, req: Dictionary, options: Dictionary) -> Dictio
 	}
 
 func _sample_player_state() -> Dictionary:
-	var load := 0.5
 	var player_max_active_tasks := 3
 	var player_active_tasks := 0
 	var players := get_tree().get_nodes_in_group("player")
 	if not players.is_empty():
 		var player = players[0]
-		var inv = player.get_node_or_null("Inventory")
-		if inv:
-			var cap := maxf(float(inv.capacity), 1.0)
-			load = clampf(float(inv.items.size()) / cap, 0.0, 1.0)
 		if player != null:
 			player_max_active_tasks = maxi(1, int(player.get("player_max_active_tasks")))
 
@@ -370,7 +365,6 @@ func _sample_player_state() -> Dictionary:
 	var player_task_load := float(player_active_tasks) / float(maxi(1, player_max_active_tasks))
 
 	return {
-		"load": load,
 		"active_tasks": player_active_tasks,
 		"max_active_tasks": player_max_active_tasks,
 		"task_load": player_task_load
@@ -381,7 +375,7 @@ func _sample_personality_profile() -> Dictionary:
 	if profile and profile.has_method("get_profile"):
 		return profile.get_profile()
 	return {
-		"mbti_type": "",
+		"tipi_scores": {},
 		"strategy_affinity": {}
 	}
 
@@ -423,8 +417,6 @@ func _log_help_event(event_type: String, req: Dictionary, extra: Dictionary = {}
 
 func _should_request_help_utterance(req: Dictionary) -> bool:
 	if req.is_empty():
-		return false
-	if str(req.get("strategy", "")) == "control_neutral":
 		return false
 	var dm = _dialogue_manager()
 	if dm == null:

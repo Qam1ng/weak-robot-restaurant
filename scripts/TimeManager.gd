@@ -1,26 +1,26 @@
-# TimeManager.gd - 游戏内时间系统
-# 管理游戏时间流逝、时间段划分、高峰/低谷期
+
+
 extends Node
 class_name TimeManager
 
-# ==================== 信号 ====================
+
 signal time_changed(hour: int, minute: int)
 signal period_changed(new_period: String, is_peak: bool)
 signal day_changed(day: int)
 
-# ==================== 时间配置 ====================
-## 现实1秒 = 游戏内多少分钟
+
+
 @export var real_to_game_ratio: float = 2.0
-## 分时段倍率默认都为 1.0，表示整天按统一比例等比缩放
+
 @export var morning_time_multiplier: float = 1.0
 @export var afternoon_time_multiplier: float = 1.0
 @export var night_time_multiplier: float = 1.0
-## 游戏开始时的小时 (0-23)
+
 @export var start_hour: int = 8
-## 游戏开始时的分钟 (0-59)
+
 @export var start_minute: int = 0
 
-# ==================== 时间段定义 ====================
+
 enum Period { MORNING, LUNCH, AFTERNOON, DINNER, NIGHT }
 
 const PERIOD_NAMES = {
@@ -31,22 +31,22 @@ const PERIOD_NAMES = {
 	Period.NIGHT: "night"
 }
 
-# 时间段范围 [开始小时, 结束小时, 是否高峰期]
+
 const PERIOD_CONFIG = {
-	Period.MORNING: [6, 11, false],    # 6:00 - 11:00 普通
-	Period.LUNCH: [11, 14, true],      # 11:00 - 14:00 午餐高峰
-	Period.AFTERNOON: [14, 17, false], # 14:00 - 17:00 普通
-	Period.DINNER: [17, 23, true],     # 17:00 - 23:00 晚餐高峰
-	Period.NIGHT: [23, 6, false]       # 23:00 - 6:00 关店/夜间
+	Period.MORNING: [6, 11, false],
+	Period.LUNCH: [11, 14, true],
+	Period.AFTERNOON: [14, 17, false],
+	Period.DINNER: [17, 23, true],
+	Period.NIGHT: [23, 6, false]
 }
 
-# ==================== 状态 ====================
+
 var current_hour: int = 8
 var current_minute: int = 0
 var current_day: int = 1
 var current_period: Period = Period.MORNING
 var is_peak_time: bool = false
-var is_open: bool = true  # 餐厅是否营业
+var is_open: bool = true
 
 var _accumulated_game_minutes: float = 0.0
 var _paused: bool = false
@@ -63,7 +63,7 @@ func reset_runtime() -> void:
 	_update_period()
 	time_changed.emit(current_hour, current_minute)
 
-# ==================== 生命周期 ====================
+
 func _ready() -> void:
 	current_hour = start_hour
 	current_minute = start_minute
@@ -77,7 +77,7 @@ func _process(delta: float) -> void:
 	var minutes_per_second := _get_minutes_per_second()
 	_accumulated_game_minutes += delta * minutes_per_second
 
-	# 连续推进：支持非整数倍率，避免时段时长偏差
+
 	while _accumulated_game_minutes >= 1.0:
 		_accumulated_game_minutes -= 1.0
 		_advance_time(1)
@@ -95,7 +95,7 @@ func _get_minutes_per_second() -> float:
 			pass
 	return maxf(0.01, minutes_per_second)
 
-# ==================== 时间推进 ====================
+
 func _advance_time(minutes: int) -> void:
 	current_minute += minutes
 	
@@ -116,13 +116,13 @@ func _update_period() -> void:
 	var old_period = current_period
 	var old_is_peak = is_peak_time
 	
-	# 确定当前时间段
+
 	for period in PERIOD_CONFIG:
 		var config = PERIOD_CONFIG[period]
 		var start_h = config[0]
 		var end_h = config[1]
 		
-		# 处理跨午夜的情况 (NIGHT: 21-6)
+
 		if start_h > end_h:
 			if current_hour >= start_h or current_hour < end_h:
 				current_period = period
@@ -134,16 +134,16 @@ func _update_period() -> void:
 				is_peak_time = config[2]
 				break
 	
-	# 更新营业状态
+
 	is_open = current_period != Period.NIGHT
 	
-	# 如果时间段变化，发出信号
+
 	if old_period != current_period or old_is_peak != is_peak_time:
 		var period_name = get_period_name()
 		period_changed.emit(period_name, is_peak_time)
 		print("[TimeManager] Period changed to: %s (Peak: %s, Open: %s)" % [period_name, is_peak_time, is_open])
 
-# ==================== 公共 API ====================
+
 func get_period_name() -> String:
 	return PERIOD_NAMES.get(current_period, "unknown")
 
@@ -164,7 +164,7 @@ func resume() -> void:
 func is_paused() -> bool:
 	return _paused
 
-## 设置时间（用于调试或快进）
+
 func set_time(hour: int, minute: int = 0) -> void:
 	current_hour = clampi(hour, 0, 23)
 	current_minute = clampi(minute, 0, 59)
@@ -172,7 +172,7 @@ func set_time(hour: int, minute: int = 0) -> void:
 	time_changed.emit(current_hour, current_minute)
 	print("[TimeManager] Time set to: %s" % get_time_string())
 
-## 快进到下一个时间段
+
 func skip_to_next_period() -> void:
 	var next_periods = {
 		Period.MORNING: [11, 0],
@@ -184,20 +184,20 @@ func skip_to_next_period() -> void:
 	
 	var next = next_periods.get(current_period, [8, 0])
 	
-	# 如果跳到第二天早上
+
 	if current_period == Period.NIGHT:
 		current_day += 1
 		day_changed.emit(current_day)
 	
 	set_time(next[0], next[1])
 
-## 获取当前繁忙程度 (0.0 - 1.0)
+
 func get_busyness() -> float:
 	match current_period:
 		Period.LUNCH, Period.DINNER:
-			return 1.0  # 高峰期
+			return 1.0
 		Period.MORNING, Period.AFTERNOON:
-			return 0.5  # 普通时段
+			return 0.5
 		Period.NIGHT:
-			return 0.0  # 关店
+			return 0.0
 	return 0.5

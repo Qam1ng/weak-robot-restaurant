@@ -215,12 +215,17 @@ class ActPickItem extends Core.Task:
 			item_meta = actor.call("_pickup_item_meta", item_name)
 
 		item_node.visible = false
-		var tree = actor.get_tree()
-		if tree:
-			tree.create_timer(2.0).timeout.connect(func():
-				if is_instance_valid(item_node):
-					item_node.visible = true
-			)
+		var restore_timer := Timer.new()
+		restore_timer.one_shot = true
+		restore_timer.wait_time = 2.0
+		item_node.add_child(restore_timer)
+		restore_timer.timeout.connect(func():
+			if is_instance_valid(item_node):
+				item_node.visible = true
+			if is_instance_valid(restore_timer):
+				restore_timer.queue_free()
+		)
+		restore_timer.start()
 
 		inventory.add_item(item_name, atlas, region, item_meta)
 		bb["carrying_item"] = true

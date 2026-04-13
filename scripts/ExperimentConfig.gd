@@ -7,7 +7,6 @@ const DEFAULTS := {
 	"ab_enabled": true,
 	"ab_seed": 17,
 	"forced_variant": "",
-	"control_variant": VARIANT_B,
 	"replay_logging_enabled": true,
 	"help_logging_enabled": true,
 	"llm_utterance_enabled": true,
@@ -51,33 +50,18 @@ func resolve_variant(request_id: String) -> String:
 		return VARIANT_A
 	return VARIANT_B
 
-func apply_dialogue_variant(variant: String, request_type: String, persuasion: Dictionary, payload: Dictionary, escalation_count: int) -> Dictionary:
+func apply_dialogue_variant(variant: String, _request_type: String, persuasion: Dictionary, _payload: Dictionary, _escalation_count: int) -> Dictionary:
 	var out := persuasion.duplicate(true)
-	if variant != str(_cached.get("control_variant", VARIANT_B)):
-		return out
-
-	out["strategy"] = "control_neutral"
-	out["strategy_scores"] = {}
 	var intent: Dictionary = out.get("dialogue_intent", {})
-	intent["strategy"] = "control_neutral"
 	intent["variant"] = variant
 	out["dialogue_intent"] = intent
-	out["utterance"] = _neutral_utterance(request_type, payload, escalation_count)
 	return out
-
-func _neutral_utterance(request_type: String, payload: Dictionary, escalation_count: int) -> String:
-	var prefix := ""
-	if escalation_count >= 1:
-		prefix = "Reminder: "
-	var item := str(payload.get("item_needed", "item"))
-	return prefix + "Please help with %s when you are available." % item
 
 func _cache_settings() -> void:
 	_cached = DEFAULTS.duplicate(true)
 	_cached["ab_enabled"] = _get_setting("experiment/ab_enabled", DEFAULTS["ab_enabled"])
 	_cached["ab_seed"] = int(_get_setting("experiment/ab_seed", DEFAULTS["ab_seed"]))
 	_cached["forced_variant"] = str(_get_setting("experiment/forced_variant", DEFAULTS["forced_variant"]))
-	_cached["control_variant"] = str(_get_setting("experiment/control_variant", DEFAULTS["control_variant"]))
 	_cached["replay_logging_enabled"] = _get_setting("experiment/replay_logging_enabled", DEFAULTS["replay_logging_enabled"])
 	_cached["help_logging_enabled"] = _get_setting("experiment/help_logging_enabled", DEFAULTS["help_logging_enabled"])
 	_cached["llm_utterance_enabled"] = _get_setting("experiment/llm_utterance_enabled", DEFAULTS["llm_utterance_enabled"])

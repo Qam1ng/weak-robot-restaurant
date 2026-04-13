@@ -1,10 +1,10 @@
 extends CharacterBody2D
 class_name Customer
 
-# ==================== 信号 ====================
+
 signal customer_left(customer: Node)
 
-# ==================== 导出变量 ====================
+
 @export var request_text: String = "Can I order a pizza?"
 @export var start_delay_sec: float = 10.0
 @export var spawn_path: NodePath
@@ -17,11 +17,11 @@ signal customer_left(customer: Node)
 const MIN_PATIENCE_SECONDS := 90.0
 const DRINK_CHOICES := ["cola", "tea", "coffee"]
 
-# ==================== 节点引用 ====================
+
 @onready var agent: NavigationAgent2D = $NavigationAgent2D
 @onready var anim: AnimatedSprite2D = $AnimatedSprite2D
 
-# ==================== 内部状态 ====================
+
 const InventoryScript = preload("res://scripts/Inventory.gd")
 var inventory: Inventory
 
@@ -59,23 +59,36 @@ const ORDER_ICON_PATHS := {
 }
 var _order_icon_textures: Dictionary = {}
 
-# 座位信息
+
 var current_seat: String = ""
 
-# ==================== 智能导航系统 ====================
-# 卡住检测
+
+
 var _last_pos: Vector2 = Vector2.ZERO
 var _stuck_timer: float = 0.0
 
-const ARRIVAL_DIST: float = 30.0  # 默认到达判定距离
-const ARRIVAL_DIST_SEAT: float = 56.0  # 入座判定半径（seat 点可在不可走区边缘）
-const ARRIVAL_DIST_STUCK: float = 80.0  # 导航结束但与目标有偏差时的容错
+const ARRIVAL_DIST: float = 30.0
+const ARRIVAL_DIST_SEAT: float = 56.0
+const ARRIVAL_DIST_STUCK: float = 80.0
 const ENTERING_STUCK_TIMEOUT_SEC: float = 3.0
 const LEAVING_STUCK_TIMEOUT_SEC: float = 3.0
 var _path_initialized: bool = false
 var _leaving_repath_attempted: bool = false
 
-# ==================== 生命周期 ====================
+func _wait_seconds(seconds: float) -> bool:
+	if seconds <= 0.0:
+		return true
+	var timer := Timer.new()
+	timer.one_shot = true
+	timer.wait_time = seconds
+	add_child(timer)
+	timer.start()
+	await timer.timeout
+	if is_instance_valid(timer):
+		timer.queue_free()
+	return is_inside_tree()
+
+
 func _ready() -> void:
 	add_to_group("customer")
 	add_to_group("interaction")
@@ -88,14 +101,16 @@ func _ready() -> void:
 			global_position = s.global_position
 			_spawn_position = s.global_position
 
-	# 碰撞体尺寸
-	var col_shape = $CollisionShape2D.shape
-	if col_shape is RectangleShape2D:
-		col_shape.size = Vector2(18, 14)
-	elif col_shape is CircleShape2D:
-		col_shape.radius = 9.0
+	var body_shape_node := $CollisionShape2D
+	if body_shape_node != null and body_shape_node.shape != null:
+		body_shape_node.shape = body_shape_node.shape.duplicate()
+		var col_shape = body_shape_node.shape
+		if col_shape is RectangleShape2D:
+			col_shape.size = Vector2(18, 14)
+		elif col_shape is CircleShape2D:
+			col_shape.radius = 9.0
 	
-	# NavigationAgent 配置
+
 	agent.set_navigation_map(get_world_2d().navigation_map)
 	agent.avoidance_enabled = true
 	agent.max_speed = move_speed
@@ -106,12 +121,13 @@ func _ready() -> void:
 	_connect_dialogue_manager()
 
 	print("[Customer] Waiting %.1f seconds before entering..." % start_delay_sec)
-	await get_tree().create_timer(start_delay_sec).timeout
+	if not await _wait_seconds(start_delay_sec):
+		return
 	
 	_spawn_position = global_position
 	print("[Customer] Ready to enter. Position: ", global_position)
 	
-	# 随机食物
+
 	var food_choices = ["pizza", "hotdog", "sandwich"]
 	request_text = "Can I order a " + food_choices[randi() % food_choices.size()] + "?"
 	_roll_optional_drink_order()
@@ -160,14 +176,16 @@ func _start_eating() -> void:
 		return
 	current_state = State.EATING
 	print("[Customer] Started eating. Will finish in %.1f seconds." % eating_duration)
-	await get_tree().create_timer(eating_duration).timeout
+	if not await _wait_seconds(eating_duration):
+		return
 	_finish_eating()
 
 func _finish_eating() -> void:
 	if current_state != State.EATING:
 		return
 	print("[Customer] Finished eating. Preparing to leave...")
-	await get_tree().create_timer(leave_delay).timeout
+	if not await _wait_seconds(leave_delay):
+		return
 	_start_leaving()
 
 func _start_leaving() -> void:
@@ -198,13 +216,13 @@ func _pick_seat_and_go():
 		push_error("[Customer] No seats in 'seats' group.")
 		return
 	
-	# 获取已占用座位
+
 	var occupied_seats: Array[String] = []
 	for c in get_tree().get_nodes_in_group("customer"):
 		if c != self and "current_seat" in c and c.current_seat != "":
 			occupied_seats.append(c.current_seat)
 	
-	# 筛选可用座位
+
 	var available_seats: Array[Node2D] = []
 	for seat in seats:
 		if seat.name not in occupied_seats:
@@ -214,7 +232,8 @@ func _pick_seat_and_go():
 	
 	if available_seats.is_empty():
 		print("[Customer] No available seats! Waiting...")
-		await get_tree().create_timer(3.0).timeout
+		if not await _wait_seconds(3.0):
+			return
 		_pick_seat_and_go()
 		return
 
@@ -294,7 +313,7 @@ func _physics_process(dt: float) -> void:
 		_path_initialized = true
 		_last_pos = global_position
 
-	# ENTERING 卡住保护：3 秒几乎不前进则重选座位
+
 	if current_state == State.ENTERING:
 		var moved_dist := global_position.distance_to(_last_pos)
 		if moved_dist < 0.8:
@@ -338,12 +357,12 @@ func _physics_process(dt: float) -> void:
 		_on_reached()
 		return
 
-	# NavigationAgent 认为完成且距离可接受时，也视作到达。
+
 	if agent.is_navigation_finished() and dist <= ARRIVAL_DIST_STUCK:
 		_on_reached()
 		return
 
-	# 跟随 navmesh 路径，不再直线硬走。
+
 	var nav_next := agent.get_next_path_position()
 	var to_next := nav_next - global_position
 	if to_next.length() > 2.0:
@@ -431,7 +450,7 @@ func _update_anim_by_velocity(v: Vector2) -> void:
 	if anim.animation != anim_name:
 		anim.play(anim_name)
 
-# ==================== 公共 API ====================
+
 func get_state_name() -> String:
 	return State.keys()[current_state]
 
@@ -614,6 +633,7 @@ func _deliver_player_task_item(player: Node2D, player_inventory: Node, task: Dic
 			}
 		)
 		receive_item(item)
+		_thank_player_for_food(player, item_name)
 	task_board.complete_current_step(task_id, "DELIVER_AND_SERVE")
 	_refresh_order_bubble()
 
@@ -638,6 +658,27 @@ func _thank_player_for_drink(player: Node2D, item_name: String) -> void:
 		}
 	)
 
+func _thank_player_for_food(player: Node2D, item_name: String) -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	var line := "Thanks for the food."
+	match item_name.strip_edges().to_lower():
+		"pizza":
+			line = "Thanks for the pizza."
+		"hotdog":
+			line = "Thanks for the hotdog."
+		"sandwich":
+			line = "Thanks for the sandwich."
+	_request_customer_line(
+		player,
+		"customer_thank_for_food",
+		line,
+		{
+			"item_name": item_name,
+			"context_note": "The customer is thanking the player for delivering the requested dish."
+		}
+	)
+
 func _complain_about_missed_drink() -> void:
 	var players := get_tree().get_nodes_in_group("player")
 	if players.is_empty() or not (players[0] is Node2D):
@@ -658,6 +699,29 @@ func _complain_about_missed_drink() -> void:
 		{
 			"item_name": _drink_item,
 			"context_note": "The customer is complaining because the requested drink arrived too late."
+		}
+	)
+
+func _complain_about_missed_food_and_leave(item_name: String) -> void:
+	var players := get_tree().get_nodes_in_group("player")
+	if players.is_empty() or not (players[0] is Node2D):
+		return
+	var player := players[0] as Node2D
+	var line := "I've waited too long for my food. I'm leaving now."
+	match item_name.strip_edges().to_lower():
+		"pizza":
+			line = "I've waited too long for my pizza. I'm leaving now."
+		"hotdog":
+			line = "I've waited too long for my hotdog. I'm leaving now."
+		"sandwich":
+			line = "I've waited too long for my sandwich. I'm leaving now."
+	_request_customer_line(
+		player,
+		"customer_missed_food_leaving",
+		line,
+		{
+			"item_name": item_name,
+			"context_note": "The customer is upset because the main dish never arrived and is clearly saying they are leaving."
 		}
 	)
 
@@ -790,6 +854,12 @@ func _tick_order_timeouts() -> void:
 	var food_deadline_ms := get_task_deadline_ms()
 	if food_deadline_ms > 0 and now_ms >= food_deadline_ms:
 		_patience_timed_out = true
+		var food_task := _get_open_task_by_kind("food")
+		var food_item_name := _extract_food_from_request(request_text)
+		if not food_task.is_empty():
+			food_item_name = _task_payload_item_name(food_task.get("payload", {}))
+			if str(food_task.get("assigned_to", "")) == "player":
+				_complain_about_missed_food_and_leave(food_item_name)
 		print("[Customer] Patience timeout reached. Leaving now.")
 		if task_board and task_board.has_method("fail_task_by_customer"):
 			task_board.fail_task_by_customer(get_instance_id(), "customer_patience_timeout")

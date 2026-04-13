@@ -2,11 +2,11 @@
 extends Node
 class_name BTRunner
 
-const Core = preload("res://scripts/bt/bt_core.gd")  # 一定要在类型注解前
+const Core = preload("res://scripts/bt/bt_core.gd")
 
 var root: Core.Task = null
 var bb: Dictionary = {}
-var actor: Node = null   # 由外部（RobotServer）赋值
+var actor: Node = null
 
 func _ready() -> void:
 	if get_parent():

@@ -42,7 +42,7 @@ func realize_help_utterance(request: Dictionary) -> void:
 
 	var payload: Dictionary = request.get("payload", {})
 	var context: Dictionary = request.get("context_snapshot", {})
-	var mbti := str(context.get("personality", {}).get("mbti_type", ""))
+	var personality_hint := _format_personality_hint(context.get("personality", {}))
 	var request_type := str(request.get("type", "HANDOFF"))
 	var urgency := str(intent.get("urgency_level", "medium"))
 	var escalation := int(request.get("escalation_count", 0))
@@ -58,19 +58,19 @@ func realize_help_utterance(request: Dictionary) -> void:
 			"strategy": strategy,
 			"urgency": urgency,
 			"escalation": escalation,
-			"mbti": mbti,
+			"personality_hint": personality_hint,
 			"item": item,
 			"request_type": request_type
 		}, false, fallback)
 		return
 
 	var system_prompt := "Write one short in-game delegation line from robot to player. Keep it natural, concrete, polite, and under 18 words. No quotes. No options."
-	var user_prompt := "request_type=%s strategy=%s urgency=%s escalation=%d mbti=%s item=%s fallback=%s" % [
+	var user_prompt := "request_type=%s strategy=%s urgency=%s escalation=%d personality=%s item=%s fallback=%s" % [
 		request_type,
 		strategy,
 		urgency,
 		escalation,
-		mbti,
+		personality_hint,
 		item,
 		fallback
 	]
@@ -358,3 +358,15 @@ func _llm_temperature() -> float:
 	if exp and exp.has_method("get_llm_temperature"):
 		return float(exp.get_llm_temperature())
 	return 0.4
+
+func _format_personality_hint(personality: Dictionary) -> String:
+	var tipi_scores: Dictionary = personality.get("tipi_scores", {})
+	if tipi_scores.is_empty():
+		return ""
+	return "O=%.1f C=%.1f E=%.1f A=%.1f N=%.1f" % [
+		float(tipi_scores.get("O", 4.0)),
+		float(tipi_scores.get("C", 4.0)),
+		float(tipi_scores.get("E", 4.0)),
+		float(tipi_scores.get("A", 4.0)),
+		float(tipi_scores.get("N", 4.0)),
+	]
