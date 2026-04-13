@@ -5,7 +5,7 @@ class_name Inventory
 signal inventory_changed(items: Array)
 
 @export var capacity: int = 2
-var items: Array = []  # 每个元素: {name, atlas, region}
+var items: Array = []
 var _next_item_uid: int = 1
 
 func is_full() -> bool:

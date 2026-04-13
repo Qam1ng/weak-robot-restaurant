@@ -2,7 +2,7 @@
 extends CharacterBody2D
 
 @export var speed: float = 180.0
-@export var interact_radius: float = 48.0   # 与机器人交互半径（像素）
+@export var interact_radius: float = 48.0
 @export var player_max_active_tasks: int = 3  # Soft threshold only; does not hard-block delegation
 
 @onready var anim: AnimatedSprite2D = $AnimatedSprite2D
@@ -17,7 +17,7 @@ const PICKUP_STATION_RADIUS := 72.0
 var _active_pick_station_kind: String = ""
 
 func _ready() -> void:
-	add_to_group("player")  # 让门/物品的 Area2D 能识别你
+	add_to_group("player")
 
 	var cam := get_node_or_null("Camera2D")
 	if cam and cam is Camera2D:
