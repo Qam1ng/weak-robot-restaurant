@@ -279,3 +279,13 @@ func clear_all_customers() -> void:
 			c.queue_free()
 	active_customers.clear()
 	print("[CustomerSpawner] Cleared all customers")
+
+func shutdown_immediately() -> void:
+	_enabled = false
+	if spawn_timer != null:
+		spawn_timer.stop()
+	var customers := get_tree().get_nodes_in_group("customer")
+	for customer in customers:
+		if is_instance_valid(customer):
+			customer.free()
+	active_customers.clear()

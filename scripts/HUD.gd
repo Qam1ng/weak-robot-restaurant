@@ -28,8 +28,12 @@ var customer_tab_buttons: HBoxContainer
 var customer_live_btn: Button
 var customer_history_btn: Button
 var customer_items_box: VBoxContainer
+var customer_history_pager: HBoxContainer
+var customer_history_prev_btn: Button
+var customer_history_page_label: Label
+var customer_history_next_btn: Button
 var dialogue_panel: PanelContainer
-var dialogue_title: Label
+var dialogue_list: VBoxContainer
 var dialogue_log: RichTextLabel
 var tutorial_panel: PanelContainer
 var tutorial_body: RichTextLabel
@@ -72,7 +76,6 @@ const GAMEPLAY_TOP_OFFSET := -60.0
 const GAMEPLAY_BAND_WIDTH := 760.0
 const GAMEPLAY_SIDE_GAP := 24.0
 const SYSTEM_PANEL_X_OFFSET := 40.0
-const SYSTEM_PANEL_WIDTH_REDUCTION := 28.0
 const PLAYER_DIALOGUE_OVERLAY_Y := 84.0
 const PLAYER_DIALOGUE_OVERLAY_WIDTH := 520.0
 const PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT := 72.0
@@ -100,6 +103,8 @@ const SURVEY_QUESTION_Y_OFFSET := -34.0
 const SURVEY_RESULT_Y_OFFSET := -20.0
 var _score_game_over: bool = false
 var _tutorial_started: bool = false
+var _customer_history_page: int = 0
+const CUSTOMER_HISTORY_PAGE_SIZE := 5
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -197,6 +202,7 @@ func _setup_inventory_ui() -> void:
 	inventory_panel.name = "InventoryPanel"
 	add_child(inventory_panel)
 	inventory_panel.position = Vector2(SIDE_PANEL_MARGIN, 0.0)
+	inventory_panel.grow_vertical = Control.GROW_DIRECTION_END
 
 	var style = StyleBoxFlat.new()
 	style.bg_color = Color(0, 0, 0, 0.5)
@@ -205,6 +211,7 @@ func _setup_inventory_ui() -> void:
 	style.content_margin_top = 10
 	style.content_margin_bottom = 10
 	inventory_panel.add_theme_stylebox_override("panel", style)
+	inventory_panel.clip_contents = true
 
 	inventory_list = VBoxContainer.new()
 	inventory_panel.add_child(inventory_list)
@@ -295,6 +302,32 @@ func _setup_inventory_ui() -> void:
 	customer_items_box = VBoxContainer.new()
 	inventory_list.add_child(customer_items_box)
 
+	customer_history_pager = HBoxContainer.new()
+	customer_history_pager.alignment = BoxContainer.ALIGNMENT_BEGIN
+	customer_history_pager.add_theme_constant_override("separation", 8)
+	customer_history_pager.visible = false
+	inventory_list.add_child(customer_history_pager)
+
+	customer_history_prev_btn = Button.new()
+	customer_history_prev_btn.text = "Prev"
+	customer_history_prev_btn.pressed.connect(func():
+		_customer_history_page = maxi(_customer_history_page - 1, 0)
+		_update_customer_panel()
+	)
+	customer_history_pager.add_child(customer_history_prev_btn)
+
+	customer_history_page_label = Label.new()
+	customer_history_page_label.text = "Page 1 / 1"
+	customer_history_pager.add_child(customer_history_page_label)
+
+	customer_history_next_btn = Button.new()
+	customer_history_next_btn.text = "Next"
+	customer_history_next_btn.pressed.connect(func():
+		_customer_history_page += 1
+		_update_customer_panel()
+	)
+	customer_history_pager.add_child(customer_history_next_btn)
+
 	_left_panel_width = maxf(216.0, inventory_panel.get_combined_minimum_size().x + 6.0)
 	inventory_panel.custom_minimum_size = Vector2(_left_panel_width, 0.0)
 
@@ -303,6 +336,7 @@ func _setup_dialogue_feed_ui() -> void:
 	dialogue_panel.name = "DialogueFeedPanel"
 	add_child(dialogue_panel)
 	dialogue_panel.position = Vector2(SIDE_PANEL_MARGIN, 0.0)
+	dialogue_panel.grow_vertical = Control.GROW_DIRECTION_END
 	dialogue_panel.custom_minimum_size = Vector2(maxf(DIALOGUE_PANEL_WIDTH, _left_panel_width), 210)
 
 	var style = StyleBoxFlat.new()
@@ -312,22 +346,23 @@ func _setup_dialogue_feed_ui() -> void:
 	style.content_margin_top = 10
 	style.content_margin_bottom = 10
 	dialogue_panel.add_theme_stylebox_override("panel", style)
+	dialogue_panel.clip_contents = true
 
-	var vbox := VBoxContainer.new()
-	dialogue_panel.add_child(vbox)
+	dialogue_list = VBoxContainer.new()
+	dialogue_panel.add_child(dialogue_list)
 
-	dialogue_title = Label.new()
+	var dialogue_title := Label.new()
 	dialogue_title.text = "DIALOGUE"
 	dialogue_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	dialogue_title.add_theme_color_override("font_color", Color(0.75, 0.95, 1.0, 1.0))
-	vbox.add_child(dialogue_title)
+	dialogue_list.add_child(dialogue_title)
 
 	dialogue_log = RichTextLabel.new()
 	dialogue_log.custom_minimum_size = Vector2(maxf(170.0, dialogue_panel.custom_minimum_size.x - 30.0), 160)
 	dialogue_log.bbcode_enabled = false
 	dialogue_log.scroll_active = true
 	dialogue_log.fit_content = false
-	vbox.add_child(dialogue_log)
+	dialogue_list.add_child(dialogue_log)
 	_update_gameplay_panel_layout()
 
 func _setup_player_dialogue_overlay_ui() -> void:
@@ -486,8 +521,7 @@ func _on_robot_inventory_changed(items: Array) -> void:
 	if not robot_items_box:
 		return
 
-	for c in robot_items_box.get_children():
-		c.queue_free()
+	_clear_dynamic_children(robot_items_box)
 
 	var holding = Label.new()
 	holding.text = "Holding (%d/%d):" % [items.size(), _get_robot_capacity()]
@@ -508,8 +542,7 @@ func _on_player_inventory_changed(items: Array) -> void:
 	if not player_items_box:
 		return
 
-	for c in player_items_box.get_children():
-		c.queue_free()
+	_clear_dynamic_children(player_items_box)
 
 	var holding = Label.new()
 	holding.text = "Holding (%d/%d):" % [items.size(), _get_player_capacity()]
@@ -542,23 +575,31 @@ func _update_gameplay_panel_layout() -> void:
 	var view_size := vp.get_visible_rect().size
 	if view_size.x <= 0.0 or view_size.y <= 0.0:
 		return
-	var panel_w: float = maxf(_left_panel_width, DIALOGUE_PANEL_WIDTH)
-	var system_panel_w: float = maxf(200.0, panel_w - SYSTEM_PANEL_WIDTH_REDUCTION)
-	inventory_panel.custom_minimum_size.x = system_panel_w
-	dialogue_panel.custom_minimum_size.x = panel_w
+	var system_panel_w: float = maxf(_left_panel_width, inventory_panel.size.x)
+	var dialogue_panel_w: float = maxf(DIALOGUE_PANEL_WIDTH, dialogue_panel.size.x)
 	var center_x: float = view_size.x * 0.5
 	var gameplay_top_y: float = maxf(0.0, (view_size.y - GAMEPLAY_REFERENCE_HEIGHT) * 0.5) + GAMEPLAY_TOP_OFFSET
-	var left_x: float = maxf(
+	var system_x: float = maxf(
 		SIDE_PANEL_MARGIN,
-		center_x - GAMEPLAY_BAND_WIDTH * 0.5 - GAMEPLAY_SIDE_GAP - panel_w
+		center_x - GAMEPLAY_BAND_WIDTH * 0.5 - GAMEPLAY_SIDE_GAP - _left_panel_width + SYSTEM_PANEL_X_OFFSET
 	)
 	var dialogue_x: float = minf(
-		view_size.x - SIDE_PANEL_MARGIN - panel_w,
+		view_size.x - SIDE_PANEL_MARGIN - dialogue_panel_w,
 		center_x + GAMEPLAY_BAND_WIDTH * 0.5 + GAMEPLAY_SIDE_GAP
 	)
-	var system_right_x: float = left_x + SYSTEM_PANEL_X_OFFSET + panel_w
-	inventory_panel.position = Vector2(system_right_x - system_panel_w, gameplay_top_y)
+	inventory_panel.position = Vector2(system_x, gameplay_top_y)
 	dialogue_panel.position = Vector2(dialogue_x, gameplay_top_y)
+	var system_panel_h: float = 20.0
+	if inventory_list != null:
+		system_panel_h += inventory_list.get_combined_minimum_size().y
+	var dialogue_panel_h: float = 20.0
+	if dialogue_list != null:
+		dialogue_panel_h += dialogue_list.get_combined_minimum_size().y
+	dialogue_panel_h = maxf(dialogue_panel_h, 210.0)
+	inventory_panel.custom_minimum_size.y = system_panel_h
+	inventory_panel.size.y = system_panel_h
+	dialogue_panel.custom_minimum_size.y = dialogue_panel_h
+	dialogue_panel.size.y = dialogue_panel_h
 	var centered_x: float = (view_size.x - PLAYER_DIALOGUE_OVERLAY_WIDTH) * 0.5
 	var stack_y: float = PLAYER_DIALOGUE_OVERLAY_Y
 	if help_prompt_stack:
@@ -593,8 +634,7 @@ func _update_gameplay_panel_layout() -> void:
 func _update_robot_task_panel() -> void:
 	if robot_tasks_box == null:
 		return
-	for c in robot_tasks_box.get_children():
-		c.queue_free()
+	_clear_dynamic_children(robot_tasks_box)
 
 	var board = get_node_or_null("/root/TaskBoard")
 	var robots := get_tree().get_nodes_in_group("robot")
@@ -653,21 +693,24 @@ func _update_customer_panel() -> void:
 	if customer_items_box == null:
 		return
 
-	for c in customer_items_box.get_children():
-		c.queue_free()
+	_clear_dynamic_children(customer_items_box)
 
 	if _customer_tab == CUSTOMER_TAB_HISTORY:
+		if customer_history_pager:
+			customer_history_pager.visible = true
 		_update_customer_history_panel()
 		return
 
 	var customers := get_tree().get_nodes_in_group("customer")
 	if customers.is_empty():
+		if customer_history_pager:
+			customer_history_pager.visible = false
 		_add_blank_row(customer_items_box)
 		return
 
 	var board = get_node_or_null("/root/TaskBoard")
 	var now_ms := Time.get_ticks_msec()
-	var shown_count := 0
+	var customer_lines: Array[Label] = []
 	for n in customers:
 		if not (n is Node):
 			continue
@@ -699,7 +742,6 @@ func _update_customer_panel() -> void:
 		if ended_task_recently and state != "EATING":
 			continue
 
-		var line := Label.new()
 		var table_text := _friendly_table_name(seat)
 		var food_task := _task_by_kind(open_tasks, "food")
 		var drink_task := _task_by_kind(open_tasks, "drink")
@@ -713,33 +755,56 @@ func _update_customer_panel() -> void:
 				display_state = "Waiting"
 			elif not drink_task.is_empty():
 				display_state = "Waiting"
-		if state == "WAITING_FOR_FOOD":
-			var parts: Array[String] = [table_text]
-			if not food_task.is_empty():
-				parts.append("%s %s" % [_compact_item_name(food_task.get("payload", {})), _countdown_text_from_task(food_task, now_ms)])
-			if not drink_task.is_empty():
-				parts.append("%s %s" % [_compact_item_name(drink_task.get("payload", {})), _countdown_text_from_task(drink_task, now_ms)])
-			parts.append(_compact_customer_status(display_state))
-			line.text = " | ".join(parts)
-			if (not food_task.is_empty() and _countdown_text_from_task(food_task, now_ms) == "0s") or (not drink_task.is_empty() and _countdown_text_from_task(drink_task, now_ms) == "0s"):
-				line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
-		else:
-			var parts: Array[String] = [table_text]
-			if not food_task.is_empty():
-				parts.append(_compact_item_name(food_task.get("payload", {})))
-			if not drink_task.is_empty():
-				parts.append(_compact_item_name(drink_task.get("payload", {})))
-			parts.append(_compact_customer_status(display_state))
-			line.text = " | ".join(parts)
-		customer_items_box.add_child(line)
-		shown_count += 1
+		if not food_task.is_empty():
+			var food_line := Label.new()
+			var food_parts: Array[String] = [table_text]
+			food_parts.append(_compact_item_name(food_task.get("payload", {})))
+			if state == "WAITING_FOR_FOOD":
+				food_parts.append(_countdown_text_from_task(food_task, now_ms))
+			food_parts.append(_compact_customer_status(display_state))
+			food_line.text = " | ".join(food_parts)
+			if state == "WAITING_FOR_FOOD" and _countdown_text_from_task(food_task, now_ms) == "0s":
+				food_line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
+			customer_lines.append(food_line)
 
-	if shown_count == 0:
+		if not drink_task.is_empty():
+			var drink_line := Label.new()
+			var drink_parts: Array[String] = [table_text]
+			drink_parts.append(_compact_item_name(drink_task.get("payload", {})))
+			if state == "WAITING_FOR_FOOD":
+				drink_parts.append(_countdown_text_from_task(drink_task, now_ms))
+			drink_parts.append(_compact_customer_status(display_state))
+			drink_line.text = " | ".join(drink_parts)
+			if state == "WAITING_FOR_FOOD" and _countdown_text_from_task(drink_task, now_ms) == "0s":
+				drink_line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
+			customer_lines.append(drink_line)
+
+	if customer_lines.is_empty():
+		if customer_history_pager:
+			customer_history_pager.visible = false
 		_add_blank_row(customer_items_box)
+		return
+
+	var total_pages := maxi(1, int(ceili(float(customer_lines.size()) / float(CUSTOMER_HISTORY_PAGE_SIZE))))
+	_customer_history_page = clampi(_customer_history_page, 0, total_pages - 1)
+	var start_index := _customer_history_page * CUSTOMER_HISTORY_PAGE_SIZE
+	var end_index := mini(start_index + CUSTOMER_HISTORY_PAGE_SIZE, customer_lines.size())
+	if customer_history_pager:
+		customer_history_pager.visible = total_pages > 1
+	if customer_history_prev_btn:
+		customer_history_prev_btn.disabled = (_customer_history_page <= 0)
+	if customer_history_next_btn:
+		customer_history_next_btn.disabled = (_customer_history_page >= total_pages - 1)
+	if customer_history_page_label:
+		customer_history_page_label.text = "Page %d / %d" % [_customer_history_page + 1, total_pages]
+	for i in range(start_index, end_index):
+		customer_items_box.add_child(customer_lines[i])
 
 func _update_customer_history_panel() -> void:
 	var board = get_node_or_null("/root/TaskBoard")
 	if board == null or not board.has_method("get_all_tasks"):
+		if customer_history_pager:
+			customer_history_pager.visible = false
 		_add_blank_row(customer_items_box)
 		return
 
@@ -756,6 +821,8 @@ func _update_customer_history_panel() -> void:
 	customer_items_box.add_child(summary)
 
 	if ended.is_empty():
+		if customer_history_pager:
+			customer_history_pager.visible = false
 		_add_blank_row(customer_items_box)
 		return
 
@@ -765,8 +832,20 @@ func _update_customer_history_panel() -> void:
 		return ta > tb
 	)
 
-	var show_count := mini(8, ended.size())
-	for i in range(show_count):
+	var total_pages := maxi(1, int(ceili(float(ended.size()) / float(CUSTOMER_HISTORY_PAGE_SIZE))))
+	_customer_history_page = clampi(_customer_history_page, 0, total_pages - 1)
+	var start_index := _customer_history_page * CUSTOMER_HISTORY_PAGE_SIZE
+	var end_index := mini(start_index + CUSTOMER_HISTORY_PAGE_SIZE, ended.size())
+	if customer_history_pager:
+		customer_history_pager.visible = total_pages > 1
+	if customer_history_prev_btn:
+		customer_history_prev_btn.disabled = (_customer_history_page <= 0)
+	if customer_history_next_btn:
+		customer_history_next_btn.disabled = (_customer_history_page >= total_pages - 1)
+	if customer_history_page_label:
+		customer_history_page_label.text = "Page %d / %d" % [_customer_history_page + 1, total_pages]
+
+	for i in range(start_index, end_index):
 		var task: Dictionary = ended[i]
 		var payload: Dictionary = task.get("payload", {})
 		var seat := _friendly_table_name(str(payload.get("seat", "-")))
@@ -785,6 +864,8 @@ func _update_customer_history_panel() -> void:
 		customer_items_box.add_child(line)
 
 func _set_customer_tab(tab: String) -> void:
+	if _customer_tab != tab:
+		_customer_history_page = 0
 	_customer_tab = tab
 	if customer_live_btn:
 		customer_live_btn.button_pressed = (_customer_tab == CUSTOMER_TAB_LIVE)
@@ -795,8 +876,7 @@ func _set_customer_tab(tab: String) -> void:
 func _update_player_task_panel() -> void:
 	if player_tasks_box == null:
 		return
-	for c in player_tasks_box.get_children():
-		c.queue_free()
+	_clear_dynamic_children(player_tasks_box)
 
 	var board = get_node_or_null("/root/TaskBoard")
 	if board == null or not board.has_method("get_in_progress_tasks_for_assignee"):
@@ -844,6 +924,13 @@ func _add_blank_row(container: Container, min_height: float = 18.0) -> void:
 	var spacer := Control.new()
 	spacer.custom_minimum_size = Vector2(0.0, min_height)
 	container.add_child(spacer)
+
+func _clear_dynamic_children(container: Node) -> void:
+	if container == null:
+		return
+	for child in container.get_children():
+		container.remove_child(child)
+		child.free()
 
 func _track_player_live_task_ids(tasks: Array[Dictionary]) -> void:
 	var current_ids := {}

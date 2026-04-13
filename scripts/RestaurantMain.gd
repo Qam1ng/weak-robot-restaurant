@@ -20,6 +20,12 @@ func _ready() -> void:
 	await _setup_navigation()
 	_register_customer_spawner()
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		var spawner := get_node_or_null("CustomerSpawner")
+		if spawner != null and spawner.has_method("shutdown_immediately"):
+			spawner.shutdown_immediately()
+
 func _apply_window_constraints() -> void:
 	var window := get_window()
 	if window == null:
