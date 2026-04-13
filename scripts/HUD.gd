@@ -79,7 +79,6 @@ const SYSTEM_PANEL_X_OFFSET := 40.0
 const SYSTEM_PANEL_WIDTH_REDUCTION := 28.0
 const PLAYER_DIALOGUE_OVERLAY_Y := 84.0
 const PLAYER_DIALOGUE_OVERLAY_WIDTH := 520.0
-const PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT := 72.0
 const PLAYER_DIALOGUE_OVERLAY_SHOW_SEC := 5.0
 const PLAYER_DIALOGUE_STACK_GAP := 10.0
 const HELP_PROMPT_MAX_STACK := 2
@@ -405,7 +404,7 @@ func _setup_player_dialogue_overlay_ui() -> void:
 	style.content_margin_top = 10
 	style.content_margin_bottom = 10
 	player_dialogue_overlay.add_theme_stylebox_override("panel", style)
-	player_dialogue_overlay.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT)
+	player_dialogue_overlay.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, 0.0)
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 10)
@@ -416,7 +415,7 @@ func _setup_player_dialogue_overlay_ui() -> void:
 	player_dialogue_overlay_label.fit_content = true
 	player_dialogue_overlay_label.scroll_active = false
 	player_dialogue_overlay_label.selection_enabled = false
-	player_dialogue_overlay_label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT - 20.0)
+	player_dialogue_overlay_label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, 0.0)
 	vbox.add_child(player_dialogue_overlay_label)
 
 	player_dialogue_overlay_buttons = HBoxContainer.new()
@@ -1726,7 +1725,7 @@ func _show_player_dialogue_overlay(speaker: String, text: String, kind: String) 
 		speaker_color = Color(1.0, 0.84, 0.36, 1.0)
 
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT)
+	card.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, 0.0)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.08, 0.11, 0.16, 0.90)
 	style.border_width_left = 2
@@ -1749,7 +1748,7 @@ func _show_player_dialogue_overlay(speaker: String, text: String, kind: String) 
 	label.fit_content = true
 	label.scroll_active = false
 	label.selection_enabled = false
-	label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT - 20.0)
+	label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, 0.0)
 	card.add_child(label)
 	label.push_color(speaker_color)
 	label.add_text(speaker)
@@ -1800,7 +1799,7 @@ func _show_player_dialogue_prompt(title: String, body: String, button_texts: Arr
 func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 	var rid := str(request.get("id", ""))
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT)
+	card.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, 0.0)
 
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.08, 0.11, 0.16, 0.92)
@@ -1828,7 +1827,7 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 	label.fit_content = true
 	label.scroll_active = false
 	label.selection_enabled = false
-	label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT - 20.0)
+	label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, 0.0)
 	vbox.add_child(label)
 	label.push_color(Color(1.0, 0.84, 0.36, 1.0))
 	label.add_text("Robot Request")
