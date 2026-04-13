@@ -76,6 +76,7 @@ const GAMEPLAY_TOP_OFFSET := -60.0
 const GAMEPLAY_BAND_WIDTH := 760.0
 const GAMEPLAY_SIDE_GAP := 24.0
 const SYSTEM_PANEL_X_OFFSET := 40.0
+const SYSTEM_PANEL_WIDTH_REDUCTION := 28.0
 const PLAYER_DIALOGUE_OVERLAY_Y := 84.0
 const PLAYER_DIALOGUE_OVERLAY_WIDTH := 520.0
 const PLAYER_DIALOGUE_OVERLAY_MIN_HEIGHT := 72.0
@@ -328,7 +329,9 @@ func _setup_inventory_ui() -> void:
 	)
 	customer_history_pager.add_child(customer_history_next_btn)
 
-	_left_panel_width = maxf(216.0, inventory_panel.get_combined_minimum_size().x + 6.0)
+	var measured_panel_w: float = maxf(216.0, inventory_panel.get_combined_minimum_size().x + 6.0)
+	var base_panel_w: float = maxf(measured_panel_w, DIALOGUE_PANEL_WIDTH)
+	_left_panel_width = maxf(200.0, base_panel_w - SYSTEM_PANEL_WIDTH_REDUCTION)
 	inventory_panel.custom_minimum_size = Vector2(_left_panel_width, 0.0)
 
 func _setup_dialogue_feed_ui() -> void:

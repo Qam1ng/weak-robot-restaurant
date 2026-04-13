@@ -101,12 +101,14 @@ func _ready() -> void:
 			global_position = s.global_position
 			_spawn_position = s.global_position
 
-
-	var col_shape = $CollisionShape2D.shape
-	if col_shape is RectangleShape2D:
-		col_shape.size = Vector2(18, 14)
-	elif col_shape is CircleShape2D:
-		col_shape.radius = 9.0
+	var body_shape_node := $CollisionShape2D
+	if body_shape_node != null and body_shape_node.shape != null:
+		body_shape_node.shape = body_shape_node.shape.duplicate()
+		var col_shape = body_shape_node.shape
+		if col_shape is RectangleShape2D:
+			col_shape.size = Vector2(18, 14)
+		elif col_shape is CircleShape2D:
+			col_shape.radius = 9.0
 	
 
 	agent.set_navigation_map(get_world_2d().navigation_map)
@@ -631,6 +633,7 @@ func _deliver_player_task_item(player: Node2D, player_inventory: Node, task: Dic
 			}
 		)
 		receive_item(item)
+		_thank_player_for_food(player, item_name)
 	task_board.complete_current_step(task_id, "DELIVER_AND_SERVE")
 	_refresh_order_bubble()
 
@@ -655,6 +658,27 @@ func _thank_player_for_drink(player: Node2D, item_name: String) -> void:
 		}
 	)
 
+func _thank_player_for_food(player: Node2D, item_name: String) -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	var line := "Thanks for the food."
+	match item_name.strip_edges().to_lower():
+		"pizza":
+			line = "Thanks for the pizza."
+		"hotdog":
+			line = "Thanks for the hotdog."
+		"sandwich":
+			line = "Thanks for the sandwich."
+	_request_customer_line(
+		player,
+		"customer_thank_for_food",
+		line,
+		{
+			"item_name": item_name,
+			"context_note": "The customer is thanking the player for delivering the requested dish."
+		}
+	)
+
 func _complain_about_missed_drink() -> void:
 	var players := get_tree().get_nodes_in_group("player")
 	if players.is_empty() or not (players[0] is Node2D):
@@ -675,6 +699,29 @@ func _complain_about_missed_drink() -> void:
 		{
 			"item_name": _drink_item,
 			"context_note": "The customer is complaining because the requested drink arrived too late."
+		}
+	)
+
+func _complain_about_missed_food_and_leave(item_name: String) -> void:
+	var players := get_tree().get_nodes_in_group("player")
+	if players.is_empty() or not (players[0] is Node2D):
+		return
+	var player := players[0] as Node2D
+	var line := "I've waited too long for my food. I'm leaving now."
+	match item_name.strip_edges().to_lower():
+		"pizza":
+			line = "I've waited too long for my pizza. I'm leaving now."
+		"hotdog":
+			line = "I've waited too long for my hotdog. I'm leaving now."
+		"sandwich":
+			line = "I've waited too long for my sandwich. I'm leaving now."
+	_request_customer_line(
+		player,
+		"customer_missed_food_leaving",
+		line,
+		{
+			"item_name": item_name,
+			"context_note": "The customer is upset because the main dish never arrived and is clearly saying they are leaving."
 		}
 	)
 
@@ -807,6 +854,12 @@ func _tick_order_timeouts() -> void:
 	var food_deadline_ms := get_task_deadline_ms()
 	if food_deadline_ms > 0 and now_ms >= food_deadline_ms:
 		_patience_timed_out = true
+		var food_task := _get_open_task_by_kind("food")
+		var food_item_name := _extract_food_from_request(request_text)
+		if not food_task.is_empty():
+			food_item_name = _task_payload_item_name(food_task.get("payload", {}))
+			if str(food_task.get("assigned_to", "")) == "player":
+				_complain_about_missed_food_and_leave(food_item_name)
 		print("[Customer] Patience timeout reached. Leaving now.")
 		if task_board and task_board.has_method("fail_task_by_customer"):
 			task_board.fail_task_by_customer(get_instance_id(), "customer_patience_timeout")
