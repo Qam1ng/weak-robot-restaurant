@@ -14,6 +14,7 @@ var last_dir: Vector2 = Vector2.DOWN
 const FOOD_PICK_OPTIONS: Array[String] = ["pizza", "hotdog", "sandwich"]
 const DRINK_PICK_OPTIONS: Array[String] = ["cola", "tea", "coffee"]
 const PICKUP_STATION_RADIUS := 72.0
+const PLAYER_ITEM_TTL_MS := 120_000
 var _active_pick_station_kind: String = ""
 
 func _ready() -> void:
@@ -58,6 +59,7 @@ func _physics_process(_dt: float) -> void:
 	move_and_slide()
 	_update_animation(v)
 	_auto_close_kitchen_pick_popup_if_left_zone()
+	_expire_stale_inventory_items()
 
 func _update_animation(input_dir: Vector2) -> void:
 	var moving: bool = input_dir.length() > 0.0
@@ -161,7 +163,7 @@ func _on_kitchen_pick_selected(item_name: String) -> void:
 	if not _complete_one_matching_pickup_step(wanted, _active_pick_station_kind):
 		_notify_player("No matching pickup task for " + wanted.capitalize() + ".")
 		return
-	inventory.add_item(wanted, null, Rect2i())
+	inventory.add_item(wanted, null, Rect2i(), _player_item_meta(wanted))
 	_notify_player("Picked: " + wanted.capitalize())
 
 func _complete_one_matching_pickup_step(item_name: String, station_kind: String) -> bool:
@@ -191,6 +193,40 @@ func _notify_player(text: String) -> void:
 	var hud := _get_hud()
 	if hud and hud.has_method("show_quick_notice"):
 		hud.call("show_quick_notice", text)
+
+func _player_item_meta(item_name: String, extra: Dictionary = {}) -> Dictionary:
+	var now_ms := Time.get_ticks_msec()
+	var meta := {
+		"item_owner": "player",
+		"item_name": item_name,
+		"picked_up_at_ms": now_ms,
+		"expires_at_ms": now_ms + PLAYER_ITEM_TTL_MS
+	}
+	for key in extra.keys():
+		meta[key] = extra[key]
+	return meta
+
+func _expire_stale_inventory_items() -> void:
+	if inventory == null or inventory.items.is_empty():
+		return
+	var now_ms := Time.get_ticks_msec()
+	var kept: Array = []
+	var expired_names: Array[String] = []
+	for raw_entry in inventory.items:
+		var entry: Dictionary = raw_entry
+		var expires_at_ms := int(entry.get("expires_at_ms", 0))
+		if expires_at_ms > 0 and now_ms >= expires_at_ms:
+			expired_names.append(str(entry.get("name", "item")).capitalize())
+			continue
+		kept.append(entry)
+	if expired_names.is_empty():
+		return
+	inventory.items = kept
+	inventory.emit_signal("inventory_changed", inventory.items)
+	if expired_names.size() == 1:
+		_notify_player("%s expired in your bag." % expired_names[0])
+	else:
+		_notify_player("%d items expired in your bag." % expired_names.size())
 
 func _nearest_pickup_station_kind() -> String:
 	var nearest_kind := ""

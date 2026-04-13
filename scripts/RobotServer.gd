@@ -45,6 +45,7 @@ const EMERGENCY_RECHARGE_RESUME_LEVEL := 55.0
 const EMERGENCY_HANDOFF_APPROACH_DISTANCE := 120.0
 const DEADLINE_HANDOFF_TRIGGER_MS := 45_000
 const ORPHAN_FOOD_ITEM_TTL_MS := 45_000
+const PLAYER_ITEM_TTL_MS := 120_000
 var _active_task_id: String = ""
 var _active_task_step: String = ""
 var _active_step_started: bool = false
@@ -1535,7 +1536,17 @@ func _transfer_item_to_player_for_handoff(payload: Dictionary) -> String:
 		return "missing_item"
 	var item: Dictionary = inventory.items.pop_at(idx)
 	var item_name := str(item.get("name", "item"))
-	var accepted: bool = p_inv.add_item(item_name, item.get("atlas", null), item.get("region", Rect2i()))
+	var accepted: bool = p_inv.add_item(
+		item_name,
+		item.get("atlas", null),
+		item.get("region", Rect2i()),
+		{
+			"item_owner": "player",
+			"task_id": task_id,
+			"picked_up_at_ms": Time.get_ticks_msec(),
+			"expires_at_ms": Time.get_ticks_msec() + PLAYER_ITEM_TTL_MS
+		}
+	)
 	if not accepted:
 		inventory.items.insert(idx, item)
 		inventory.emit_signal("inventory_changed", inventory.items)
