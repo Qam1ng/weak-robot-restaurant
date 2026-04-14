@@ -25,6 +25,9 @@ func _notification(what: int) -> void:
 		var spawner := get_node_or_null("CustomerSpawner")
 		if spawner != null and spawner.has_method("shutdown_immediately"):
 			spawner.shutdown_immediately()
+		for hud in get_tree().get_nodes_in_group("hud"):
+			if hud != null and hud.has_method("shutdown_immediately"):
+				hud.call("shutdown_immediately")
 
 func _apply_window_constraints() -> void:
 	var window := get_window()

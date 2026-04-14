@@ -796,43 +796,62 @@ func _update_customer_panel() -> void:
 					ended_task_recently = true
 					break
 
-		if ended_task_recently and state != "EATING":
+		if ended_task_recently and state != "EATING" and state != "LEAVING":
 			continue
 
 		var table_text := _friendly_table_name(seat)
 		var food_task := _task_by_kind(open_tasks, "food")
 		var drink_task := _task_by_kind(open_tasks, "drink")
-		var display_state := _friendly_customer_state(state, _current_customer_step_name(food_task))
-		if state == "WAITING_FOR_FOOD":
-			var food_step := _current_customer_step_name(food_task)
-			var drink_step := _current_customer_step_name(drink_task)
-			if food_step == "TAKE_ORDER":
-				display_state = "Waiting"
-			elif not drink_task.is_empty() and drink_step == "TAKE_ORDER":
-				display_state = "Waiting"
-			elif not drink_task.is_empty():
-				display_state = "Waiting"
-		if not food_task.is_empty():
+		var has_received_food := cnode.has_method("has_received_food") and bool(cnode.call("has_received_food"))
+		var has_received_drink := cnode.has_method("has_received_drink") and bool(cnode.call("has_received_drink"))
+		var request_text := str(cnode.get("request_text")) if "request_text" in cnode else ""
+		var food_item_name := _extract_food_from_request(request_text)
+		if cnode.has_method("get_food_item_name"):
+			food_item_name = str(cnode.call("get_food_item_name")).strip_edges().to_lower()
+		var drink_item_name := ""
+		if cnode.has_method("get_drink_item_name"):
+			drink_item_name = str(cnode.call("get_drink_item_name")).strip_edges().to_lower()
+
+		if not food_task.is_empty() or has_received_food or state == "LEAVING":
 			var food_line := Label.new()
 			var food_parts: Array[String] = [table_text]
-			food_parts.append(_compact_item_name(food_task.get("payload", {})))
-			if state == "WAITING_FOR_FOOD":
+			if not food_task.is_empty():
+				food_parts.append(_compact_item_name(food_task.get("payload", {})))
+			else:
+				food_parts.append(food_item_name.capitalize())
+			if not food_task.is_empty() and not has_received_food:
 				food_parts.append(_countdown_text_from_task(food_task, now_ms))
-			food_parts.append(_compact_customer_status(display_state))
+			var food_status := "Waiting"
+			if has_received_food:
+				if state == "LEAVING":
+					food_status = "Leaving"
+				elif not drink_task.is_empty() and not has_received_drink:
+					food_status = "Ready"
+				else:
+					food_status = "Eating"
+			elif state == "LEAVING":
+				food_status = "Leaving"
+			food_parts.append(_compact_customer_status(food_status))
 			food_line.text = " | ".join(food_parts)
-			if state == "WAITING_FOR_FOOD" and _countdown_text_from_task(food_task, now_ms) == "0s":
+			if not food_task.is_empty() and not has_received_food and _countdown_text_from_task(food_task, now_ms) == "0s":
 				food_line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
 			customer_lines.append(food_line)
 
-		if not drink_task.is_empty():
+		if not drink_task.is_empty() or has_received_drink:
 			var drink_line := Label.new()
 			var drink_parts: Array[String] = [table_text]
-			drink_parts.append(_compact_item_name(drink_task.get("payload", {})))
-			if state == "WAITING_FOR_FOOD":
+			if not drink_task.is_empty():
+				drink_parts.append(_compact_item_name(drink_task.get("payload", {})))
+			else:
+				drink_parts.append(drink_item_name.capitalize())
+			if not drink_task.is_empty() and not has_received_drink:
 				drink_parts.append(_countdown_text_from_task(drink_task, now_ms))
-			drink_parts.append(_compact_customer_status(display_state))
+			var drink_status := "Waiting"
+			if has_received_drink:
+				drink_status = "Leaving" if state == "LEAVING" else "Eating"
+			drink_parts.append(_compact_customer_status(drink_status))
 			drink_line.text = " | ".join(drink_parts)
-			if state == "WAITING_FOR_FOOD" and _countdown_text_from_task(drink_task, now_ms) == "0s":
+			if not drink_task.is_empty() and not has_received_drink and _countdown_text_from_task(drink_task, now_ms) == "0s":
 				drink_line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
 			customer_lines.append(drink_line)
 
@@ -854,8 +873,12 @@ func _update_customer_panel() -> void:
 		customer_history_next_btn.disabled = (_customer_history_page >= total_pages - 1)
 	if customer_history_page_label:
 		customer_history_page_label.text = "Page %d / %d" % [_customer_history_page + 1, total_pages]
-	for i in range(start_index, end_index):
-		customer_items_box.add_child(customer_lines[i])
+	for i in range(customer_lines.size()):
+		var line := customer_lines[i]
+		if i >= start_index and i < end_index:
+			customer_items_box.add_child(line)
+		elif is_instance_valid(line):
+			line.free()
 
 func _update_customer_history_panel() -> void:
 	var board = get_node_or_null("/root/TaskBoard")
@@ -988,6 +1011,36 @@ func _clear_dynamic_children(container: Node) -> void:
 	for child in container.get_children():
 		container.remove_child(child)
 		child.free()
+
+func shutdown_immediately() -> void:
+	_help_prompt_cards.clear()
+	_player_dialogue_info_cards.clear()
+	_last_help_bubble_utterance_by_request.clear()
+	_shown_help_system_notice_by_request.clear()
+	_auto_open_in_flight.clear()
+	if robot_items_box:
+		_clear_dynamic_children(robot_items_box)
+	if robot_tasks_box:
+		_clear_dynamic_children(robot_tasks_box)
+	if player_items_box:
+		_clear_dynamic_children(player_items_box)
+	if player_tasks_box:
+		_clear_dynamic_children(player_tasks_box)
+	if customer_items_box:
+		_clear_dynamic_children(customer_items_box)
+	if survey_options:
+		_clear_dynamic_children(survey_options)
+	if help_prompt_stack:
+		_clear_dynamic_children(help_prompt_stack)
+	if player_dialogue_info_stack:
+		_clear_dynamic_children(player_dialogue_info_stack)
+	if dialogue_log:
+		dialogue_log.clear()
+	if player_dialogue_overlay_label:
+		player_dialogue_overlay_label.clear()
+	if tutorial_body:
+		tutorial_body.clear()
+	_hide_player_dialogue_overlay()
 
 func _track_player_live_task_ids(tasks: Array[Dictionary]) -> void:
 	var current_ids := {}
