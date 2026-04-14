@@ -4,7 +4,7 @@ signal utterance_generated(request_id: String, utterance: String, meta: Dictiona
 signal directed_utterance_generated(request_id: String, utterance: String, meta: Dictionary)
 
 const OPENAI_URL := "https://api.openai.com/v1/chat/completions"
-const API_DIALOGUE_URL := "/api/dialogue"
+const API_DIALOGUE_URL := "https://us-central1-weak-robot-restaurant-web.cloudfunctions.net/apiDialogue"
 const DEFAULT_MODEL := "gpt-4o-mini"
 const KEY_FILE_PATH := "res://secrets/openai_api_key.txt"
 

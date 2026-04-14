@@ -16,7 +16,7 @@ signal day_changed(day: int)
 @export var afternoon_time_multiplier: float = 1.0
 @export var night_time_multiplier: float = 1.0
 
-@export var start_hour: int = 8
+@export var start_hour: int = 6
 
 @export var start_minute: int = 0
 
@@ -33,8 +33,8 @@ const PERIOD_NAMES = {
 
 
 const PERIOD_CONFIG = {
-	Period.MORNING: [6, 11, false],
-	Period.LUNCH: [11, 14, true],
+	Period.MORNING: [6, 10, false],
+	Period.LUNCH: [10, 14, true],
 	Period.AFTERNOON: [14, 17, false],
 	Period.DINNER: [17, 23, true],
 	Period.NIGHT: [23, 6, false]
@@ -98,24 +98,26 @@ func _get_minutes_per_second() -> float:
 
 func _advance_time(minutes: int) -> void:
 	current_minute += minutes
-	
+
 	while current_minute >= 60:
 		current_minute -= 60
 		current_hour += 1
 		
 		if current_hour >= 24:
 			current_hour = 0
-			current_day += 1
-			day_changed.emit(current_day)
-			print("[TimeManager] New day: %d" % current_day)
-	
+
+	if current_hour == start_hour and current_minute == start_minute:
+		current_day += 1
+		day_changed.emit(current_day)
+		print("[TimeManager] New day: %d" % current_day)
+
 	time_changed.emit(current_hour, current_minute)
 	_update_period()
 
 func _update_period() -> void:
 	var old_period = current_period
 	var old_is_peak = is_peak_time
-	
+
 
 	for period in PERIOD_CONFIG:
 		var config = PERIOD_CONFIG[period]
@@ -133,10 +135,10 @@ func _update_period() -> void:
 				current_period = period
 				is_peak_time = config[2]
 				break
-	
+
 
 	is_open = current_period != Period.NIGHT
-	
+
 
 	if old_period != current_period or old_is_peak != is_peak_time:
 		var period_name = get_period_name()
@@ -179,25 +181,25 @@ func skip_to_next_period() -> void:
 		Period.LUNCH: [14, 0],
 		Period.AFTERNOON: [17, 0],
 		Period.DINNER: [23, 0],
-		Period.NIGHT: [6, 0]
+		Period.NIGHT: [start_hour, start_minute]
 	}
-	
-	var next = next_periods.get(current_period, [8, 0])
-	
+
+	var next = next_periods.get(current_period, [start_hour, start_minute])
+
 
 	if current_period == Period.NIGHT:
 		current_day += 1
 		day_changed.emit(current_day)
-	
+
 	set_time(next[0], next[1])
 
 
 func get_busyness() -> float:
 	match current_period:
-		Period.LUNCH, Period.DINNER:
-			return 1.0
+		Period.DINNER, Period.LUNCH:
+			return 1.2
 		Period.MORNING, Period.AFTERNOON:
-			return 0.5
+			return 0.8
 		Period.NIGHT:
-			return 0.0
-	return 0.5
+			return 0.5
+	return 0.8

@@ -23,7 +23,7 @@ const REPLAY_JSONL_FILE = "user://data/replay/replay_events.jsonl"
 
 var _help_event_seq: int = 0
 var _session_id: String = ""
-const API_LOG_URL := "/api/log"
+const API_LOG_URL := "https://us-central1-weak-robot-restaurant-web.cloudfunctions.net/apiLog"
 
 signal episode_started(episode_id: String)
 signal episode_ended(episode_data: Dictionary)
