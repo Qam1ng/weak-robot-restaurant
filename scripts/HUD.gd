@@ -18,6 +18,7 @@ signal kitchen_pick_selected(item_name: String)
 
 var inventory_panel: PanelContainer
 var inventory_list: VBoxContainer
+var day_phase_label: Label
 var score_label: Label
 var battery_label: Label
 var robot_items_box: VBoxContainer
@@ -225,13 +226,38 @@ func _setup_inventory_ui() -> void:
 	title.add_theme_color_override("font_color", Color(0.75, 0.95, 1.0, 1.0))
 	inventory_list.add_child(title)
 
+	day_phase_label = Label.new()
+	day_phase_label.text = "Day 1 | Morning"
+	day_phase_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	day_phase_label.add_theme_color_override("font_color", Color(0.94, 0.94, 0.94, 1.0))
+	inventory_list.add_child(day_phase_label)
+
+	var sep0 = HSeparator.new()
+	inventory_list.add_child(sep0)
+
+	var player_title = Label.new()
+	player_title.text = "PLAYER"
+	player_title.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
+	inventory_list.add_child(player_title)
+
 	score_label = Label.new()
 	score_label.text = "Score: 0"
 	score_label.add_theme_color_override("font_color", Color(0.86, 0.96, 1.0, 1.0))
 	inventory_list.add_child(score_label)
 
-	var sep0 = HSeparator.new()
-	inventory_list.add_child(sep0)
+	player_items_box = VBoxContainer.new()
+	inventory_list.add_child(player_items_box)
+
+	var player_task_title = Label.new()
+	player_task_title.text = "Assigned Tasks"
+	player_task_title.add_theme_color_override("font_color", Color(0.78, 0.94, 1.0, 1.0))
+	inventory_list.add_child(player_task_title)
+
+	player_tasks_box = VBoxContainer.new()
+	inventory_list.add_child(player_tasks_box)
+
+	var sep = HSeparator.new()
+	inventory_list.add_child(sep)
 
 	var robot_title = Label.new()
 	robot_title.text = "ROBOT"
@@ -254,31 +280,12 @@ func _setup_inventory_ui() -> void:
 	robot_tasks_box = VBoxContainer.new()
 	inventory_list.add_child(robot_tasks_box)
 
-	var sep = HSeparator.new()
-	inventory_list.add_child(sep)
-
-	var player_title = Label.new()
-	player_title.text = "PLAYER"
-	player_title.add_theme_color_override("font_color", Color(1.0, 0.93, 0.74, 1.0))
-	inventory_list.add_child(player_title)
-
-	player_items_box = VBoxContainer.new()
-	inventory_list.add_child(player_items_box)
-
-	var player_task_title = Label.new()
-	player_task_title.text = "Assigned Tasks"
-	player_task_title.add_theme_color_override("font_color", Color(1.0, 0.90, 0.76, 1.0))
-	inventory_list.add_child(player_task_title)
-
-	player_tasks_box = VBoxContainer.new()
-	inventory_list.add_child(player_tasks_box)
-
 	var sep2 = HSeparator.new()
 	inventory_list.add_child(sep2)
 
 	var customer_title = Label.new()
 	customer_title.text = "Customer Orders"
-	customer_title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.78, 1.0))
+	customer_title.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
 	inventory_list.add_child(customer_title)
 
 	customer_tab_buttons = HBoxContainer.new()
@@ -456,13 +463,31 @@ func _connect_time_signals() -> void:
 		return
 	if time_mgr.has_signal("day_changed") and not time_mgr.day_changed.is_connected(_on_day_changed_notice):
 		time_mgr.day_changed.connect(_on_day_changed_notice)
+	if time_mgr.has_signal("time_changed") and not time_mgr.time_changed.is_connected(_refresh_day_phase_label):
+		time_mgr.time_changed.connect(_refresh_day_phase_label)
+	if time_mgr.has_signal("period_changed") and not time_mgr.period_changed.is_connected(_on_period_changed_label):
+		time_mgr.period_changed.connect(_on_period_changed_label)
 	call_deferred("_cache_initial_day_notice")
+	call_deferred("_refresh_day_phase_label")
 
 func _cache_initial_day_notice() -> void:
 	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
 	if time_mgr == null:
 		return
 	_pending_day_notice = int(time_mgr.get("current_day"))
+
+func _refresh_day_phase_label(_hour: int = -1, _minute: int = -1) -> void:
+	if day_phase_label == null:
+		return
+	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
+	if time_mgr == null:
+		return
+	var day := int(time_mgr.get("current_day"))
+	var period := str(time_mgr.call("get_period_name")).capitalize()
+	day_phase_label.text = "Day %d | %s" % [maxi(day, 1), period]
+
+func _on_period_changed_label(_period_name: String, _is_peak: bool) -> void:
+	_refresh_day_phase_label()
 
 func _on_day_changed_notice(day: int) -> void:
 	if day <= 0:
@@ -510,7 +535,7 @@ func _refresh_score_label() -> void:
 	elif _score > 0:
 		score_label.add_theme_color_override("font_color", Color(0.72, 1.0, 0.78, 1.0))
 	else:
-		score_label.add_theme_color_override("font_color", Color(0.86, 0.96, 1.0, 1.0))
+		score_label.add_theme_color_override("font_color", Color(1.0, 0.84, 0.45, 1.0))
 
 func _check_score_game_over() -> void:
 	if _score_game_over:
@@ -577,7 +602,7 @@ func _on_player_inventory_changed(items: Array) -> void:
 
 	var holding = Label.new()
 	holding.text = "Holding (%d/%d):" % [items.size(), _get_player_capacity()]
-	holding.add_theme_color_override("font_color", Color(1.0, 0.92, 0.74, 1.0))
+	holding.add_theme_color_override("font_color", Color(0.80, 0.94, 1.0, 1.0))
 	player_items_box.add_child(holding)
 
 	if items.is_empty():
