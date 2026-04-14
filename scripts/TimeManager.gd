@@ -16,7 +16,7 @@ signal day_changed(day: int)
 @export var afternoon_time_multiplier: float = 1.0
 @export var night_time_multiplier: float = 1.0
 
-@export var start_hour: int = 8
+@export var start_hour: int = 6
 
 @export var start_minute: int = 0
 
@@ -33,8 +33,8 @@ const PERIOD_NAMES = {
 
 
 const PERIOD_CONFIG = {
-	Period.MORNING: [6, 11, false],
-	Period.LUNCH: [11, 14, true],
+	Period.MORNING: [6, 10, false],
+	Period.LUNCH: [10, 14, true],
 	Period.AFTERNOON: [14, 17, false],
 	Period.DINNER: [17, 23, true],
 	Period.NIGHT: [23, 6, false]
@@ -196,10 +196,10 @@ func skip_to_next_period() -> void:
 
 func get_busyness() -> float:
 	match current_period:
-		Period.LUNCH, Period.DINNER:
-			return 1.0
+		Period.DINNER, Period.LUNCH:
+			return 1.2
 		Period.MORNING, Period.AFTERNOON:
-			return 0.5
+			return 0.8
 		Period.NIGHT:
-			return 0.0
-	return 0.5
+			return 0.5
+	return 0.8
