@@ -14,6 +14,7 @@ signal customer_left(customer: Node)
 @export var patience_seconds: float = 90.0
 @export var interact_radius: float = 64.0
 @export var drink_order_probability: float = 0.50
+@export var force_drink_order: bool = false
 const MIN_PATIENCE_SECONDS := 90.0
 const DRINK_CHOICES := ["cola", "tea", "coffee"]
 
@@ -270,7 +271,8 @@ func _pick_seat_and_go():
 	print("[Customer] Navigating to seat...")
 
 func _roll_optional_drink_order() -> void:
-	_drink_required = randf() < clampf(drink_order_probability, 0.0, 1.0)
+	_drink_required = force_drink_order or randf() < clampf(drink_order_probability, 0.0, 1.0)
+	force_drink_order = false
 	if not _drink_required:
 		_drink_item = ""
 		_drink_request_text = ""
