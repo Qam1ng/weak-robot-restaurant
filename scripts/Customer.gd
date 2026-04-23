@@ -13,7 +13,7 @@ signal customer_left(customer: Node)
 @export var leave_delay: float = 3.0
 @export var patience_seconds: float = 90.0
 @export var interact_radius: float = 64.0
-@export var drink_order_probability: float = 0.24
+@export var drink_order_probability: float = 0.50
 const MIN_PATIENCE_SECONDS := 90.0
 const DRINK_CHOICES := ["cola", "tea", "coffee"]
 
