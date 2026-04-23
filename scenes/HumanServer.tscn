@@ -136,7 +136,7 @@ size = Vector2(29, 14)
 [node name="HumanServer" type="CharacterBody2D"]
 script = ExtResource("1_5bbvu")
 collision_layer = 4
-collision_mask = 1
+collision_mask = 9
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
 position = Vector2(-1, -27)
