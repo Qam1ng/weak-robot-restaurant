@@ -177,7 +177,7 @@ func set_time(hour: int, minute: int = 0) -> void:
 
 func skip_to_next_period() -> void:
 	var next_periods = {
-		Period.MORNING: [11, 0],
+		Period.MORNING: [10, 0],
 		Period.LUNCH: [14, 0],
 		Period.AFTERNOON: [17, 0],
 		Period.DINNER: [23, 0],
@@ -197,9 +197,9 @@ func skip_to_next_period() -> void:
 func get_busyness() -> float:
 	match current_period:
 		Period.DINNER, Period.LUNCH:
-			return 1.2
+			return 1.3
 		Period.MORNING, Period.AFTERNOON:
-			return 0.8
+			return 1.0
 		Period.NIGHT:
-			return 0.5
+			return 0.8
 	return 0.8

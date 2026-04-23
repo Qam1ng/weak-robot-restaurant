@@ -32,6 +32,7 @@ var spawn_timer: Timer
 var spawn_point: Vector2 = Vector2.ZERO
 var time_manager: TimeManager = null
 var _enabled: bool = true
+var _force_first_spawned_customer_drink: bool = true
 
 func _wait_seconds(seconds: float) -> bool:
 	if seconds <= 0.0:
@@ -81,8 +82,8 @@ func _initialize() -> void:
 	
 
 	print("[CustomerSpawner] Ready. Max customers for current period: %d (absolute max: %d)" % [_current_max_customers, absolute_max_customers])
-	print("[CustomerSpawner] First customer will spawn in ~8 seconds...")
-	spawn_timer.start(8.0)
+	print("[CustomerSpawner] First customer will spawn immediately...")
+	spawn_timer.start(0.0)
 
 func _find_spawn_point() -> Node2D:
 
@@ -188,6 +189,9 @@ func _spawn_single_customer(delay: float = 0.0) -> void:
 		return
 	
 	var customer = CustomerScene.instantiate()
+	if "force_drink_order" in customer and _force_first_spawned_customer_drink:
+		customer.force_drink_order = true
+		_force_first_spawned_customer_drink = false
 	
 
 	if "spawn_path" in customer:
@@ -259,6 +263,9 @@ func get_customer_count() -> int:
 	_cleanup_inactive_customers()
 	return active_customers.size()
 
+func reset_first_spawn_drink_guarantee() -> void:
+	_force_first_spawned_customer_drink = true
+
 func get_active_customers() -> Array[Node]:
 	_cleanup_inactive_customers()
 	return active_customers
@@ -278,6 +285,7 @@ func clear_all_customers() -> void:
 		if is_instance_valid(c):
 			c.queue_free()
 	active_customers.clear()
+	reset_first_spawn_drink_guarantee()
 	print("[CustomerSpawner] Cleared all customers")
 
 func shutdown_immediately() -> void:
@@ -289,3 +297,4 @@ func shutdown_immediately() -> void:
 		if is_instance_valid(customer):
 			customer.free()
 	active_customers.clear()
+	reset_first_spawn_drink_guarantee()

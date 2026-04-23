@@ -20,6 +20,10 @@ var inventory_panel: PanelContainer
 var inventory_list: VBoxContainer
 var day_phase_label: Label
 var score_label: Label
+var robot_section_header: HBoxContainer
+var robot_section_label: Label
+var robot_section_toggle: Button
+var robot_section_content: VBoxContainer
 var battery_label: Label
 var robot_items_box: VBoxContainer
 var robot_tasks_box: VBoxContainer
@@ -87,7 +91,7 @@ const DIALOGUE_PANEL_WIDTH := 340.0
 const TUTORIAL_PANEL_WIDTH := 620.0
 const TUTORIAL_PANEL_MIN_HEIGHT := 420.0
 const TUTORIAL_TOGGLE_SIZE := 44.0
-const TUTORIAL_TEXT := "[b]Controls[/b]\nWASD / Arrow Keys: move\nE: interact (take orders, open the cabinet, deliver items)\n\n[b]Goal[/b]\nServe customers before the deadline\n\n[b]Robot Handoffs[/b]\nThe robot may hand off tasks when it is overloaded, running out of time, charging, stuck, or carrying a full backpack.\n\n[b]Player Reminders[/b]\nCheck your assigned tasks\nRespond to robot handoff popups (notice how the robot asks for help)"
+const TUTORIAL_TEXT := "[b]Controls[/b]\nWASD / Arrow Keys: move\nE: interact (take orders, open the cabinet, deliver items)\n\n[b]Goal[/b]\nServe customers' drinks before the deadline\nRespond to robot handoff popups\n\n[b]Robot Handoffs[/b]\nThe robot may hand off tasks when it is overloaded, running out of time, charging, stuck, or carrying a full backpack.\n\n[b]Player Reminders[/b]\nCheck your assigned tasks\nNotice how the robot asks for help"
 var _customer_tab: String = CUSTOMER_TAB_LIVE
 var _score: int = 0
 var _success_count: int = 0
@@ -107,6 +111,7 @@ var _tutorial_started: bool = false
 var _customer_history_page: int = 0
 var _pending_day_notice: int = 0
 var _initial_day_notice_shown: bool = false
+var _robot_section_expanded: bool = false
 const CUSTOMER_HISTORY_PAGE_SIZE := 5
 
 func _ready() -> void:
@@ -130,7 +135,7 @@ func _ready() -> void:
 	_connect_dialogue_feed_signals()
 	_connect_robot_inventory()
 	_connect_player_inventory()
-	_connect_score_signals()
+	_connect_task_signals()
 	_connect_time_signals()
 	call_deferred("_setup_tipi_survey")
 
@@ -259,26 +264,51 @@ func _setup_inventory_ui() -> void:
 	var sep = HSeparator.new()
 	inventory_list.add_child(sep)
 
-	var robot_title = Label.new()
-	robot_title.text = "ROBOT"
-	robot_title.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
-	inventory_list.add_child(robot_title)
+	robot_section_header = HBoxContainer.new()
+	robot_section_header.add_theme_constant_override("separation", 4)
+	inventory_list.add_child(robot_section_header)
+
+	robot_section_label = Label.new()
+	robot_section_label.text = "ROBOT"
+	robot_section_label.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
+	robot_section_header.add_child(robot_section_label)
+
+	robot_section_toggle = Button.new()
+	robot_section_toggle.flat = true
+	robot_section_toggle.toggle_mode = true
+	robot_section_toggle.focus_mode = Control.FOCUS_NONE
+	robot_section_toggle.custom_minimum_size = Vector2(22.0, 0.0)
+	robot_section_toggle.add_theme_font_size_override("font_size", 18)
+	robot_section_toggle.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
+	var robot_toggle_style := StyleBoxEmpty.new()
+	robot_section_toggle.add_theme_stylebox_override("normal", robot_toggle_style)
+	robot_section_toggle.add_theme_stylebox_override("hover", robot_toggle_style)
+	robot_section_toggle.add_theme_stylebox_override("pressed", robot_toggle_style)
+	robot_section_toggle.add_theme_stylebox_override("focus", robot_toggle_style)
+	robot_section_toggle.pressed.connect(_on_robot_section_toggle_pressed)
+	robot_section_header.add_child(robot_section_toggle)
+
+	robot_section_content = VBoxContainer.new()
+	robot_section_content.add_theme_constant_override("separation", 0)
+	inventory_list.add_child(robot_section_content)
 
 	battery_label = Label.new()
 	battery_label.text = "Battery: --% (normal)"
 	battery_label.add_theme_color_override("font_color", Color(0.78, 1.0, 0.78, 1.0))
-	inventory_list.add_child(battery_label)
+	robot_section_content.add_child(battery_label)
 
 	robot_items_box = VBoxContainer.new()
-	inventory_list.add_child(robot_items_box)
+	robot_section_content.add_child(robot_items_box)
 
 	var robot_task_title = Label.new()
 	robot_task_title.text = "Assigned Tasks"
 	robot_task_title.add_theme_color_override("font_color", Color(0.78, 0.94, 1.0, 1.0))
-	inventory_list.add_child(robot_task_title)
+	robot_section_content.add_child(robot_task_title)
 
 	robot_tasks_box = VBoxContainer.new()
-	inventory_list.add_child(robot_tasks_box)
+	robot_section_content.add_child(robot_tasks_box)
+
+	_set_robot_section_expanded(true)
 
 	var sep2 = HSeparator.new()
 	inventory_list.add_child(sep2)
@@ -447,10 +477,12 @@ func _setup_player_dialogue_overlay_ui() -> void:
 
 	_update_gameplay_panel_layout()
 
-func _connect_score_signals() -> void:
+func _connect_task_signals() -> void:
 	var board = get_node_or_null("/root/TaskBoard")
 	if board == null:
 		return
+	if board.has_signal("task_created") and not board.task_created.is_connected(_on_task_created):
+		board.task_created.connect(_on_task_created)
 	if board.has_signal("task_completed") and not board.task_completed.is_connected(_on_task_completed):
 		board.task_completed.connect(_on_task_completed)
 	if board.has_signal("task_failed") and not board.task_failed.is_connected(_on_task_failed):
@@ -500,6 +532,25 @@ func _on_day_changed_notice(day: int) -> void:
 	if day == 1:
 		message = "Welcome to the restaurant. You have entered Day 1."
 	_show_player_dialogue_overlay("System", message, "system")
+
+func _on_robot_section_toggle_pressed() -> void:
+	_set_robot_section_expanded(robot_section_toggle != null and robot_section_toggle.button_pressed)
+
+func _set_robot_section_expanded(expanded: bool) -> void:
+	_robot_section_expanded = expanded
+	if robot_section_toggle != null:
+		robot_section_toggle.button_pressed = expanded
+		robot_section_toggle.text = "▾" if expanded else "▸"
+	if robot_section_content != null:
+		robot_section_content.visible = expanded
+
+func _on_task_created(task: Dictionary) -> void:
+	var payload: Dictionary = task.get("payload", {})
+	if str(payload.get("order_kind", "")) != "drink":
+		return
+	if str(task.get("assigned_to", "")).strip_edges() != "":
+		return
+	_play_new_order_notice()
 
 func _on_task_completed(task: Dictionary) -> void:
 	_success_count += 1
@@ -772,9 +823,6 @@ func _update_customer_panel() -> void:
 		if not (n is Node):
 			continue
 		var cnode := n as Node
-		var state := "unknown"
-		if cnode.has_method("get_state_name"):
-			state = str(cnode.call("get_state_name"))
 
 		var seat := ""
 		if "current_seat" in cnode:
@@ -783,44 +831,22 @@ func _update_customer_panel() -> void:
 			seat = "-"
 
 		var open_tasks: Array[Dictionary] = []
-		var ended_task_recently := false
 		if board and board.has_method("get_open_tasks_for_customer"):
 			open_tasks = board.get_open_tasks_for_customer(cnode.get_instance_id())
-		if open_tasks.is_empty() and board and board.has_method("get_all_tasks"):
-			for task in board.get_all_tasks():
-				var payload: Dictionary = task.get("payload", {})
-				if int(payload.get("customer_instance_id", 0)) != cnode.get_instance_id():
-					continue
-				var task_state := str(task.get("state", ""))
-				if task_state == "completed" or task_state == "failed":
-					ended_task_recently = true
-					break
-
-		if ended_task_recently and state != "EATING":
+		if open_tasks.is_empty():
 			continue
 
 		var table_text := _friendly_table_name(seat)
 		var food_task := _task_by_kind(open_tasks, "food")
 		var drink_task := _task_by_kind(open_tasks, "drink")
-		var display_state := _friendly_customer_state(state, _current_customer_step_name(food_task))
-		if state == "WAITING_FOR_FOOD":
-			var food_step := _current_customer_step_name(food_task)
-			var drink_step := _current_customer_step_name(drink_task)
-			if food_step == "TAKE_ORDER":
-				display_state = "Waiting"
-			elif not drink_task.is_empty() and drink_step == "TAKE_ORDER":
-				display_state = "Waiting"
-			elif not drink_task.is_empty():
-				display_state = "Waiting"
 		if not food_task.is_empty():
 			var food_line := Label.new()
 			var food_parts: Array[String] = [table_text]
 			food_parts.append(_compact_item_name(food_task.get("payload", {})))
-			if state == "WAITING_FOR_FOOD":
-				food_parts.append(_countdown_text_from_task(food_task, now_ms))
-			food_parts.append(_compact_customer_status(display_state))
+			food_parts.append(_countdown_text_from_task(food_task, now_ms))
+			food_parts.append("Waiting")
 			food_line.text = " | ".join(food_parts)
-			if state == "WAITING_FOR_FOOD" and _countdown_text_from_task(food_task, now_ms) == "0s":
+			if _countdown_text_from_task(food_task, now_ms) == "0s":
 				food_line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
 			customer_lines.append(food_line)
 
@@ -828,11 +854,10 @@ func _update_customer_panel() -> void:
 			var drink_line := Label.new()
 			var drink_parts: Array[String] = [table_text]
 			drink_parts.append(_compact_item_name(drink_task.get("payload", {})))
-			if state == "WAITING_FOR_FOOD":
-				drink_parts.append(_countdown_text_from_task(drink_task, now_ms))
-			drink_parts.append(_compact_customer_status(display_state))
+			drink_parts.append(_countdown_text_from_task(drink_task, now_ms))
+			drink_parts.append("Waiting")
 			drink_line.text = " | ".join(drink_parts)
-			if state == "WAITING_FOR_FOOD" and _countdown_text_from_task(drink_task, now_ms) == "0s":
+			if _countdown_text_from_task(drink_task, now_ms) == "0s":
 				drink_line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
 			customer_lines.append(drink_line)
 
@@ -854,8 +879,12 @@ func _update_customer_panel() -> void:
 		customer_history_next_btn.disabled = (_customer_history_page >= total_pages - 1)
 	if customer_history_page_label:
 		customer_history_page_label.text = "Page %d / %d" % [_customer_history_page + 1, total_pages]
-	for i in range(start_index, end_index):
-		customer_items_box.add_child(customer_lines[i])
+	for i in range(customer_lines.size()):
+		var line := customer_lines[i]
+		if i >= start_index and i < end_index:
+			customer_items_box.add_child(line)
+		elif is_instance_valid(line):
+			line.free()
 
 func _update_customer_history_panel() -> void:
 	var board = get_node_or_null("/root/TaskBoard")
@@ -989,6 +1018,36 @@ func _clear_dynamic_children(container: Node) -> void:
 		container.remove_child(child)
 		child.free()
 
+func shutdown_immediately() -> void:
+	_help_prompt_cards.clear()
+	_player_dialogue_info_cards.clear()
+	_last_help_bubble_utterance_by_request.clear()
+	_shown_help_system_notice_by_request.clear()
+	_auto_open_in_flight.clear()
+	if robot_items_box:
+		_clear_dynamic_children(robot_items_box)
+	if robot_tasks_box:
+		_clear_dynamic_children(robot_tasks_box)
+	if player_items_box:
+		_clear_dynamic_children(player_items_box)
+	if player_tasks_box:
+		_clear_dynamic_children(player_tasks_box)
+	if customer_items_box:
+		_clear_dynamic_children(customer_items_box)
+	if survey_options:
+		_clear_dynamic_children(survey_options)
+	if help_prompt_stack:
+		_clear_dynamic_children(help_prompt_stack)
+	if player_dialogue_info_stack:
+		_clear_dynamic_children(player_dialogue_info_stack)
+	if dialogue_log:
+		dialogue_log.clear()
+	if player_dialogue_overlay_label:
+		player_dialogue_overlay_label.clear()
+	if tutorial_body:
+		tutorial_body.clear()
+	_hide_player_dialogue_overlay()
+
 func _track_player_live_task_ids(tasks: Array[Dictionary]) -> void:
 	var current_ids := {}
 	for task in tasks:
@@ -1003,12 +1062,23 @@ func _track_player_live_task_ids(tasks: Array[Dictionary]) -> void:
 
 	for task_id in current_ids.keys():
 		if not _last_player_live_task_ids.has(task_id):
-			_play_player_task_notice()
+			_play_player_task_accept_notice()
 			break
 
 	_last_player_live_task_ids = current_ids
 
-func _play_player_task_notice() -> void:
+func _play_new_order_notice() -> void:
+	_play_notice_tones([
+		{"freq": 1046.5, "duration": 0.10, "amp": 0.18}
+	])
+
+func _play_player_task_accept_notice() -> void:
+	_play_notice_tones([
+		{"freq": 880.0, "duration": 0.08, "amp": 0.18},
+		{"freq": 1174.7, "duration": 0.11, "amp": 0.20}
+	])
+
+func _play_notice_tones(tones: Array[Dictionary]) -> void:
 	if _player_task_notice_player == null:
 		return
 	var stream := _player_task_notice_player.stream
@@ -1024,13 +1094,19 @@ func _play_player_task_notice() -> void:
 	var generator := stream as AudioStreamGenerator
 	var gen_playback := playback as AudioStreamGeneratorPlayback
 	var mix_rate := float(generator.mix_rate)
-	var duration_sec := 0.12
-	var frame_count := int(duration_sec * mix_rate)
-	for i in range(frame_count):
-		var t := float(i) / mix_rate
-		var envelope := exp(-18.0 * t)
-		var sample := sin(TAU * 1046.5 * t) * 0.22 * envelope
-		gen_playback.push_frame(Vector2(sample, sample))
+	for tone in tones:
+		var freq := float(tone.get("freq", 1046.5))
+		var duration_sec := float(tone.get("duration", 0.10))
+		var amplitude := float(tone.get("amp", 0.18))
+		var frame_count := int(duration_sec * mix_rate)
+		for i in range(frame_count):
+			var t := float(i) / mix_rate
+			var envelope := exp(-18.0 * t)
+			var sample := sin(TAU * freq * t) * amplitude * envelope
+			gen_playback.push_frame(Vector2(sample, sample))
+		var gap_frames := int(0.035 * mix_rate)
+		for _j in range(gap_frames):
+			gen_playback.push_frame(Vector2.ZERO)
 
 func _extract_food_from_request(request: String) -> String:
 	var text := request.to_lower()
@@ -1084,36 +1160,6 @@ func _summarize_holding(items: Array) -> String:
 	for item in items:
 		names.append(str(item.get("name", "item")))
 	return ", ".join(names)
-
-func _friendly_customer_state(raw: String, step_name: String = "") -> String:
-	match raw:
-		"ENTERING":
-			return "Entering"
-		"WAITING_FOR_FOOD":
-			return "Waiting"
-		"EATING":
-			return "Eating"
-		"LEAVING":
-			return "Leaving"
-		"LEFT":
-			return "Left"
-		_:
-			return "Unknown"
-
-func _compact_customer_status(status: String) -> String:
-	match status:
-		"Entering":
-			return "Entering"
-		"Waiting":
-			return "Waiting"
-		"Eating":
-			return "Eating"
-		"Leaving":
-			return "Leaving"
-		"Left":
-			return "Left"
-		_:
-			return status
 
 func _friendly_table_name(raw: String) -> String:
 	var s := raw.strip_edges().to_lower()
@@ -1386,7 +1432,7 @@ func _refresh_tipi_question() -> void:
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 48)
 	survey_question.text = str(q.get("text", ""))
 	if survey_question_title:
-		survey_question_title.text = "[b]Question[/b] (%d/%d)" % [_tipi_index + 1, _tipi_questions.size()]
+		survey_question_title.text = "[b]Questions[/b] (%d/%d)" % [_tipi_index + 1, _tipi_questions.size()]
 	if survey_scale_title:
 		survey_scale_title.text = "[b]Scale Guide[/b]"
 	if survey_scale_hint:
@@ -1420,7 +1466,7 @@ func _show_tipi_result() -> void:
 		tipi_scores = profile.get_profile().get("tipi_scores", {})
 
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 24)
-	survey_question.text = "Your TIPI profile has been recorded.\nIt will be taken into account in the robot delegation."
+	survey_question.text = "Your responses have been recorded.\nThey will be taken into account in the robot delegation."
 	if survey_question_title:
 		survey_question_title.show()
 		survey_question_title.text = "[b]Question Finished[/b]"
@@ -1433,7 +1479,7 @@ func _show_tipi_result() -> void:
 	if survey_result_group_spacer:
 		survey_result_group_spacer.show()
 	if survey_result_title:
-		survey_result_title.text = "[b]TIPI Profile[/b]"
+		survey_result_title.text = "[b]Personality Survey Report (TIPI)[/b]"
 	survey_result.text = "Openness (O): %.1f\nConscientiousness (C): %.1f\nExtraversion (E): %.1f\nAgreeableness (A): %.1f\nNeuroticism (N): %.1f" % [
 		float(tipi_scores.get("O", 4.0)),
 		float(tipi_scores.get("C", 4.0)),

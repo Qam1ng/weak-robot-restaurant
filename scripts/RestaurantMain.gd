@@ -2,12 +2,27 @@ extends Node2D
 
 var all_locations: Dictionary = {}
 const MIN_WINDOW_SIZE := Vector2i(1600, 1000)
+const PLAYER_ONLY_BLOCKER_LAYER := 8
+const PLAYER_ONLY_BLOCKERS := [
+	{"name": "Table1", "position": Vector2(-265.0, 254.0), "size": Vector2(96.0, 64.0)},
+	{"name": "Table2", "position": Vector2(-265.0, 91.0), "size": Vector2(96.0, 64.0)},
+	{"name": "Table3", "position": Vector2(74.0, 91.0), "size": Vector2(96.0, 64.0)},
+	{"name": "Table4", "position": Vector2(74.0, 254.0), "size": Vector2(96.0, 64.0)},
+	{"name": "Table5", "position": Vector2(298.0, 254.0), "size": Vector2(96.0, 64.0)},
+	{"name": "Table6", "position": Vector2(298.0, 91.0), "size": Vector2(96.0, 64.0)},
+	{"name": "Table7", "position": Vector2(315.0, -83.0), "size": Vector2(96.0, 64.0)},
+	{"name": "Table8", "position": Vector2(89.0, -83.0), "size": Vector2(96.0, 64.0)},
+	{"name": "GuideStandLeft", "position": Vector2(-323.0, -91.0), "size": Vector2(40.0, 82.0)},
+	{"name": "GuideStandRight", "position": Vector2(-205.0, -91.0), "size": Vector2(40.0, 82.0)},
+	{"name": "GuideStandBottom", "position": Vector2(-264.0, -70.0), "size": Vector2(106.0, 40.0)}
+]
 
 func _ready() -> void:
 	_apply_window_constraints()
 	_init_item_display_names()
 	_discover_all_locations()
 	_force_collision_policy()
+	_setup_player_only_blockers()
 	_build_runtime_nav_floor_from_walls()
 	_enable_tilemap_navigation_sources()
 
@@ -25,6 +40,9 @@ func _notification(what: int) -> void:
 		var spawner := get_node_or_null("CustomerSpawner")
 		if spawner != null and spawner.has_method("shutdown_immediately"):
 			spawner.shutdown_immediately()
+		for hud in get_tree().get_nodes_in_group("hud"):
+			if hud != null and hud.has_method("shutdown_immediately"):
+				hud.call("shutdown_immediately")
 
 func _apply_window_constraints() -> void:
 	var window := get_window()
@@ -180,3 +198,26 @@ func _force_collision_policy() -> void:
 	var walls := tilemap_root.get_node_or_null("LayerWalls")
 	if walls and _node_has_property(walls, "collision_enabled"):
 		walls.set("collision_enabled", true)
+
+func _setup_player_only_blockers() -> void:
+	var old_blockers := get_node_or_null("PlayerOnlyBlockers")
+	if old_blockers:
+		old_blockers.queue_free()
+
+	var root := Node2D.new()
+	root.name = "PlayerOnlyBlockers"
+	add_child(root)
+
+	for spec in PLAYER_ONLY_BLOCKERS:
+		var body := StaticBody2D.new()
+		body.name = str(spec.get("name", "Blocker"))
+		body.collision_layer = PLAYER_ONLY_BLOCKER_LAYER
+		body.collision_mask = 0
+		body.position = spec.get("position", Vector2.ZERO)
+		root.add_child(body)
+
+		var shape := CollisionShape2D.new()
+		var rect := RectangleShape2D.new()
+		rect.size = spec.get("size", Vector2(48.0, 48.0))
+		shape.shape = rect
+		body.add_child(shape)

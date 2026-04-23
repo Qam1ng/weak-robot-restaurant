@@ -13,7 +13,8 @@ signal customer_left(customer: Node)
 @export var leave_delay: float = 3.0
 @export var patience_seconds: float = 90.0
 @export var interact_radius: float = 64.0
-@export var drink_order_probability: float = 0.24
+@export var drink_order_probability: float = 0.50
+@export var force_drink_order: bool = false
 const MIN_PATIENCE_SECONDS := 90.0
 const DRINK_CHOICES := ["cola", "tea", "coffee"]
 
@@ -87,6 +88,22 @@ func _wait_seconds(seconds: float) -> bool:
 	if is_instance_valid(timer):
 		timer.queue_free()
 	return is_inside_tree()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		_cleanup_order_bubble_resources()
+
+func _cleanup_order_bubble_resources() -> void:
+	if _order_bubble_icon != null and is_instance_valid(_order_bubble_icon):
+		_order_bubble_icon.texture = null
+	_order_icon_textures.clear()
+	if _order_bubble_root != null and is_instance_valid(_order_bubble_root):
+		if _order_bubble_root.get_parent() != null:
+			_order_bubble_root.get_parent().remove_child(_order_bubble_root)
+		_order_bubble_root.free()
+	_order_bubble_icon = null
+	_order_bubble_panel = null
+	_order_bubble_root = null
 
 
 func _ready() -> void:
@@ -172,7 +189,7 @@ func _try_begin_eating_if_ready() -> void:
 	_start_eating()
 
 func _start_eating() -> void:
-	if current_state != State.WAITING_FOR_FOOD:
+	if current_state != State.WAITING_FOR_FOOD and current_state != State.EATING:
 		return
 	current_state = State.EATING
 	print("[Customer] Started eating. Will finish in %.1f seconds." % eating_duration)
@@ -189,6 +206,11 @@ func _finish_eating() -> void:
 	_start_leaving()
 
 func _start_leaving() -> void:
+	if current_state == State.LEAVING or current_state == State.LEFT:
+		return
+	var task_board = get_node_or_null("/root/TaskBoard")
+	if task_board and task_board.has_method("fail_task_by_customer"):
+		task_board.fail_task_by_customer(get_instance_id(), "customer_left")
 	current_state = State.LEAVING
 	_arrived = false
 	_target_set = false
@@ -249,7 +271,8 @@ func _pick_seat_and_go():
 	print("[Customer] Navigating to seat...")
 
 func _roll_optional_drink_order() -> void:
-	_drink_required = randf() < clampf(drink_order_probability, 0.0, 1.0)
+	_drink_required = force_drink_order or randf() < clampf(drink_order_probability, 0.0, 1.0)
+	force_drink_order = false
 	if not _drink_required:
 		_drink_item = ""
 		_drink_request_text = ""
@@ -416,6 +439,7 @@ func _finish_leaving_now() -> void:
 	velocity = Vector2.ZERO
 	current_state = State.LEFT
 	print("[Customer] Left the restaurant.")
+	_cleanup_order_bubble_resources()
 	customer_left.emit(self)
 	queue_free()
 
@@ -451,15 +475,6 @@ func _update_anim_by_velocity(v: Vector2) -> void:
 		anim.play(anim_name)
 
 
-func get_state_name() -> String:
-	return State.keys()[current_state]
-
-func is_waiting_for_food() -> bool:
-	return current_state == State.WAITING_FOR_FOOD
-
-func has_received_food() -> bool:
-	return _has_received_food
-
 func force_leave() -> void:
 	if current_state == State.LEFT:
 		return
@@ -476,21 +491,6 @@ func get_task_deadline_ms() -> int:
 	if _task_deadline_ms <= 0:
 		return -1
 	return _task_deadline_ms
-
-func get_drink_task_deadline_ms() -> int:
-	var drink_task := _get_open_task_by_kind("drink")
-	if drink_task.is_empty():
-		return -1
-	var deadline_ms := int(drink_task.get("deadline_ms", 0))
-	if deadline_ms > 0:
-		return deadline_ms
-	return -1
-
-func get_drink_item_name() -> String:
-	return _drink_item
-
-func has_pending_drink_order() -> bool:
-	return not _get_open_task_by_kind("drink").is_empty()
 
 func on_player_interact(player: Node) -> void:
 	if player == null:
