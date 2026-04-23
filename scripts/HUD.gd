@@ -823,9 +823,6 @@ func _update_customer_panel() -> void:
 		if not (n is Node):
 			continue
 		var cnode := n as Node
-		var state := "unknown"
-		if cnode.has_method("get_state_name"):
-			state = str(cnode.call("get_state_name"))
 
 		var seat := ""
 		if "current_seat" in cnode:
@@ -834,75 +831,33 @@ func _update_customer_panel() -> void:
 			seat = "-"
 
 		var open_tasks: Array[Dictionary] = []
-		var ended_task_recently := false
 		if board and board.has_method("get_open_tasks_for_customer"):
 			open_tasks = board.get_open_tasks_for_customer(cnode.get_instance_id())
-		if open_tasks.is_empty() and board and board.has_method("get_all_tasks"):
-			for task in board.get_all_tasks():
-				var payload: Dictionary = task.get("payload", {})
-				if int(payload.get("customer_instance_id", 0)) != cnode.get_instance_id():
-					continue
-				var task_state := str(task.get("state", ""))
-				if task_state == "completed" or task_state == "failed":
-					ended_task_recently = true
-					break
-
-		if ended_task_recently and state != "EATING" and state != "LEAVING":
+		if open_tasks.is_empty():
 			continue
 
 		var table_text := _friendly_table_name(seat)
 		var food_task := _task_by_kind(open_tasks, "food")
 		var drink_task := _task_by_kind(open_tasks, "drink")
-		var has_received_food := cnode.has_method("has_received_food") and bool(cnode.call("has_received_food"))
-		var has_received_drink := cnode.has_method("has_received_drink") and bool(cnode.call("has_received_drink"))
-		var request_text := str(cnode.get("request_text")) if "request_text" in cnode else ""
-		var food_item_name := _extract_food_from_request(request_text)
-		if cnode.has_method("get_food_item_name"):
-			food_item_name = str(cnode.call("get_food_item_name")).strip_edges().to_lower()
-		var drink_item_name := ""
-		if cnode.has_method("get_drink_item_name"):
-			drink_item_name = str(cnode.call("get_drink_item_name")).strip_edges().to_lower()
-
-		if not food_task.is_empty() or has_received_food or state == "LEAVING":
+		if not food_task.is_empty():
 			var food_line := Label.new()
 			var food_parts: Array[String] = [table_text]
-			if not food_task.is_empty():
-				food_parts.append(_compact_item_name(food_task.get("payload", {})))
-			else:
-				food_parts.append(food_item_name.capitalize())
-			if not food_task.is_empty() and not has_received_food:
-				food_parts.append(_countdown_text_from_task(food_task, now_ms))
-			var food_status := "Waiting"
-			if has_received_food:
-				if state == "LEAVING":
-					food_status = "Leaving"
-				elif not drink_task.is_empty() and not has_received_drink:
-					food_status = "Ready"
-				else:
-					food_status = "Eating"
-			elif state == "LEAVING":
-				food_status = "Leaving"
-			food_parts.append(_compact_customer_status(food_status))
+			food_parts.append(_compact_item_name(food_task.get("payload", {})))
+			food_parts.append(_countdown_text_from_task(food_task, now_ms))
+			food_parts.append("Waiting")
 			food_line.text = " | ".join(food_parts)
-			if not food_task.is_empty() and not has_received_food and _countdown_text_from_task(food_task, now_ms) == "0s":
+			if _countdown_text_from_task(food_task, now_ms) == "0s":
 				food_line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
 			customer_lines.append(food_line)
 
-		if not drink_task.is_empty() or has_received_drink:
+		if not drink_task.is_empty():
 			var drink_line := Label.new()
 			var drink_parts: Array[String] = [table_text]
-			if not drink_task.is_empty():
-				drink_parts.append(_compact_item_name(drink_task.get("payload", {})))
-			else:
-				drink_parts.append(drink_item_name.capitalize())
-			if not drink_task.is_empty() and not has_received_drink:
-				drink_parts.append(_countdown_text_from_task(drink_task, now_ms))
-			var drink_status := "Waiting"
-			if has_received_drink:
-				drink_status = "Leaving" if state == "LEAVING" else "Eating"
-			drink_parts.append(_compact_customer_status(drink_status))
+			drink_parts.append(_compact_item_name(drink_task.get("payload", {})))
+			drink_parts.append(_countdown_text_from_task(drink_task, now_ms))
+			drink_parts.append("Waiting")
 			drink_line.text = " | ".join(drink_parts)
-			if not drink_task.is_empty() and not has_received_drink and _countdown_text_from_task(drink_task, now_ms) == "0s":
+			if _countdown_text_from_task(drink_task, now_ms) == "0s":
 				drink_line.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
 			customer_lines.append(drink_line)
 
@@ -1205,36 +1160,6 @@ func _summarize_holding(items: Array) -> String:
 	for item in items:
 		names.append(str(item.get("name", "item")))
 	return ", ".join(names)
-
-func _friendly_customer_state(raw: String, step_name: String = "") -> String:
-	match raw:
-		"ENTERING":
-			return "Entering"
-		"WAITING_FOR_FOOD":
-			return "Waiting"
-		"EATING":
-			return "Eating"
-		"LEAVING":
-			return "Leaving"
-		"LEFT":
-			return "Left"
-		_:
-			return "Unknown"
-
-func _compact_customer_status(status: String) -> String:
-	match status:
-		"Entering":
-			return "Entering"
-		"Waiting":
-			return "Waiting"
-		"Eating":
-			return "Eating"
-		"Leaving":
-			return "Leaving"
-		"Left":
-			return "Left"
-		_:
-			return status
 
 func _friendly_table_name(raw: String) -> String:
 	var s := raw.strip_edges().to_lower()

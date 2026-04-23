@@ -475,21 +475,6 @@ func _update_anim_by_velocity(v: Vector2) -> void:
 		anim.play(anim_name)
 
 
-func get_state_name() -> String:
-	return State.keys()[current_state]
-
-func is_waiting_for_food() -> bool:
-	return current_state == State.WAITING_FOR_FOOD
-
-func has_received_food() -> bool:
-	return _has_received_food
-
-func has_received_drink() -> bool:
-	return _has_received_drink
-
-func get_food_item_name() -> String:
-	return _extract_food_from_request(request_text)
-
 func force_leave() -> void:
 	if current_state == State.LEFT:
 		return
@@ -506,9 +491,6 @@ func get_task_deadline_ms() -> int:
 	if _task_deadline_ms <= 0:
 		return -1
 	return _task_deadline_ms
-
-func get_drink_item_name() -> String:
-	return _drink_item
 
 func on_player_interact(player: Node) -> void:
 	if player == null:
