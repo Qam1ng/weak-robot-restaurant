@@ -130,7 +130,7 @@ func _ready() -> void:
 	_connect_dialogue_feed_signals()
 	_connect_robot_inventory()
 	_connect_player_inventory()
-	_connect_score_signals()
+	_connect_task_signals()
 	_connect_time_signals()
 	call_deferred("_setup_tipi_survey")
 
@@ -447,10 +447,12 @@ func _setup_player_dialogue_overlay_ui() -> void:
 
 	_update_gameplay_panel_layout()
 
-func _connect_score_signals() -> void:
+func _connect_task_signals() -> void:
 	var board = get_node_or_null("/root/TaskBoard")
 	if board == null:
 		return
+	if board.has_signal("task_created") and not board.task_created.is_connected(_on_task_created):
+		board.task_created.connect(_on_task_created)
 	if board.has_signal("task_completed") and not board.task_completed.is_connected(_on_task_completed):
 		board.task_completed.connect(_on_task_completed)
 	if board.has_signal("task_failed") and not board.task_failed.is_connected(_on_task_failed):
@@ -500,6 +502,14 @@ func _on_day_changed_notice(day: int) -> void:
 	if day == 1:
 		message = "Welcome to the restaurant. You have entered Day 1."
 	_show_player_dialogue_overlay("System", message, "system")
+
+func _on_task_created(task: Dictionary) -> void:
+	var payload: Dictionary = task.get("payload", {})
+	if str(payload.get("order_kind", "")) != "drink":
+		return
+	if str(task.get("assigned_to", "")).strip_edges() != "":
+		return
+	_play_new_order_notice()
 
 func _on_task_completed(task: Dictionary) -> void:
 	_success_count += 1
@@ -1056,12 +1066,23 @@ func _track_player_live_task_ids(tasks: Array[Dictionary]) -> void:
 
 	for task_id in current_ids.keys():
 		if not _last_player_live_task_ids.has(task_id):
-			_play_player_task_notice()
+			_play_player_task_accept_notice()
 			break
 
 	_last_player_live_task_ids = current_ids
 
-func _play_player_task_notice() -> void:
+func _play_new_order_notice() -> void:
+	_play_notice_tones([
+		{"freq": 1046.5, "duration": 0.10, "amp": 0.18}
+	])
+
+func _play_player_task_accept_notice() -> void:
+	_play_notice_tones([
+		{"freq": 880.0, "duration": 0.08, "amp": 0.18},
+		{"freq": 1174.7, "duration": 0.11, "amp": 0.20}
+	])
+
+func _play_notice_tones(tones: Array[Dictionary]) -> void:
 	if _player_task_notice_player == null:
 		return
 	var stream := _player_task_notice_player.stream
@@ -1077,13 +1098,19 @@ func _play_player_task_notice() -> void:
 	var generator := stream as AudioStreamGenerator
 	var gen_playback := playback as AudioStreamGeneratorPlayback
 	var mix_rate := float(generator.mix_rate)
-	var duration_sec := 0.12
-	var frame_count := int(duration_sec * mix_rate)
-	for i in range(frame_count):
-		var t := float(i) / mix_rate
-		var envelope := exp(-18.0 * t)
-		var sample := sin(TAU * 1046.5 * t) * 0.22 * envelope
-		gen_playback.push_frame(Vector2(sample, sample))
+	for tone in tones:
+		var freq := float(tone.get("freq", 1046.5))
+		var duration_sec := float(tone.get("duration", 0.10))
+		var amplitude := float(tone.get("amp", 0.18))
+		var frame_count := int(duration_sec * mix_rate)
+		for i in range(frame_count):
+			var t := float(i) / mix_rate
+			var envelope := exp(-18.0 * t)
+			var sample := sin(TAU * freq * t) * amplitude * envelope
+			gen_playback.push_frame(Vector2(sample, sample))
+		var gap_frames := int(0.035 * mix_rate)
+		for _j in range(gap_frames):
+			gen_playback.push_frame(Vector2.ZERO)
 
 func _extract_food_from_request(request: String) -> String:
 	var text := request.to_lower()
