@@ -82,8 +82,8 @@ func _initialize() -> void:
 	
 
 	print("[CustomerSpawner] Ready. Max customers for current period: %d (absolute max: %d)" % [_current_max_customers, absolute_max_customers])
-	print("[CustomerSpawner] First customer will spawn in ~8 seconds...")
-	spawn_timer.start(8.0)
+	print("[CustomerSpawner] First customer will spawn immediately...")
+	spawn_timer.start(0.0)
 
 func _find_spawn_point() -> Node2D:
 
