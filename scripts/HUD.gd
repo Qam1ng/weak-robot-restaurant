@@ -1466,7 +1466,7 @@ func _refresh_tipi_question() -> void:
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 48)
 	survey_question.text = str(q.get("text", ""))
 	if survey_question_title:
-		survey_question_title.text = "[b]Question[/b] (%d/%d)" % [_tipi_index + 1, _tipi_questions.size()]
+		survey_question_title.text = "[b]Questions[/b] (%d/%d)" % [_tipi_index + 1, _tipi_questions.size()]
 	if survey_scale_title:
 		survey_scale_title.text = "[b]Scale Guide[/b]"
 	if survey_scale_hint:
@@ -1500,7 +1500,7 @@ func _show_tipi_result() -> void:
 		tipi_scores = profile.get_profile().get("tipi_scores", {})
 
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 24)
-	survey_question.text = "Your TIPI profile has been recorded.\nIt will be taken into account in the robot delegation."
+	survey_question.text = "Your responses have been recorded.\nThey will be taken into account in the robot delegation."
 	if survey_question_title:
 		survey_question_title.show()
 		survey_question_title.text = "[b]Question Finished[/b]"
@@ -1513,7 +1513,7 @@ func _show_tipi_result() -> void:
 	if survey_result_group_spacer:
 		survey_result_group_spacer.show()
 	if survey_result_title:
-		survey_result_title.text = "[b]TIPI Profile[/b]"
+		survey_result_title.text = "[b]Personality Survey Report (TIPI)[/b]"
 	survey_result.text = "Openness (O): %.1f\nConscientiousness (C): %.1f\nExtraversion (E): %.1f\nAgreeableness (A): %.1f\nNeuroticism (N): %.1f" % [
 		float(tipi_scores.get("O", 4.0)),
 		float(tipi_scores.get("C", 4.0)),
