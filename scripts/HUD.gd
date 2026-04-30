@@ -36,6 +36,8 @@ var customer_history_next_btn: Button
 var dialogue_panel: PanelContainer
 var dialogue_list: VBoxContainer
 var dialogue_log: RichTextLabel
+var customer_panel: PanelContainer
+var customer_panel_list: VBoxContainer
 var tutorial_panel: PanelContainer
 var tutorial_body: RichTextLabel
 var tutorial_start_button: Button
@@ -121,6 +123,7 @@ func _ready() -> void:
 
 	_setup_inventory_ui()
 	_setup_dialogue_feed_ui()
+	_setup_customer_orders_ui()
 	_setup_player_dialogue_overlay_ui()
 	_setup_tutorial_ui()
 	_setup_player_task_notice_audio()
@@ -265,7 +268,7 @@ func _setup_inventory_ui() -> void:
 	inventory_list.add_child(robot_title)
 
 	battery_label = Label.new()
-	battery_label.text = "Battery: --% (normal)"
+	battery_label.text = "Battery: --%"
 	battery_label.add_theme_color_override("font_color", Color(0.78, 1.0, 0.78, 1.0))
 	inventory_list.add_child(battery_label)
 
@@ -279,64 +282,6 @@ func _setup_inventory_ui() -> void:
 
 	robot_tasks_box = VBoxContainer.new()
 	inventory_list.add_child(robot_tasks_box)
-
-	var sep2 = HSeparator.new()
-	inventory_list.add_child(sep2)
-
-	var customer_title = Label.new()
-	customer_title.text = "Customer Orders"
-	customer_title.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
-	inventory_list.add_child(customer_title)
-
-	customer_tab_buttons = HBoxContainer.new()
-	inventory_list.add_child(customer_tab_buttons)
-
-	customer_live_btn = Button.new()
-	customer_live_btn.text = "Live"
-	customer_live_btn.toggle_mode = true
-	customer_live_btn.button_pressed = true
-	customer_live_btn.pressed.connect(func():
-		_set_customer_tab(CUSTOMER_TAB_LIVE)
-	)
-	customer_tab_buttons.add_child(customer_live_btn)
-
-	customer_history_btn = Button.new()
-	customer_history_btn.text = "History"
-	customer_history_btn.toggle_mode = true
-	customer_history_btn.button_pressed = false
-	customer_history_btn.pressed.connect(func():
-		_set_customer_tab(CUSTOMER_TAB_HISTORY)
-	)
-	customer_tab_buttons.add_child(customer_history_btn)
-
-	customer_items_box = VBoxContainer.new()
-	inventory_list.add_child(customer_items_box)
-
-	customer_history_pager = HBoxContainer.new()
-	customer_history_pager.alignment = BoxContainer.ALIGNMENT_BEGIN
-	customer_history_pager.add_theme_constant_override("separation", 8)
-	customer_history_pager.visible = false
-	inventory_list.add_child(customer_history_pager)
-
-	customer_history_prev_btn = Button.new()
-	customer_history_prev_btn.text = "Prev"
-	customer_history_prev_btn.pressed.connect(func():
-		_customer_history_page = maxi(_customer_history_page - 1, 0)
-		_update_customer_panel()
-	)
-	customer_history_pager.add_child(customer_history_prev_btn)
-
-	customer_history_page_label = Label.new()
-	customer_history_page_label.text = "Page 1 / 1"
-	customer_history_pager.add_child(customer_history_page_label)
-
-	customer_history_next_btn = Button.new()
-	customer_history_next_btn.text = "Next"
-	customer_history_next_btn.pressed.connect(func():
-		_customer_history_page += 1
-		_update_customer_panel()
-	)
-	customer_history_pager.add_child(customer_history_next_btn)
 
 	var measured_panel_w: float = maxf(216.0, inventory_panel.get_combined_minimum_size().x + 6.0)
 	var base_panel_w: float = maxf(measured_panel_w, DIALOGUE_PANEL_WIDTH)
@@ -375,6 +320,84 @@ func _setup_dialogue_feed_ui() -> void:
 	dialogue_log.scroll_active = true
 	dialogue_log.fit_content = false
 	dialogue_list.add_child(dialogue_log)
+	_update_gameplay_panel_layout()
+
+func _setup_customer_orders_ui() -> void:
+	customer_panel = PanelContainer.new()
+	customer_panel.name = "CustomerOrdersPanel"
+	add_child(customer_panel)
+	customer_panel.position = Vector2(SIDE_PANEL_MARGIN, 0.0)
+	customer_panel.grow_vertical = Control.GROW_DIRECTION_END
+	customer_panel.custom_minimum_size = Vector2(maxf(DIALOGUE_PANEL_WIDTH, _left_panel_width), 180)
+
+	var style = StyleBoxFlat.new()
+	style.bg_color = Color(0, 0, 0, 0.5)
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	customer_panel.add_theme_stylebox_override("panel", style)
+	customer_panel.clip_contents = true
+
+	customer_panel_list = VBoxContainer.new()
+	customer_panel.add_child(customer_panel_list)
+
+	var customer_title = Label.new()
+	customer_title.text = "Customer Orders"
+	customer_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	customer_title.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
+	customer_panel_list.add_child(customer_title)
+
+	customer_tab_buttons = HBoxContainer.new()
+	customer_panel_list.add_child(customer_tab_buttons)
+
+	customer_live_btn = Button.new()
+	customer_live_btn.text = "Live"
+	customer_live_btn.toggle_mode = true
+	customer_live_btn.button_pressed = true
+	customer_live_btn.pressed.connect(func():
+		_set_customer_tab(CUSTOMER_TAB_LIVE)
+	)
+	customer_tab_buttons.add_child(customer_live_btn)
+
+	customer_history_btn = Button.new()
+	customer_history_btn.text = "History"
+	customer_history_btn.toggle_mode = true
+	customer_history_btn.button_pressed = false
+	customer_history_btn.pressed.connect(func():
+		_set_customer_tab(CUSTOMER_TAB_HISTORY)
+	)
+	customer_tab_buttons.add_child(customer_history_btn)
+
+	customer_items_box = VBoxContainer.new()
+	customer_panel_list.add_child(customer_items_box)
+
+	customer_history_pager = HBoxContainer.new()
+	customer_history_pager.alignment = BoxContainer.ALIGNMENT_BEGIN
+	customer_history_pager.add_theme_constant_override("separation", 8)
+	customer_history_pager.visible = false
+	customer_panel_list.add_child(customer_history_pager)
+
+	customer_history_prev_btn = Button.new()
+	customer_history_prev_btn.text = "Prev"
+	customer_history_prev_btn.pressed.connect(func():
+		_customer_history_page = maxi(_customer_history_page - 1, 0)
+		_update_customer_panel()
+	)
+	customer_history_pager.add_child(customer_history_prev_btn)
+
+	customer_history_page_label = Label.new()
+	customer_history_page_label.text = "1/1"
+	customer_history_pager.add_child(customer_history_page_label)
+
+	customer_history_next_btn = Button.new()
+	customer_history_next_btn.text = "Next"
+	customer_history_next_btn.pressed.connect(func():
+		_customer_history_page += 1
+		_update_customer_panel()
+	)
+	customer_history_pager.add_child(customer_history_next_btn)
+
 	_update_gameplay_panel_layout()
 
 func _setup_player_dialogue_overlay_ui() -> void:
@@ -633,7 +656,7 @@ func _process(_dt: float) -> void:
 	_update_gameplay_panel_layout()
 
 func _update_gameplay_panel_layout() -> void:
-	if inventory_panel == null or dialogue_panel == null:
+	if inventory_panel == null or dialogue_panel == null or customer_panel == null:
 		return
 	var vp := get_viewport()
 	if vp == null:
@@ -662,10 +685,18 @@ func _update_gameplay_panel_layout() -> void:
 	if dialogue_list != null:
 		dialogue_panel_h += dialogue_list.get_combined_minimum_size().y
 	dialogue_panel_h = maxf(dialogue_panel_h, 210.0)
+	var customer_panel_h: float = 20.0
+	if customer_panel_list != null:
+		customer_panel_h += customer_panel_list.get_combined_minimum_size().y
+	customer_panel_h = maxf(customer_panel_h, 160.0)
 	inventory_panel.custom_minimum_size.y = system_panel_h
 	inventory_panel.size.y = system_panel_h
 	dialogue_panel.custom_minimum_size.y = dialogue_panel_h
 	dialogue_panel.size.y = dialogue_panel_h
+	customer_panel.custom_minimum_size.x = dialogue_panel_w
+	customer_panel.custom_minimum_size.y = customer_panel_h
+	customer_panel.size = Vector2(dialogue_panel_w, customer_panel_h)
+	customer_panel.position = Vector2(dialogue_x, dialogue_panel.position.y + dialogue_panel_h + 12.0)
 	var centered_x: float = (view_size.x - PLAYER_DIALOGUE_OVERLAY_WIDTH) * 0.5
 	var stack_origin_y: float = gameplay_top_y + PLAYER_DIALOGUE_OVERLAY_Y_OFFSET
 	var stack_y: float = stack_origin_y
@@ -739,15 +770,14 @@ func _update_battery_label() -> void:
 		return
 	var robots = get_tree().get_nodes_in_group("robot")
 	if robots.is_empty():
-		battery_label.text = "Battery: --% (normal)"
+		battery_label.text = "Battery: --%"
 		return
 	var robot = robots[0]
 	var level := int(round(float(robot.get("battery_level"))))
 	var mode := str(robot.get("_battery_mode"))
 	if mode == "" or mode == "Null":
 		mode = "normal"
-	var mode_text := _friendly_battery_mode(mode)
-	battery_label.text = "Battery: %d%% (%s)" % [clampi(level, 0, 100), mode_text]
+	battery_label.text = "Battery: %d%%" % clampi(level, 0, 100)
 
 	if mode == "emergency":
 		battery_label.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
@@ -837,7 +867,7 @@ func _update_customer_panel() -> void:
 	if customer_history_next_btn:
 		customer_history_next_btn.disabled = (_customer_history_page >= total_pages - 1)
 	if customer_history_page_label:
-		customer_history_page_label.text = "Page %d / %d" % [_customer_history_page + 1, total_pages]
+		customer_history_page_label.text = "%d/%d" % [_customer_history_page + 1, total_pages]
 	for i in range(customer_lines.size()):
 		var line := customer_lines[i]
 		if i >= start_index and i < end_index:
@@ -888,7 +918,7 @@ func _update_customer_history_panel() -> void:
 	if customer_history_next_btn:
 		customer_history_next_btn.disabled = (_customer_history_page >= total_pages - 1)
 	if customer_history_page_label:
-		customer_history_page_label.text = "Page %d / %d" % [_customer_history_page + 1, total_pages]
+		customer_history_page_label.text = "%d/%d" % [_customer_history_page + 1, total_pages]
 
 	for i in range(start_index, end_index):
 		var task: Dictionary = ended[i]
@@ -1647,6 +1677,8 @@ func _set_gameplay_panels_visible(visible: bool) -> void:
 		inventory_panel.visible = visible
 	if dialogue_panel:
 		dialogue_panel.visible = visible
+	if customer_panel:
+		customer_panel.visible = visible
 	if help_prompt_stack and not visible:
 		help_prompt_stack.visible = false
 	if player_dialogue_overlay and not visible:

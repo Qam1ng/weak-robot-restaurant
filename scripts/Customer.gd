@@ -17,7 +17,7 @@ signal customer_left(customer: Node)
 @export var force_drink_order: bool = false
 const MIN_PATIENCE_SECONDS := 90.0
 const DRINK_CHOICES := ["cola", "tea", "coffee"]
-const DRINK_FEEDBACK_BUBBLE_SHOW_SEC := 0.8
+const PLAYER_DELIVERY_FEEDBACK_BUBBLE_SHOW_SEC := 0.8
 
 
 @onready var agent: NavigationAgent2D = $NavigationAgent2D
@@ -63,9 +63,9 @@ const ORDER_ICON_PATHS := {
 	"tea": "res://assets/icons/orders/tea.png",
 	"cola": "res://assets/icons/orders/cola.png"
 }
-const DRINK_FEEDBACK_ICON_PATH := "res://assets/icons/orders/like.png"
+const PLAYER_DELIVERY_FEEDBACK_ICON_PATH := "res://assets/icons/orders/like.png"
 var _order_icon_textures: Dictionary = {}
-var _drink_feedback_icon_texture: Texture2D = null
+var _player_delivery_feedback_icon_texture: Texture2D = null
 
 
 var current_seat: String = ""
@@ -374,11 +374,11 @@ func _setup_feedback_bubble() -> void:
 	_feedback_bubble_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_feedback_bubble_panel.add_child(_feedback_bubble_icon)
 
-func _show_drink_feedback_bubble() -> void:
+func _show_player_delivery_feedback_bubble() -> void:
 	_setup_feedback_bubble()
 	if _feedback_bubble_panel == null or _feedback_bubble_icon == null:
 		return
-	var icon_texture := _load_drink_feedback_icon_texture()
+	var icon_texture := _load_player_delivery_feedback_icon_texture()
 	if icon_texture == null:
 		return
 	_feedback_bubble_token += 1
@@ -389,7 +389,7 @@ func _show_drink_feedback_bubble() -> void:
 	_feedback_bubble_panel.scale = Vector2(0.92, 0.92)
 	var tween := create_tween()
 	tween.tween_property(_feedback_bubble_panel, "scale", Vector2(1.0, 1.0), 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tween.tween_interval(DRINK_FEEDBACK_BUBBLE_SHOW_SEC)
+	tween.tween_interval(PLAYER_DELIVERY_FEEDBACK_BUBBLE_SHOW_SEC)
 	tween.tween_property(_feedback_bubble_panel, "modulate:a", 0.0, 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
 	tween.tween_callback(func():
 		if _feedback_bubble_panel == null or not is_instance_valid(_feedback_bubble_panel):
@@ -402,15 +402,15 @@ func _show_drink_feedback_bubble() -> void:
 		_feedback_bubble_panel.modulate = Color(1, 1, 1, 1)
 	)
 
-func _load_drink_feedback_icon_texture() -> Texture2D:
-	if _drink_feedback_icon_texture != null:
-		return _drink_feedback_icon_texture
-	var loaded := load(DRINK_FEEDBACK_ICON_PATH)
+func _load_player_delivery_feedback_icon_texture() -> Texture2D:
+	if _player_delivery_feedback_icon_texture != null:
+		return _player_delivery_feedback_icon_texture
+	var loaded := load(PLAYER_DELIVERY_FEEDBACK_ICON_PATH)
 	if loaded == null or not (loaded is Texture2D):
-		push_warning("[Customer] Failed to load drink feedback icon: %s" % DRINK_FEEDBACK_ICON_PATH)
+		push_warning("[Customer] Failed to load player delivery feedback icon: %s" % PLAYER_DELIVERY_FEEDBACK_ICON_PATH)
 		return null
-	_drink_feedback_icon_texture = loaded as Texture2D
-	return _drink_feedback_icon_texture
+	_player_delivery_feedback_icon_texture = loaded as Texture2D
+	return _player_delivery_feedback_icon_texture
 
 func _physics_process(dt: float) -> void:
 	if current_state == State.LEFT:
@@ -734,7 +734,7 @@ func _deliver_player_task_item(player: Node2D, player_inventory: Node, task: Dic
 func _thank_player_for_drink(player: Node2D, item_name: String) -> void:
 	if player == null or not is_instance_valid(player):
 		return
-	_show_drink_feedback_bubble()
+	_show_player_delivery_feedback_bubble()
 	var line := "Thanks."
 	match item_name.strip_edges().to_lower():
 		"coffee":
@@ -756,6 +756,7 @@ func _thank_player_for_drink(player: Node2D, item_name: String) -> void:
 func _thank_player_for_food(player: Node2D, item_name: String) -> void:
 	if player == null or not is_instance_valid(player):
 		return
+	_show_player_delivery_feedback_bubble()
 	var line := "Thanks for the food."
 	match item_name.strip_edges().to_lower():
 		"pizza":
