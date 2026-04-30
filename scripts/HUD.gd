@@ -20,10 +20,6 @@ var inventory_panel: PanelContainer
 var inventory_list: VBoxContainer
 var day_phase_label: Label
 var score_label: Label
-var robot_section_header: HBoxContainer
-var robot_section_label: Label
-var robot_section_toggle: Button
-var robot_section_content: VBoxContainer
 var battery_label: Label
 var robot_items_box: VBoxContainer
 var robot_tasks_box: VBoxContainer
@@ -40,6 +36,8 @@ var customer_history_next_btn: Button
 var dialogue_panel: PanelContainer
 var dialogue_list: VBoxContainer
 var dialogue_log: RichTextLabel
+var customer_panel: PanelContainer
+var customer_panel_list: VBoxContainer
 var tutorial_panel: PanelContainer
 var tutorial_body: RichTextLabel
 var tutorial_start_button: Button
@@ -84,7 +82,7 @@ const SYSTEM_PANEL_X_OFFSET := 40.0
 const SYSTEM_PANEL_WIDTH_REDUCTION := 28.0
 const PLAYER_DIALOGUE_OVERLAY_Y_OFFSET := 4.0
 const PLAYER_DIALOGUE_OVERLAY_WIDTH := 520.0
-const PLAYER_DIALOGUE_OVERLAY_SHOW_SEC := 5.0
+const PLAYER_DIALOGUE_OVERLAY_SHOW_SEC := 3.0
 const PLAYER_DIALOGUE_STACK_GAP := 10.0
 const HELP_PROMPT_MAX_STACK := 2
 const DIALOGUE_PANEL_WIDTH := 340.0
@@ -111,7 +109,6 @@ var _tutorial_started: bool = false
 var _customer_history_page: int = 0
 var _pending_day_notice: int = 0
 var _initial_day_notice_shown: bool = false
-var _robot_section_expanded: bool = false
 const CUSTOMER_HISTORY_PAGE_SIZE := 5
 
 func _ready() -> void:
@@ -126,6 +123,7 @@ func _ready() -> void:
 
 	_setup_inventory_ui()
 	_setup_dialogue_feed_ui()
+	_setup_customer_orders_ui()
 	_setup_player_dialogue_overlay_ui()
 	_setup_tutorial_ui()
 	_setup_player_task_notice_audio()
@@ -264,109 +262,26 @@ func _setup_inventory_ui() -> void:
 	var sep = HSeparator.new()
 	inventory_list.add_child(sep)
 
-	robot_section_header = HBoxContainer.new()
-	robot_section_header.add_theme_constant_override("separation", 4)
-	inventory_list.add_child(robot_section_header)
-
-	robot_section_label = Label.new()
-	robot_section_label.text = "ROBOT"
-	robot_section_label.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
-	robot_section_header.add_child(robot_section_label)
-
-	robot_section_toggle = Button.new()
-	robot_section_toggle.flat = true
-	robot_section_toggle.toggle_mode = true
-	robot_section_toggle.focus_mode = Control.FOCUS_NONE
-	robot_section_toggle.custom_minimum_size = Vector2(22.0, 0.0)
-	robot_section_toggle.add_theme_font_size_override("font_size", 18)
-	robot_section_toggle.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
-	var robot_toggle_style := StyleBoxEmpty.new()
-	robot_section_toggle.add_theme_stylebox_override("normal", robot_toggle_style)
-	robot_section_toggle.add_theme_stylebox_override("hover", robot_toggle_style)
-	robot_section_toggle.add_theme_stylebox_override("pressed", robot_toggle_style)
-	robot_section_toggle.add_theme_stylebox_override("focus", robot_toggle_style)
-	robot_section_toggle.pressed.connect(_on_robot_section_toggle_pressed)
-	robot_section_header.add_child(robot_section_toggle)
-
-	robot_section_content = VBoxContainer.new()
-	robot_section_content.add_theme_constant_override("separation", 0)
-	inventory_list.add_child(robot_section_content)
+	var robot_title = Label.new()
+	robot_title.text = "ROBOT"
+	robot_title.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
+	inventory_list.add_child(robot_title)
 
 	battery_label = Label.new()
-	battery_label.text = "Battery: --% (normal)"
+	battery_label.text = "Battery: --%"
 	battery_label.add_theme_color_override("font_color", Color(0.78, 1.0, 0.78, 1.0))
-	robot_section_content.add_child(battery_label)
+	inventory_list.add_child(battery_label)
 
 	robot_items_box = VBoxContainer.new()
-	robot_section_content.add_child(robot_items_box)
+	inventory_list.add_child(robot_items_box)
 
 	var robot_task_title = Label.new()
 	robot_task_title.text = "Assigned Tasks"
 	robot_task_title.add_theme_color_override("font_color", Color(0.78, 0.94, 1.0, 1.0))
-	robot_section_content.add_child(robot_task_title)
+	inventory_list.add_child(robot_task_title)
 
 	robot_tasks_box = VBoxContainer.new()
-	robot_section_content.add_child(robot_tasks_box)
-
-	_set_robot_section_expanded(true)
-
-	var sep2 = HSeparator.new()
-	inventory_list.add_child(sep2)
-
-	var customer_title = Label.new()
-	customer_title.text = "Customer Orders"
-	customer_title.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
-	inventory_list.add_child(customer_title)
-
-	customer_tab_buttons = HBoxContainer.new()
-	inventory_list.add_child(customer_tab_buttons)
-
-	customer_live_btn = Button.new()
-	customer_live_btn.text = "Live"
-	customer_live_btn.toggle_mode = true
-	customer_live_btn.button_pressed = true
-	customer_live_btn.pressed.connect(func():
-		_set_customer_tab(CUSTOMER_TAB_LIVE)
-	)
-	customer_tab_buttons.add_child(customer_live_btn)
-
-	customer_history_btn = Button.new()
-	customer_history_btn.text = "History"
-	customer_history_btn.toggle_mode = true
-	customer_history_btn.button_pressed = false
-	customer_history_btn.pressed.connect(func():
-		_set_customer_tab(CUSTOMER_TAB_HISTORY)
-	)
-	customer_tab_buttons.add_child(customer_history_btn)
-
-	customer_items_box = VBoxContainer.new()
-	inventory_list.add_child(customer_items_box)
-
-	customer_history_pager = HBoxContainer.new()
-	customer_history_pager.alignment = BoxContainer.ALIGNMENT_BEGIN
-	customer_history_pager.add_theme_constant_override("separation", 8)
-	customer_history_pager.visible = false
-	inventory_list.add_child(customer_history_pager)
-
-	customer_history_prev_btn = Button.new()
-	customer_history_prev_btn.text = "Prev"
-	customer_history_prev_btn.pressed.connect(func():
-		_customer_history_page = maxi(_customer_history_page - 1, 0)
-		_update_customer_panel()
-	)
-	customer_history_pager.add_child(customer_history_prev_btn)
-
-	customer_history_page_label = Label.new()
-	customer_history_page_label.text = "Page 1 / 1"
-	customer_history_pager.add_child(customer_history_page_label)
-
-	customer_history_next_btn = Button.new()
-	customer_history_next_btn.text = "Next"
-	customer_history_next_btn.pressed.connect(func():
-		_customer_history_page += 1
-		_update_customer_panel()
-	)
-	customer_history_pager.add_child(customer_history_next_btn)
+	inventory_list.add_child(robot_tasks_box)
 
 	var measured_panel_w: float = maxf(216.0, inventory_panel.get_combined_minimum_size().x + 6.0)
 	var base_panel_w: float = maxf(measured_panel_w, DIALOGUE_PANEL_WIDTH)
@@ -405,6 +320,84 @@ func _setup_dialogue_feed_ui() -> void:
 	dialogue_log.scroll_active = true
 	dialogue_log.fit_content = false
 	dialogue_list.add_child(dialogue_log)
+	_update_gameplay_panel_layout()
+
+func _setup_customer_orders_ui() -> void:
+	customer_panel = PanelContainer.new()
+	customer_panel.name = "CustomerOrdersPanel"
+	add_child(customer_panel)
+	customer_panel.position = Vector2(SIDE_PANEL_MARGIN, 0.0)
+	customer_panel.grow_vertical = Control.GROW_DIRECTION_END
+	customer_panel.custom_minimum_size = Vector2(maxf(DIALOGUE_PANEL_WIDTH, _left_panel_width), 180)
+
+	var style = StyleBoxFlat.new()
+	style.bg_color = Color(0, 0, 0, 0.5)
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	customer_panel.add_theme_stylebox_override("panel", style)
+	customer_panel.clip_contents = true
+
+	customer_panel_list = VBoxContainer.new()
+	customer_panel.add_child(customer_panel_list)
+
+	var customer_title = Label.new()
+	customer_title.text = "Customer Orders"
+	customer_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	customer_title.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
+	customer_panel_list.add_child(customer_title)
+
+	customer_tab_buttons = HBoxContainer.new()
+	customer_panel_list.add_child(customer_tab_buttons)
+
+	customer_live_btn = Button.new()
+	customer_live_btn.text = "Live"
+	customer_live_btn.toggle_mode = true
+	customer_live_btn.button_pressed = true
+	customer_live_btn.pressed.connect(func():
+		_set_customer_tab(CUSTOMER_TAB_LIVE)
+	)
+	customer_tab_buttons.add_child(customer_live_btn)
+
+	customer_history_btn = Button.new()
+	customer_history_btn.text = "History"
+	customer_history_btn.toggle_mode = true
+	customer_history_btn.button_pressed = false
+	customer_history_btn.pressed.connect(func():
+		_set_customer_tab(CUSTOMER_TAB_HISTORY)
+	)
+	customer_tab_buttons.add_child(customer_history_btn)
+
+	customer_items_box = VBoxContainer.new()
+	customer_panel_list.add_child(customer_items_box)
+
+	customer_history_pager = HBoxContainer.new()
+	customer_history_pager.alignment = BoxContainer.ALIGNMENT_BEGIN
+	customer_history_pager.add_theme_constant_override("separation", 8)
+	customer_history_pager.visible = false
+	customer_panel_list.add_child(customer_history_pager)
+
+	customer_history_prev_btn = Button.new()
+	customer_history_prev_btn.text = "Prev"
+	customer_history_prev_btn.pressed.connect(func():
+		_customer_history_page = maxi(_customer_history_page - 1, 0)
+		_update_customer_panel()
+	)
+	customer_history_pager.add_child(customer_history_prev_btn)
+
+	customer_history_page_label = Label.new()
+	customer_history_page_label.text = "1/1"
+	customer_history_pager.add_child(customer_history_page_label)
+
+	customer_history_next_btn = Button.new()
+	customer_history_next_btn.text = "Next"
+	customer_history_next_btn.pressed.connect(func():
+		_customer_history_page += 1
+		_update_customer_panel()
+	)
+	customer_history_pager.add_child(customer_history_next_btn)
+
 	_update_gameplay_panel_layout()
 
 func _setup_player_dialogue_overlay_ui() -> void:
@@ -532,17 +525,6 @@ func _on_day_changed_notice(day: int) -> void:
 	if day == 1:
 		message = "Welcome to the restaurant. You have entered Day 1."
 	_show_player_dialogue_overlay("System", message, "system")
-
-func _on_robot_section_toggle_pressed() -> void:
-	_set_robot_section_expanded(robot_section_toggle != null and robot_section_toggle.button_pressed)
-
-func _set_robot_section_expanded(expanded: bool) -> void:
-	_robot_section_expanded = expanded
-	if robot_section_toggle != null:
-		robot_section_toggle.button_pressed = expanded
-		robot_section_toggle.text = "▾" if expanded else "▸"
-	if robot_section_content != null:
-		robot_section_content.visible = expanded
 
 func _on_task_created(task: Dictionary) -> void:
 	var payload: Dictionary = task.get("payload", {})
@@ -674,7 +656,7 @@ func _process(_dt: float) -> void:
 	_update_gameplay_panel_layout()
 
 func _update_gameplay_panel_layout() -> void:
-	if inventory_panel == null or dialogue_panel == null:
+	if inventory_panel == null or dialogue_panel == null or customer_panel == null:
 		return
 	var vp := get_viewport()
 	if vp == null:
@@ -703,10 +685,18 @@ func _update_gameplay_panel_layout() -> void:
 	if dialogue_list != null:
 		dialogue_panel_h += dialogue_list.get_combined_minimum_size().y
 	dialogue_panel_h = maxf(dialogue_panel_h, 210.0)
+	var customer_panel_h: float = 20.0
+	if customer_panel_list != null:
+		customer_panel_h += customer_panel_list.get_combined_minimum_size().y
+	customer_panel_h = maxf(customer_panel_h, 160.0)
 	inventory_panel.custom_minimum_size.y = system_panel_h
 	inventory_panel.size.y = system_panel_h
 	dialogue_panel.custom_minimum_size.y = dialogue_panel_h
 	dialogue_panel.size.y = dialogue_panel_h
+	customer_panel.custom_minimum_size.x = dialogue_panel_w
+	customer_panel.custom_minimum_size.y = customer_panel_h
+	customer_panel.size = Vector2(dialogue_panel_w, customer_panel_h)
+	customer_panel.position = Vector2(dialogue_x, dialogue_panel.position.y + dialogue_panel_h + 12.0)
 	var centered_x: float = (view_size.x - PLAYER_DIALOGUE_OVERLAY_WIDTH) * 0.5
 	var stack_origin_y: float = gameplay_top_y + PLAYER_DIALOGUE_OVERLAY_Y_OFFSET
 	var stack_y: float = stack_origin_y
@@ -780,15 +770,14 @@ func _update_battery_label() -> void:
 		return
 	var robots = get_tree().get_nodes_in_group("robot")
 	if robots.is_empty():
-		battery_label.text = "Battery: --% (normal)"
+		battery_label.text = "Battery: --%"
 		return
 	var robot = robots[0]
 	var level := int(round(float(robot.get("battery_level"))))
 	var mode := str(robot.get("_battery_mode"))
 	if mode == "" or mode == "Null":
 		mode = "normal"
-	var mode_text := _friendly_battery_mode(mode)
-	battery_label.text = "Battery: %d%% (%s)" % [clampi(level, 0, 100), mode_text]
+	battery_label.text = "Battery: %d%%" % clampi(level, 0, 100)
 
 	if mode == "emergency":
 		battery_label.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
@@ -878,7 +867,7 @@ func _update_customer_panel() -> void:
 	if customer_history_next_btn:
 		customer_history_next_btn.disabled = (_customer_history_page >= total_pages - 1)
 	if customer_history_page_label:
-		customer_history_page_label.text = "Page %d / %d" % [_customer_history_page + 1, total_pages]
+		customer_history_page_label.text = "%d/%d" % [_customer_history_page + 1, total_pages]
 	for i in range(customer_lines.size()):
 		var line := customer_lines[i]
 		if i >= start_index and i < end_index:
@@ -929,7 +918,7 @@ func _update_customer_history_panel() -> void:
 	if customer_history_next_btn:
 		customer_history_next_btn.disabled = (_customer_history_page >= total_pages - 1)
 	if customer_history_page_label:
-		customer_history_page_label.text = "Page %d / %d" % [_customer_history_page + 1, total_pages]
+		customer_history_page_label.text = "%d/%d" % [_customer_history_page + 1, total_pages]
 
 	for i in range(start_index, end_index):
 		var task: Dictionary = ended[i]
@@ -1171,17 +1160,6 @@ func _friendly_table_name(raw: String) -> String:
 		return "Table -"
 	return raw
 
-func _friendly_battery_mode(raw: String) -> String:
-	match raw:
-		"normal":
-			return "Normal"
-		"conserve":
-			return "Low Power"
-		"emergency":
-			return "Critical"
-		_:
-			return "Normal"
-
 func _friendly_step_name(raw: String) -> String:
 	match raw:
 		"TAKE_ORDER":
@@ -1326,6 +1304,25 @@ func is_help_request_popup_visible() -> bool:
 func show_quick_notice(text: String) -> void:
 	_append_feed_line("Notice", text)
 
+func show_kitchen_pick_feedback(item_name: String, success: bool) -> void:
+	if _popup_mode != POPUP_MODE_KITCHEN_PICK:
+		return
+	var wanted := item_name.strip_edges().to_lower()
+	if wanted == "":
+		return
+	var idx := _kitchen_pick_options.find(wanted)
+	if idx < 0:
+		return
+	var button: Button = null
+	match idx:
+		0:
+			button = player_dialogue_overlay_accept_btn
+		1:
+			button = player_dialogue_overlay_decline_btn
+		2:
+			button = player_dialogue_overlay_later_btn
+	_flash_kitchen_pick_button(button, success)
+
 func _reset_help_buttons() -> void:
 	if player_dialogue_overlay_accept_btn:
 		player_dialogue_overlay_accept_btn.text = "Accept"
@@ -1335,6 +1332,39 @@ func _reset_help_buttons() -> void:
 		player_dialogue_overlay_later_btn.text = "Later"
 	if player_dialogue_overlay_later_btn:
 		player_dialogue_overlay_later_btn.visible = true
+
+func _flash_kitchen_pick_button(button: Button, success: bool) -> void:
+	if button == null or not is_instance_valid(button):
+		return
+	var flash_token := int(button.get_meta("kitchen_flash_token", 0)) + 1
+	button.set_meta("kitchen_flash_token", flash_token)
+	var flash_style := StyleBoxFlat.new()
+	flash_style.bg_color = Color(0.0, 0.0, 0.0, 0.0)
+	flash_style.border_width_left = 2
+	flash_style.border_width_top = 2
+	flash_style.border_width_right = 2
+	flash_style.border_width_bottom = 2
+	flash_style.border_color = Color(0.40, 0.86, 0.48, 1.0) if success else Color(0.92, 0.34, 0.34, 1.0)
+	flash_style.corner_radius_top_left = 8
+	flash_style.corner_radius_top_right = 8
+	flash_style.corner_radius_bottom_left = 8
+	flash_style.corner_radius_bottom_right = 8
+	button.add_theme_stylebox_override("normal", flash_style)
+	button.add_theme_stylebox_override("hover", flash_style)
+	button.add_theme_stylebox_override("pressed", flash_style)
+	button.add_theme_stylebox_override("focus", flash_style)
+	var tween := create_tween()
+	tween.tween_interval(0.8)
+	tween.tween_callback(func():
+		if button == null or not is_instance_valid(button):
+			return
+		if int(button.get_meta("kitchen_flash_token", 0)) != flash_token:
+			return
+		button.remove_theme_stylebox_override("normal")
+		button.remove_theme_stylebox_override("hover")
+		button.remove_theme_stylebox_override("pressed")
+		button.remove_theme_stylebox_override("focus")
+	)
 
 func _setup_survey_scale_buttons() -> void:
 	if survey_options == null:
@@ -1461,10 +1491,6 @@ func _show_tipi_result() -> void:
 	if profile and profile.has_method("set_tipi"):
 		profile.set_tipi(_tipi_responses.duplicate(true), _tipi_questions.size())
 
-	var tipi_scores := {}
-	if profile and profile.has_method("get_profile"):
-		tipi_scores = profile.get_profile().get("tipi_scores", {})
-
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 24)
 	survey_question.text = "Your responses have been recorded.\nThey will be taken into account in the robot delegation."
 	if survey_question_title:
@@ -1477,29 +1503,20 @@ func _show_tipi_result() -> void:
 	if survey_scale_hint:
 		survey_scale_hint.hide()
 	if survey_result_group_spacer:
-		survey_result_group_spacer.show()
-	if survey_result_title:
-		survey_result_title.text = "[b]Personality Survey Report (TIPI)[/b]"
-	survey_result.text = "Openness (O): %.1f\nConscientiousness (C): %.1f\nExtraversion (E): %.1f\nAgreeableness (A): %.1f\nNeuroticism (N): %.1f" % [
-		float(tipi_scores.get("O", 4.0)),
-		float(tipi_scores.get("C", 4.0)),
-		float(tipi_scores.get("E", 4.0)),
-		float(tipi_scores.get("A", 4.0)),
-		float(tipi_scores.get("N", 4.0)),
-	]
+		survey_result_group_spacer.hide()
 	if survey_result_group:
-		survey_result_group.show()
+		survey_result_group.hide()
 	if survey_result_spacer:
-		survey_result_spacer.show()
+		survey_result_spacer.hide()
 	for button in _survey_scale_buttons:
 		button.hide()
-	survey_confirm.text = "Continue"
+	survey_confirm.text = "Start Game"
 	survey_confirm.show()
 	_recenter_survey_panel()
 
 func _finish_survey_and_start() -> void:
 	survey_panel.hide()
-	_show_tutorial_before_game()
+	_start_game_from_tutorial()
 
 func _setup_tutorial_ui() -> void:
 	tutorial_panel = PanelContainer.new()
@@ -1612,7 +1629,7 @@ func _start_game_from_tutorial() -> void:
 		tutorial_toggle_button.show()
 	get_tree().paused = false
 	_set_gameplay_panels_visible(true)
-	_show_pending_day_notice()
+	call_deferred("_show_pending_day_notice")
 
 func _show_pending_day_notice() -> void:
 	if _initial_day_notice_shown:
@@ -1649,6 +1666,8 @@ func _set_gameplay_panels_visible(visible: bool) -> void:
 		inventory_panel.visible = visible
 	if dialogue_panel:
 		dialogue_panel.visible = visible
+	if customer_panel:
+		customer_panel.visible = visible
 	if help_prompt_stack and not visible:
 		help_prompt_stack.visible = false
 	if player_dialogue_overlay and not visible:
@@ -1788,13 +1807,12 @@ func _show_player_dialogue_overlay(speaker: String, text: String, kind: String) 
 	var content := text.strip_edges()
 	if content == "":
 		return
+	var system_popup_color := Color(1.0, 0.84, 0.36, 1.0)
 	var speaker_color := Color(1.0, 0.92, 0.74, 1.0)
-	if kind == "robot":
-		speaker_color = Color(0.76, 0.95, 1.0, 1.0)
-	elif kind == "customer":
-		speaker_color = Color(1.0, 0.85, 0.78, 1.0)
+	if kind == "customer":
+		speaker_color = Color(1.0, 0.64, 0.72, 1.0)
 	elif kind == "system":
-		speaker_color = Color(1.0, 0.84, 0.36, 1.0)
+		speaker_color = system_popup_color
 
 	var card := PanelContainer.new()
 	card.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, 0.0)
@@ -1878,7 +1896,7 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 	style.border_width_top = 2
 	style.border_width_right = 2
 	style.border_width_bottom = 2
-	style.border_color = Color(1.0, 0.84, 0.36, 0.95)
+	style.border_color = Color(0.58, 0.88, 1.0, 1.0)
 	style.corner_radius_top_left = 12
 	style.corner_radius_top_right = 12
 	style.corner_radius_bottom_right = 12
@@ -1900,7 +1918,7 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 	label.selection_enabled = false
 	label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, 0.0)
 	vbox.add_child(label)
-	label.push_color(Color(1.0, 0.84, 0.36, 1.0))
+	label.push_color(Color(0.58, 0.88, 1.0, 1.0))
 	label.add_text("Robot Request")
 	label.pop()
 	label.add_text("\n\n" + _build_help_text(request))
