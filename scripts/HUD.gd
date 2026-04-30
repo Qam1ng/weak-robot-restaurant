@@ -1461,10 +1461,6 @@ func _show_tipi_result() -> void:
 	if profile and profile.has_method("set_tipi"):
 		profile.set_tipi(_tipi_responses.duplicate(true), _tipi_questions.size())
 
-	var tipi_scores := {}
-	if profile and profile.has_method("get_profile"):
-		tipi_scores = profile.get_profile().get("tipi_scores", {})
-
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 24)
 	survey_question.text = "Your responses have been recorded.\nThey will be taken into account in the robot delegation."
 	if survey_question_title:
@@ -1477,29 +1473,20 @@ func _show_tipi_result() -> void:
 	if survey_scale_hint:
 		survey_scale_hint.hide()
 	if survey_result_group_spacer:
-		survey_result_group_spacer.show()
-	if survey_result_title:
-		survey_result_title.text = "[b]Personality Survey Report (TIPI)[/b]"
-	survey_result.text = "Openness (O): %.1f\nConscientiousness (C): %.1f\nExtraversion (E): %.1f\nAgreeableness (A): %.1f\nNeuroticism (N): %.1f" % [
-		float(tipi_scores.get("O", 4.0)),
-		float(tipi_scores.get("C", 4.0)),
-		float(tipi_scores.get("E", 4.0)),
-		float(tipi_scores.get("A", 4.0)),
-		float(tipi_scores.get("N", 4.0)),
-	]
+		survey_result_group_spacer.hide()
 	if survey_result_group:
-		survey_result_group.show()
+		survey_result_group.hide()
 	if survey_result_spacer:
-		survey_result_spacer.show()
+		survey_result_spacer.hide()
 	for button in _survey_scale_buttons:
 		button.hide()
-	survey_confirm.text = "Continue"
+	survey_confirm.text = "Start Game"
 	survey_confirm.show()
 	_recenter_survey_panel()
 
 func _finish_survey_and_start() -> void:
 	survey_panel.hide()
-	_show_tutorial_before_game()
+	_start_game_from_tutorial()
 
 func _setup_tutorial_ui() -> void:
 	tutorial_panel = PanelContainer.new()
