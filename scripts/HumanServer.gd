@@ -157,13 +157,20 @@ func _on_kitchen_pick_selected(item_name: String) -> void:
 	var wanted := item_name.strip_edges().to_lower()
 	if wanted == "":
 		return
+	var hud := _get_hud()
 	if inventory == null or inventory.is_full():
+		if hud and hud.has_method("show_kitchen_pick_feedback"):
+			hud.call("show_kitchen_pick_feedback", wanted, false)
 		_notify_player("Bag full. Cannot pick more.")
 		return
 	if not _complete_one_matching_pickup_step(wanted, _active_pick_station_kind):
+		if hud and hud.has_method("show_kitchen_pick_feedback"):
+			hud.call("show_kitchen_pick_feedback", wanted, false)
 		_notify_player("No matching pickup task for " + wanted.capitalize() + ".")
 		return
 	inventory.add_item(wanted, null, Rect2i(), _player_item_meta(wanted))
+	if hud and hud.has_method("show_kitchen_pick_feedback"):
+		hud.call("show_kitchen_pick_feedback", wanted, true)
 	_notify_player("Picked: " + wanted.capitalize())
 
 func _complete_one_matching_pickup_step(item_name: String, station_kind: String) -> bool:

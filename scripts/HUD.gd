@@ -84,7 +84,7 @@ const SYSTEM_PANEL_X_OFFSET := 40.0
 const SYSTEM_PANEL_WIDTH_REDUCTION := 28.0
 const PLAYER_DIALOGUE_OVERLAY_Y_OFFSET := 4.0
 const PLAYER_DIALOGUE_OVERLAY_WIDTH := 520.0
-const PLAYER_DIALOGUE_OVERLAY_SHOW_SEC := 5.0
+const PLAYER_DIALOGUE_OVERLAY_SHOW_SEC := 3.0
 const PLAYER_DIALOGUE_STACK_GAP := 10.0
 const HELP_PROMPT_MAX_STACK := 2
 const DIALOGUE_PANEL_WIDTH := 340.0
@@ -1326,6 +1326,25 @@ func is_help_request_popup_visible() -> bool:
 func show_quick_notice(text: String) -> void:
 	_append_feed_line("Notice", text)
 
+func show_kitchen_pick_feedback(item_name: String, success: bool) -> void:
+	if _popup_mode != POPUP_MODE_KITCHEN_PICK:
+		return
+	var wanted := item_name.strip_edges().to_lower()
+	if wanted == "":
+		return
+	var idx := _kitchen_pick_options.find(wanted)
+	if idx < 0:
+		return
+	var button: Button = null
+	match idx:
+		0:
+			button = player_dialogue_overlay_accept_btn
+		1:
+			button = player_dialogue_overlay_decline_btn
+		2:
+			button = player_dialogue_overlay_later_btn
+	_flash_kitchen_pick_button(button, success)
+
 func _reset_help_buttons() -> void:
 	if player_dialogue_overlay_accept_btn:
 		player_dialogue_overlay_accept_btn.text = "Accept"
@@ -1335,6 +1354,39 @@ func _reset_help_buttons() -> void:
 		player_dialogue_overlay_later_btn.text = "Later"
 	if player_dialogue_overlay_later_btn:
 		player_dialogue_overlay_later_btn.visible = true
+
+func _flash_kitchen_pick_button(button: Button, success: bool) -> void:
+	if button == null or not is_instance_valid(button):
+		return
+	var flash_token := int(button.get_meta("kitchen_flash_token", 0)) + 1
+	button.set_meta("kitchen_flash_token", flash_token)
+	var flash_style := StyleBoxFlat.new()
+	flash_style.bg_color = Color(0.0, 0.0, 0.0, 0.0)
+	flash_style.border_width_left = 2
+	flash_style.border_width_top = 2
+	flash_style.border_width_right = 2
+	flash_style.border_width_bottom = 2
+	flash_style.border_color = Color(0.40, 0.86, 0.48, 1.0) if success else Color(0.92, 0.34, 0.34, 1.0)
+	flash_style.corner_radius_top_left = 8
+	flash_style.corner_radius_top_right = 8
+	flash_style.corner_radius_bottom_left = 8
+	flash_style.corner_radius_bottom_right = 8
+	button.add_theme_stylebox_override("normal", flash_style)
+	button.add_theme_stylebox_override("hover", flash_style)
+	button.add_theme_stylebox_override("pressed", flash_style)
+	button.add_theme_stylebox_override("focus", flash_style)
+	var tween := create_tween()
+	tween.tween_interval(0.8)
+	tween.tween_callback(func():
+		if button == null or not is_instance_valid(button):
+			return
+		if int(button.get_meta("kitchen_flash_token", 0)) != flash_token:
+			return
+		button.remove_theme_stylebox_override("normal")
+		button.remove_theme_stylebox_override("hover")
+		button.remove_theme_stylebox_override("pressed")
+		button.remove_theme_stylebox_override("focus")
+	)
 
 func _setup_survey_scale_buttons() -> void:
 	if survey_options == null:
@@ -1599,7 +1651,7 @@ func _start_game_from_tutorial() -> void:
 		tutorial_toggle_button.show()
 	get_tree().paused = false
 	_set_gameplay_panels_visible(true)
-	_show_pending_day_notice()
+	call_deferred("_show_pending_day_notice")
 
 func _show_pending_day_notice() -> void:
 	if _initial_day_notice_shown:
