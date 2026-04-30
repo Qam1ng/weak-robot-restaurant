@@ -15,7 +15,21 @@ const FOOD_PICK_OPTIONS: Array[String] = ["pizza", "hotdog", "sandwich"]
 const DRINK_PICK_OPTIONS: Array[String] = ["cola", "tea", "coffee"]
 const PICKUP_STATION_RADIUS := 72.0
 const PLAYER_ITEM_TTL_MS := 120_000
+const PICKUP_BUBBLE_SHOW_SEC := 0.8
+const PICKUP_BUBBLE_ICON_PATHS := {
+	"pizza": "res://assets/icons/orders/pizza.png",
+	"hotdog": "res://assets/icons/orders/hotdog.png",
+	"sandwich": "res://assets/icons/orders/sandwich.png",
+	"coffee": "res://assets/icons/orders/coffee.png",
+	"tea": "res://assets/icons/orders/tea.png",
+	"cola": "res://assets/icons/orders/cola.png",
+}
 var _active_pick_station_kind: String = ""
+var _pickup_bubble_root: Node2D = null
+var _pickup_bubble_panel: PanelContainer = null
+var _pickup_bubble_icon: TextureRect = null
+var _pickup_bubble_textures: Dictionary = {}
+var _pickup_bubble_token: int = 0
 
 func _ready() -> void:
 	add_to_group("player")
@@ -38,6 +52,11 @@ func _ready() -> void:
 	inventory.capacity = 3
 
 	_connect_hud_signals()
+	_setup_pickup_bubble()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		_cleanup_pickup_bubble_resources()
 
 func _ensure_camera_current() -> void:
 	var cam := get_node_or_null("Camera2D")
@@ -171,6 +190,7 @@ func _on_kitchen_pick_selected(item_name: String) -> void:
 	inventory.add_item(wanted, null, Rect2i(), _player_item_meta(wanted))
 	if hud and hud.has_method("show_kitchen_pick_feedback"):
 		hud.call("show_kitchen_pick_feedback", wanted, true)
+	_show_pickup_bubble(wanted)
 	_notify_player("Picked: " + wanted.capitalize())
 
 func _complete_one_matching_pickup_step(item_name: String, station_kind: String) -> bool:
@@ -200,6 +220,102 @@ func _notify_player(text: String) -> void:
 	var hud := _get_hud()
 	if hud and hud.has_method("show_quick_notice"):
 		hud.call("show_quick_notice", text)
+
+func _setup_pickup_bubble() -> void:
+	if _pickup_bubble_root != null:
+		return
+	_pickup_bubble_root = Node2D.new()
+	_pickup_bubble_root.name = "PickupBubble"
+	_pickup_bubble_root.position = Vector2(0.0, -110.0)
+	_pickup_bubble_root.z_as_relative = false
+	_pickup_bubble_root.z_index = 42
+	add_child(_pickup_bubble_root)
+
+	_pickup_bubble_panel = PanelContainer.new()
+	_pickup_bubble_panel.visible = false
+	_pickup_bubble_root.add_child(_pickup_bubble_panel)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(1.0, 1.0, 1.0, 0.96)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = Color(0.40, 0.86, 0.48, 1.0)
+	style.corner_radius_top_left = 12
+	style.corner_radius_top_right = 12
+	style.corner_radius_bottom_left = 12
+	style.corner_radius_bottom_right = 12
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	_pickup_bubble_panel.add_theme_stylebox_override("panel", style)
+
+	_pickup_bubble_panel.size = Vector2(48, 48)
+
+	_pickup_bubble_icon = TextureRect.new()
+	_pickup_bubble_icon.position = Vector2(14, 14)
+	_pickup_bubble_icon.custom_minimum_size = Vector2(20, 20)
+	_pickup_bubble_icon.size = Vector2(20, 20)
+	_pickup_bubble_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_pickup_bubble_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_pickup_bubble_panel.add_child(_pickup_bubble_icon)
+
+func _show_pickup_bubble(item_name: String) -> void:
+	if _pickup_bubble_panel == null or _pickup_bubble_icon == null:
+		return
+	var icon_texture := _pickup_bubble_texture_for(item_name)
+	if icon_texture == null:
+		return
+	_pickup_bubble_token += 1
+	var token := _pickup_bubble_token
+	_pickup_bubble_icon.texture = icon_texture
+	_pickup_bubble_panel.position = Vector2(-24.0, -24.0)
+	_pickup_bubble_panel.visible = true
+	_pickup_bubble_panel.modulate = Color(1, 1, 1, 1)
+	_pickup_bubble_panel.scale = Vector2(0.92, 0.92)
+	var tween := create_tween()
+	tween.tween_property(_pickup_bubble_panel, "scale", Vector2(1.0, 1.0), 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_interval(PICKUP_BUBBLE_SHOW_SEC)
+	tween.tween_property(_pickup_bubble_panel, "modulate:a", 0.0, 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	tween.tween_callback(func():
+		if _pickup_bubble_panel == null or not is_instance_valid(_pickup_bubble_panel):
+			return
+		if token != _pickup_bubble_token:
+			return
+		if _pickup_bubble_icon != null and is_instance_valid(_pickup_bubble_icon):
+			_pickup_bubble_icon.texture = null
+		_pickup_bubble_panel.visible = false
+		_pickup_bubble_panel.modulate = Color(1, 1, 1, 1)
+	)
+
+func _pickup_bubble_texture_for(item_name: String) -> Texture2D:
+	var key := item_name.strip_edges().to_lower()
+	if _pickup_bubble_textures.has(key):
+		return _pickup_bubble_textures.get(key, null)
+	var path := str(PICKUP_BUBBLE_ICON_PATHS.get(key, "")).strip_edges()
+	if path == "":
+		return null
+	var loaded := load(path)
+	if loaded == null or not (loaded is Texture2D):
+		push_warning("[HumanServer] Failed to load pickup bubble icon: %s" % path)
+		return null
+	var texture := loaded as Texture2D
+	_pickup_bubble_textures[key] = texture
+	return texture
+
+func _cleanup_pickup_bubble_resources() -> void:
+	if _pickup_bubble_icon != null and is_instance_valid(_pickup_bubble_icon):
+		_pickup_bubble_icon.texture = null
+	_pickup_bubble_textures.clear()
+	if _pickup_bubble_root != null and is_instance_valid(_pickup_bubble_root):
+		if _pickup_bubble_root.get_parent() != null:
+			_pickup_bubble_root.get_parent().remove_child(_pickup_bubble_root)
+		_pickup_bubble_root.free()
+	_pickup_bubble_icon = null
+	_pickup_bubble_panel = null
+	_pickup_bubble_root = null
 
 func _player_item_meta(item_name: String, extra: Dictionary = {}) -> Dictionary:
 	var now_ms := Time.get_ticks_msec()

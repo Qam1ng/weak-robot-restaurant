@@ -20,10 +20,6 @@ var inventory_panel: PanelContainer
 var inventory_list: VBoxContainer
 var day_phase_label: Label
 var score_label: Label
-var robot_section_header: HBoxContainer
-var robot_section_label: Label
-var robot_section_toggle: Button
-var robot_section_content: VBoxContainer
 var battery_label: Label
 var robot_items_box: VBoxContainer
 var robot_tasks_box: VBoxContainer
@@ -111,7 +107,6 @@ var _tutorial_started: bool = false
 var _customer_history_page: int = 0
 var _pending_day_notice: int = 0
 var _initial_day_notice_shown: bool = false
-var _robot_section_expanded: bool = false
 const CUSTOMER_HISTORY_PAGE_SIZE := 5
 
 func _ready() -> void:
@@ -264,51 +259,26 @@ func _setup_inventory_ui() -> void:
 	var sep = HSeparator.new()
 	inventory_list.add_child(sep)
 
-	robot_section_header = HBoxContainer.new()
-	robot_section_header.add_theme_constant_override("separation", 4)
-	inventory_list.add_child(robot_section_header)
-
-	robot_section_label = Label.new()
-	robot_section_label.text = "ROBOT"
-	robot_section_label.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
-	robot_section_header.add_child(robot_section_label)
-
-	robot_section_toggle = Button.new()
-	robot_section_toggle.flat = true
-	robot_section_toggle.toggle_mode = true
-	robot_section_toggle.focus_mode = Control.FOCUS_NONE
-	robot_section_toggle.custom_minimum_size = Vector2(22.0, 0.0)
-	robot_section_toggle.add_theme_font_size_override("font_size", 18)
-	robot_section_toggle.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
-	var robot_toggle_style := StyleBoxEmpty.new()
-	robot_section_toggle.add_theme_stylebox_override("normal", robot_toggle_style)
-	robot_section_toggle.add_theme_stylebox_override("hover", robot_toggle_style)
-	robot_section_toggle.add_theme_stylebox_override("pressed", robot_toggle_style)
-	robot_section_toggle.add_theme_stylebox_override("focus", robot_toggle_style)
-	robot_section_toggle.pressed.connect(_on_robot_section_toggle_pressed)
-	robot_section_header.add_child(robot_section_toggle)
-
-	robot_section_content = VBoxContainer.new()
-	robot_section_content.add_theme_constant_override("separation", 0)
-	inventory_list.add_child(robot_section_content)
+	var robot_title = Label.new()
+	robot_title.text = "ROBOT"
+	robot_title.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 1.0))
+	inventory_list.add_child(robot_title)
 
 	battery_label = Label.new()
 	battery_label.text = "Battery: --% (normal)"
 	battery_label.add_theme_color_override("font_color", Color(0.78, 1.0, 0.78, 1.0))
-	robot_section_content.add_child(battery_label)
+	inventory_list.add_child(battery_label)
 
 	robot_items_box = VBoxContainer.new()
-	robot_section_content.add_child(robot_items_box)
+	inventory_list.add_child(robot_items_box)
 
 	var robot_task_title = Label.new()
 	robot_task_title.text = "Assigned Tasks"
 	robot_task_title.add_theme_color_override("font_color", Color(0.78, 0.94, 1.0, 1.0))
-	robot_section_content.add_child(robot_task_title)
+	inventory_list.add_child(robot_task_title)
 
 	robot_tasks_box = VBoxContainer.new()
-	robot_section_content.add_child(robot_tasks_box)
-
-	_set_robot_section_expanded(true)
+	inventory_list.add_child(robot_tasks_box)
 
 	var sep2 = HSeparator.new()
 	inventory_list.add_child(sep2)
@@ -532,17 +502,6 @@ func _on_day_changed_notice(day: int) -> void:
 	if day == 1:
 		message = "Welcome to the restaurant. You have entered Day 1."
 	_show_player_dialogue_overlay("System", message, "system")
-
-func _on_robot_section_toggle_pressed() -> void:
-	_set_robot_section_expanded(robot_section_toggle != null and robot_section_toggle.button_pressed)
-
-func _set_robot_section_expanded(expanded: bool) -> void:
-	_robot_section_expanded = expanded
-	if robot_section_toggle != null:
-		robot_section_toggle.button_pressed = expanded
-		robot_section_toggle.text = "▾" if expanded else "▸"
-	if robot_section_content != null:
-		robot_section_content.visible = expanded
 
 func _on_task_created(task: Dictionary) -> void:
 	var payload: Dictionary = task.get("payload", {})
