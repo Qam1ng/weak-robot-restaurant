@@ -190,7 +190,7 @@ func _ready() -> void:
 	# Avoid over-reacting to far-away agents, which can skew local steering.
 	agent.neighbor_distance = 120.0
 	agent.time_horizon = 1.0
-	agent.debug_enabled = true
+	agent.debug_enabled = false
 	if _has_property(agent, "debug_use_custom"):
 		agent.set("debug_use_custom", true)
 	if _has_property(agent, "debug_path_custom_color"):
@@ -202,16 +202,10 @@ func _ready() -> void:
 		agent.velocity_computed.connect(_on_agent_velocity_computed)
 	await _wait_for_nav_sync(agent.get_navigation_map(), 120)
 
-	if not has_node("NavDebugPath"):
-		var l := Line2D.new()
-		l.name = "NavDebugPath"
-		l.width = 3.0
-		l.default_color = Color(1.0, 0.15, 0.15, 1.0)
-		l.z_index = 100
-		add_child(l)
-		_nav_debug_line = l
-	else:
+	if has_node("NavDebugPath"):
 		_nav_debug_line = get_node("NavDebugPath") as Line2D
+		if _nav_debug_line != null:
+			_nav_debug_line.visible = false
 
 	# Dynamic RayCast creation for BT Avoidance
 	if not has_node("RayCast2D"):
@@ -1574,6 +1568,9 @@ func _on_help_request_resolved(request: Dictionary) -> void:
 
 func set_nav_debug_path(world_points: PackedVector2Array) -> void:
 	if _nav_debug_line == null:
+		return
+	if not _nav_debug_line.visible:
+		_nav_debug_line.points = PackedVector2Array()
 		return
 	if world_points.is_empty():
 		_nav_debug_line.points = PackedVector2Array()
