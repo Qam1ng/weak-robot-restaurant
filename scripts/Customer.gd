@@ -17,6 +17,7 @@ signal customer_left(customer: Node)
 @export var force_drink_order: bool = false
 const MIN_PATIENCE_SECONDS := 90.0
 const DRINK_CHOICES := ["cola", "tea", "coffee"]
+const DRINK_FEEDBACK_BUBBLE_SHOW_SEC := 0.8
 
 
 @onready var agent: NavigationAgent2D = $NavigationAgent2D
@@ -49,6 +50,10 @@ var _drink_timeout_handled: bool = false
 var _order_bubble_root: Node2D = null
 var _order_bubble_panel: PanelContainer = null
 var _order_bubble_icon: TextureRect = null
+var _feedback_bubble_root: Node2D = null
+var _feedback_bubble_panel: PanelContainer = null
+var _feedback_bubble_icon: TextureRect = null
+var _feedback_bubble_token: int = 0
 
 const ORDER_ICON_PATHS := {
 	"pizza": "res://assets/icons/orders/pizza.png",
@@ -58,7 +63,9 @@ const ORDER_ICON_PATHS := {
 	"tea": "res://assets/icons/orders/tea.png",
 	"cola": "res://assets/icons/orders/cola.png"
 }
+const DRINK_FEEDBACK_ICON_PATH := "res://assets/icons/orders/like.png"
 var _order_icon_textures: Dictionary = {}
+var _drink_feedback_icon_texture: Texture2D = null
 
 
 var current_seat: String = ""
@@ -92,6 +99,7 @@ func _wait_seconds(seconds: float) -> bool:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE:
 		_cleanup_order_bubble_resources()
+		_cleanup_feedback_bubble_resources()
 
 func _cleanup_order_bubble_resources() -> void:
 	if _order_bubble_icon != null and is_instance_valid(_order_bubble_icon):
@@ -104,6 +112,17 @@ func _cleanup_order_bubble_resources() -> void:
 	_order_bubble_icon = null
 	_order_bubble_panel = null
 	_order_bubble_root = null
+
+func _cleanup_feedback_bubble_resources() -> void:
+	if _feedback_bubble_icon != null and is_instance_valid(_feedback_bubble_icon):
+		_feedback_bubble_icon.texture = null
+	if _feedback_bubble_root != null and is_instance_valid(_feedback_bubble_root):
+		if _feedback_bubble_root.get_parent() != null:
+			_feedback_bubble_root.get_parent().remove_child(_feedback_bubble_root)
+		_feedback_bubble_root.free()
+	_feedback_bubble_icon = null
+	_feedback_bubble_panel = null
+	_feedback_bubble_root = null
 
 
 func _ready() -> void:
@@ -317,6 +336,81 @@ func _setup_order_bubble() -> void:
 	_order_bubble_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_order_bubble_panel.add_child(_order_bubble_icon)
 	_refresh_order_bubble()
+
+func _setup_feedback_bubble() -> void:
+	if _feedback_bubble_root != null:
+		return
+	_feedback_bubble_root = Node2D.new()
+	_feedback_bubble_root.name = "FeedbackBubble"
+	_feedback_bubble_root.position = Vector2(-28, -118)
+	add_child(_feedback_bubble_root)
+
+	_feedback_bubble_panel = PanelContainer.new()
+	_feedback_bubble_panel.visible = false
+	_feedback_bubble_root.add_child(_feedback_bubble_panel)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.98, 0.99, 1.0, 0.96)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = Color(0.95, 0.48, 0.66, 0.95)
+	style.corner_radius_top_left = 10
+	style.corner_radius_top_right = 10
+	style.corner_radius_bottom_left = 10
+	style.corner_radius_bottom_right = 10
+	style.content_margin_left = 8
+	style.content_margin_top = 4
+	style.content_margin_right = 8
+	style.content_margin_bottom = 4
+	_feedback_bubble_panel.add_theme_stylebox_override("panel", style)
+	_feedback_bubble_panel.size = Vector2(48, 48)
+
+	_feedback_bubble_icon = TextureRect.new()
+	_feedback_bubble_icon.position = Vector2(14, 14)
+	_feedback_bubble_icon.custom_minimum_size = Vector2(20, 20)
+	_feedback_bubble_icon.size = Vector2(20, 20)
+	_feedback_bubble_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_feedback_bubble_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_feedback_bubble_panel.add_child(_feedback_bubble_icon)
+
+func _show_drink_feedback_bubble() -> void:
+	_setup_feedback_bubble()
+	if _feedback_bubble_panel == null or _feedback_bubble_icon == null:
+		return
+	var icon_texture := _load_drink_feedback_icon_texture()
+	if icon_texture == null:
+		return
+	_feedback_bubble_token += 1
+	var token := _feedback_bubble_token
+	_feedback_bubble_icon.texture = icon_texture
+	_feedback_bubble_panel.visible = true
+	_feedback_bubble_panel.modulate = Color(1, 1, 1, 1)
+	_feedback_bubble_panel.scale = Vector2(0.92, 0.92)
+	var tween := create_tween()
+	tween.tween_property(_feedback_bubble_panel, "scale", Vector2(1.0, 1.0), 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_interval(DRINK_FEEDBACK_BUBBLE_SHOW_SEC)
+	tween.tween_property(_feedback_bubble_panel, "modulate:a", 0.0, 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	tween.tween_callback(func():
+		if _feedback_bubble_panel == null or not is_instance_valid(_feedback_bubble_panel):
+			return
+		if token != _feedback_bubble_token:
+			return
+		if _feedback_bubble_icon != null and is_instance_valid(_feedback_bubble_icon):
+			_feedback_bubble_icon.texture = null
+		_feedback_bubble_panel.visible = false
+		_feedback_bubble_panel.modulate = Color(1, 1, 1, 1)
+	)
+
+func _load_drink_feedback_icon_texture() -> Texture2D:
+	if _drink_feedback_icon_texture != null:
+		return _drink_feedback_icon_texture
+	var loaded := load(DRINK_FEEDBACK_ICON_PATH)
+	if loaded == null or not (loaded is Texture2D):
+		push_warning("[Customer] Failed to load drink feedback icon: %s" % DRINK_FEEDBACK_ICON_PATH)
+		return null
+	_drink_feedback_icon_texture = loaded as Texture2D
+	return _drink_feedback_icon_texture
 
 func _physics_process(dt: float) -> void:
 	if current_state == State.LEFT:
@@ -640,6 +734,7 @@ func _deliver_player_task_item(player: Node2D, player_inventory: Node, task: Dic
 func _thank_player_for_drink(player: Node2D, item_name: String) -> void:
 	if player == null or not is_instance_valid(player):
 		return
+	_show_drink_feedback_bubble()
 	var line := "Thanks."
 	match item_name.strip_edges().to_lower():
 		"coffee":
