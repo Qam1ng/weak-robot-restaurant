@@ -1160,17 +1160,6 @@ func _friendly_table_name(raw: String) -> String:
 		return "Table -"
 	return raw
 
-func _friendly_battery_mode(raw: String) -> String:
-	match raw:
-		"normal":
-			return "Normal"
-		"conserve":
-			return "Low Power"
-		"emergency":
-			return "Critical"
-		_:
-			return "Normal"
-
 func _friendly_step_name(raw: String) -> String:
 	match raw:
 		"TAKE_ORDER":
@@ -1818,13 +1807,12 @@ func _show_player_dialogue_overlay(speaker: String, text: String, kind: String) 
 	var content := text.strip_edges()
 	if content == "":
 		return
+	var system_popup_color := Color(1.0, 0.84, 0.36, 1.0)
 	var speaker_color := Color(1.0, 0.92, 0.74, 1.0)
-	if kind == "robot":
-		speaker_color = Color(0.76, 0.95, 1.0, 1.0)
-	elif kind == "customer":
-		speaker_color = Color(1.0, 0.85, 0.78, 1.0)
+	if kind == "customer":
+		speaker_color = Color(1.0, 0.64, 0.72, 1.0)
 	elif kind == "system":
-		speaker_color = Color(1.0, 0.84, 0.36, 1.0)
+		speaker_color = system_popup_color
 
 	var card := PanelContainer.new()
 	card.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, 0.0)
@@ -1908,7 +1896,7 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 	style.border_width_top = 2
 	style.border_width_right = 2
 	style.border_width_bottom = 2
-	style.border_color = Color(1.0, 0.84, 0.36, 0.95)
+	style.border_color = Color(0.58, 0.88, 1.0, 1.0)
 	style.corner_radius_top_left = 12
 	style.corner_radius_top_right = 12
 	style.corner_radius_bottom_right = 12
@@ -1930,7 +1918,7 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 	label.selection_enabled = false
 	label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, 0.0)
 	vbox.add_child(label)
-	label.push_color(Color(1.0, 0.84, 0.36, 1.0))
+	label.push_color(Color(0.58, 0.88, 1.0, 1.0))
 	label.add_text("Robot Request")
 	label.pop()
 	label.add_text("\n\n" + _build_help_text(request))
