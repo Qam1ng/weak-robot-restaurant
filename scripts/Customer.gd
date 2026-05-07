@@ -391,26 +391,31 @@ func _show_player_delivery_feedback_bubble() -> void:
 	tween.tween_property(_feedback_bubble_panel, "scale", Vector2(1.0, 1.0), 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tween.tween_interval(PLAYER_DELIVERY_FEEDBACK_BUBBLE_SHOW_SEC)
 	tween.tween_property(_feedback_bubble_panel, "modulate:a", 0.0, 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	tween.tween_callback(func():
-		if _feedback_bubble_panel == null or not is_instance_valid(_feedback_bubble_panel):
-			return
-		if token != _feedback_bubble_token:
-			return
-		if _feedback_bubble_icon != null and is_instance_valid(_feedback_bubble_icon):
-			_feedback_bubble_icon.texture = null
-		_feedback_bubble_panel.visible = false
-		_feedback_bubble_panel.modulate = Color(1, 1, 1, 1)
-	)
+	tween.tween_callback(Callable(self, "_hide_player_delivery_feedback_bubble").bind(token))
 
 func _load_player_delivery_feedback_icon_texture() -> Texture2D:
 	if _player_delivery_feedback_icon_texture != null:
 		return _player_delivery_feedback_icon_texture
 	var loaded := load(PLAYER_DELIVERY_FEEDBACK_ICON_PATH)
-	if loaded == null or not (loaded is Texture2D):
+	if loaded != null and loaded is Texture2D:
+		_player_delivery_feedback_icon_texture = loaded as Texture2D
+		return _player_delivery_feedback_icon_texture
+	var image := Image.load_from_file(PLAYER_DELIVERY_FEEDBACK_ICON_PATH)
+	if image == null or image.is_empty():
 		push_warning("[Customer] Failed to load player delivery feedback icon: %s" % PLAYER_DELIVERY_FEEDBACK_ICON_PATH)
 		return null
-	_player_delivery_feedback_icon_texture = loaded as Texture2D
+	_player_delivery_feedback_icon_texture = ImageTexture.create_from_image(image)
 	return _player_delivery_feedback_icon_texture
+
+func _hide_player_delivery_feedback_bubble(token: int) -> void:
+	if _feedback_bubble_panel == null or not is_instance_valid(_feedback_bubble_panel):
+		return
+	if token != _feedback_bubble_token:
+		return
+	if _feedback_bubble_icon != null and is_instance_valid(_feedback_bubble_icon):
+		_feedback_bubble_icon.texture = null
+	_feedback_bubble_panel.visible = false
+	_feedback_bubble_panel.modulate = Color(1, 1, 1, 1)
 
 func _physics_process(dt: float) -> void:
 	if current_state == State.LEFT:

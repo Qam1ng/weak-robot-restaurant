@@ -1355,16 +1355,7 @@ func _flash_kitchen_pick_button(button: Button, success: bool) -> void:
 	button.add_theme_stylebox_override("focus", flash_style)
 	var tween := create_tween()
 	tween.tween_interval(0.8)
-	tween.tween_callback(func():
-		if button == null or not is_instance_valid(button):
-			return
-		if int(button.get_meta("kitchen_flash_token", 0)) != flash_token:
-			return
-		button.remove_theme_stylebox_override("normal")
-		button.remove_theme_stylebox_override("hover")
-		button.remove_theme_stylebox_override("pressed")
-		button.remove_theme_stylebox_override("focus")
-	)
+	tween.tween_callback(Callable(self, "_clear_kitchen_pick_button_flash").bind(button.get_instance_id(), flash_token))
 
 func _setup_survey_scale_buttons() -> void:
 	if survey_options == null:
@@ -1857,9 +1848,7 @@ func _show_player_dialogue_overlay(speaker: String, text: String, kind: String) 
 	tween.tween_property(card, "scale", Vector2(1.0, 1.0), 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tween.tween_interval(PLAYER_DIALOGUE_OVERLAY_SHOW_SEC)
 	tween.tween_property(card, "modulate:a", 0.0, 0.22).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	tween.tween_callback(func():
-		_remove_player_dialogue_info_card(card)
-	)
+	tween.tween_callback(Callable(self, "_remove_player_dialogue_info_card_by_id").bind(card.get_instance_id()))
 
 func _show_player_dialogue_prompt(title: String, body: String, button_texts: Array[String] = [], show_third_button: bool = true) -> void:
 	if player_dialogue_overlay == null or player_dialogue_overlay_label == null:
@@ -2062,3 +2051,21 @@ func _remove_player_dialogue_info_card(card: Control) -> void:
 	if player_dialogue_info_stack and _player_dialogue_info_cards.is_empty():
 		player_dialogue_info_stack.visible = false
 	_update_gameplay_panel_layout()
+
+func _remove_player_dialogue_info_card_by_id(card_instance_id: int) -> void:
+	var card = instance_from_id(card_instance_id)
+	if card == null or not (card is Control):
+		return
+	_remove_player_dialogue_info_card(card as Control)
+
+func _clear_kitchen_pick_button_flash(button_instance_id: int, flash_token: int) -> void:
+	var button = instance_from_id(button_instance_id)
+	if button == null or not (button is Button):
+		return
+	var button_node := button as Button
+	if int(button_node.get_meta("kitchen_flash_token", 0)) != flash_token:
+		return
+	button_node.remove_theme_stylebox_override("normal")
+	button_node.remove_theme_stylebox_override("hover")
+	button_node.remove_theme_stylebox_override("pressed")
+	button_node.remove_theme_stylebox_override("focus")
