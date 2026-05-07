@@ -1302,7 +1302,7 @@ func is_help_request_popup_visible() -> bool:
 	return help_prompt_stack != null and help_prompt_stack.visible and not _help_prompt_cards.is_empty()
 
 func show_quick_notice(text: String) -> void:
-	_append_feed_line("Notice", text)
+	_append_feed_line("System", text)
 
 func show_kitchen_pick_feedback(item_name: String, success: bool) -> void:
 	if _popup_mode != POPUP_MODE_KITCHEN_PICK:
@@ -1767,14 +1767,30 @@ func _append_feed_line(speaker: String, text: String) -> void:
 	var content := text.strip_edges()
 	if content == "":
 		return
-	var line := "%s: %s\n" % [speaker, content]
+	var speaker_color := _dialogue_speaker_color(speaker)
+	dialogue_log.push_color(speaker_color)
+	dialogue_log.add_text("%s:" % speaker)
+	dialogue_log.pop()
 	dialogue_log.push_color(FEED_COLOR_DIALOGUE)
-	dialogue_log.add_text(line)
+	dialogue_log.add_text(" %s\n" % content)
 	dialogue_log.pop()
 	var max_lines := 80
 	if dialogue_log.get_line_count() > max_lines:
 		dialogue_log.clear()
 	dialogue_log.scroll_to_line(max(0, dialogue_log.get_line_count() - 1))
+
+func _dialogue_speaker_color(speaker: String) -> Color:
+	var key := speaker.strip_edges().to_lower()
+	match key:
+		"robot":
+			return Color(0.58, 0.88, 1.0, 1.0)
+		"customer":
+			return Color(1.0, 0.64, 0.72, 1.0)
+		"system":
+			return Color(1.0, 0.84, 0.36, 1.0)
+		"player", "you":
+			return Color(0.40, 0.86, 0.48, 1.0)
+	return FEED_COLOR_DIALOGUE
 
 func _is_player_related_dialogue(source: Node2D, recipient: Node2D, kind: String, recipient_kind: String) -> bool:
 	if recipient_kind == "player":
