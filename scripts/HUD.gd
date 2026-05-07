@@ -127,13 +127,16 @@ var _trial_guide_dim_bottom: ColorRect = null
 var _trial_guide_dim_left: ColorRect = null
 var _trial_guide_dim_right: ColorRect = null
 var _trial_guide_focus: PanelContainer = null
-var _trial_guide_arrow: Label = null
+var _trial_guide_arrow: TextureRect = null
+var _trial_guide_arrow_direction: String = "→"
 var _trial_guide_message_panel: PanelContainer = null
 var _trial_guide_message_label: RichTextLabel = null
 var _trial_guide_target: Dictionary = {}
 const CUSTOMER_HISTORY_PAGE_SIZE := 5
 const TRIAL_SESSION_MAX_SEC := 90.0
 const TRIAL_GUIDE_FOCUS_BORDER := Color(1.0, 0.93, 0.62, 1.0)
+const TRIAL_GUIDE_ARROW_TEXTURE := preload("res://assets/icons/orders/right-arrow.png")
+const TRIAL_GUIDE_ARROW_SIZE := Vector2(24.0, 24.0)
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -1802,11 +1805,14 @@ func _setup_trial_guide_ui() -> void:
 	_trial_guide_focus.add_theme_stylebox_override("panel", focus_style)
 	_trial_guide_layer.add_child(_trial_guide_focus)
 
-	_trial_guide_arrow = Label.new()
+	_trial_guide_arrow = TextureRect.new()
 	_trial_guide_arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_trial_guide_arrow.text = "↓"
-	_trial_guide_arrow.add_theme_font_size_override("font_size", 34)
-	_trial_guide_arrow.add_theme_color_override("font_color", TRIAL_GUIDE_FOCUS_BORDER)
+	_trial_guide_arrow.texture = TRIAL_GUIDE_ARROW_TEXTURE
+	_trial_guide_arrow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_trial_guide_arrow.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_trial_guide_arrow.custom_minimum_size = TRIAL_GUIDE_ARROW_SIZE
+	_trial_guide_arrow.size = TRIAL_GUIDE_ARROW_SIZE
+	_trial_guide_arrow.pivot_offset = TRIAL_GUIDE_ARROW_SIZE * 0.5
 	_trial_guide_layer.add_child(_trial_guide_arrow)
 
 	_trial_guide_message_panel = PanelContainer.new()
@@ -2122,8 +2128,24 @@ func _show_trial_guide(text: String, target: Dictionary, arrow: String = "↓") 
 	_trial_guide_layer.visible = true
 	_trial_guide_message_label.clear()
 	_trial_guide_message_label.append_text(text)
-	_trial_guide_arrow.text = arrow
+	_set_trial_guide_arrow_direction(arrow)
 	_update_trial_guide_overlay()
+
+func _set_trial_guide_arrow_direction(arrow: String) -> void:
+	_trial_guide_arrow_direction = arrow
+
+	if _trial_guide_arrow == null:
+		return
+
+	match arrow:
+		"↓":
+			_trial_guide_arrow.rotation_degrees = 90.0
+		"←":
+			_trial_guide_arrow.rotation_degrees = 180.0
+		"↑":
+			_trial_guide_arrow.rotation_degrees = -90.0
+		_:
+			_trial_guide_arrow.rotation_degrees = 0.0
 
 func _hide_trial_guide() -> void:
 	_trial_guide_target.clear()
@@ -2167,14 +2189,28 @@ func _update_trial_guide_overlay() -> void:
 	var message_y := focus_rect.position.y - message_size.y - 48.0 if place_above else focus_rect.position.y + focus_rect.size.y + 56.0
 	message_y += float(_trial_guide_target.get("message_offset_y", 0.0))
 	_trial_guide_message_panel.position = Vector2(message_x, message_y)
-	if _trial_guide_arrow.text == "→":
-		_trial_guide_arrow.position = Vector2(focus_rect.position.x - 30.0, focus_rect.get_center().y - 22.0)
-	elif _trial_guide_arrow.text == "←":
-		_trial_guide_arrow.position = Vector2(focus_rect.position.x + focus_rect.size.x + 8.0, focus_rect.get_center().y - 22.0)
+	var arrow_size := TRIAL_GUIDE_ARROW_SIZE
+
+	if _trial_guide_arrow_direction == "→":
+		_trial_guide_arrow.position = Vector2(
+			focus_rect.position.x - arrow_size.x - 8.0,
+			focus_rect.get_center().y - arrow_size.y * 0.5
+		)
+	elif _trial_guide_arrow_direction == "←":
+		_trial_guide_arrow.position = Vector2(
+			focus_rect.position.x + focus_rect.size.x + 8.0,
+			focus_rect.get_center().y - arrow_size.y * 0.5
+		)
 	elif place_above:
-		_trial_guide_arrow.position = Vector2(focus_rect.get_center().x - 10.0, focus_rect.position.y - 38.0)
+		_trial_guide_arrow.position = Vector2(
+			focus_rect.get_center().x - arrow_size.x * 0.5,
+			focus_rect.position.y - arrow_size.y - 8.0
+		)
 	else:
-		_trial_guide_arrow.position = Vector2(focus_rect.get_center().x - 10.0, focus_rect.position.y + focus_rect.size.y + 18.0)
+		_trial_guide_arrow.position = Vector2(
+			focus_rect.get_center().x - arrow_size.x * 0.5,
+			focus_rect.position.y + focus_rect.size.y + 8.0
+		)
 
 func _resolve_trial_guide_target_rect() -> Rect2:
 	if _trial_guide_target.is_empty():
