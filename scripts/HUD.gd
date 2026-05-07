@@ -2,6 +2,8 @@ extends CanvasLayer
 
 signal kitchen_pick_selected(item_name: String)
 
+const TrialCustomerScene = preload("res://scenes/Customer.tscn")
+
 @onready var survey_panel: PanelContainer = $SurveyPanel
 @onready var survey_question_title: RichTextLabel = $SurveyPanel/Margin/VBox/QuestionTitle
 @onready var survey_question: Label = $SurveyPanel/Margin/VBox/Question
@@ -43,6 +45,7 @@ var tutorial_body: RichTextLabel
 var tutorial_start_button: Button
 var tutorial_close_button: Button
 var tutorial_toggle_button: Button
+var player_dialogue_overlay_backdrop: ColorRect
 var player_dialogue_overlay: PanelContainer
 var player_dialogue_overlay_label: RichTextLabel
 var help_prompt_stack: VBoxContainer
@@ -109,7 +112,31 @@ var _tutorial_started: bool = false
 var _customer_history_page: int = 0
 var _pending_day_notice: int = 0
 var _initial_day_notice_shown: bool = false
+var _formal_session_started: bool = false
+var _trial_session_active: bool = false
+var _trial_step: String = ""
+var _trial_customer: Node2D = null
+var _trial_drink_task_id: String = ""
+var _trial_help_demo_active: bool = false
+var _trial_help_demo_card: Control = null
+var _trial_timeout_timer: Timer = null
+var _trial_guide_layer: Control = null
+var _trial_guide_dim: ColorRect = null
+var _trial_guide_dim_top: ColorRect = null
+var _trial_guide_dim_bottom: ColorRect = null
+var _trial_guide_dim_left: ColorRect = null
+var _trial_guide_dim_right: ColorRect = null
+var _trial_guide_focus: PanelContainer = null
+var _trial_guide_arrow: TextureRect = null
+var _trial_guide_arrow_direction: String = "→"
+var _trial_guide_message_panel: PanelContainer = null
+var _trial_guide_message_label: RichTextLabel = null
+var _trial_guide_target: Dictionary = {}
 const CUSTOMER_HISTORY_PAGE_SIZE := 5
+const TRIAL_SESSION_MAX_SEC := 90.0
+const TRIAL_GUIDE_FOCUS_BORDER := Color(1.0, 0.93, 0.62, 1.0)
+const TRIAL_GUIDE_ARROW_TEXTURE := preload("res://assets/icons/orders/right-arrow.png")
+const TRIAL_GUIDE_ARROW_SIZE := Vector2(24.0, 24.0)
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -126,6 +153,7 @@ func _ready() -> void:
 	_setup_customer_orders_ui()
 	_setup_player_dialogue_overlay_ui()
 	_setup_tutorial_ui()
+	_setup_trial_guide_ui()
 	_setup_player_task_notice_audio()
 	_set_gameplay_panels_visible(false)
 	_connect_viewport_resize()
@@ -413,6 +441,14 @@ func _setup_player_dialogue_overlay_ui() -> void:
 	player_dialogue_info_stack.add_theme_constant_override("separation", PLAYER_DIALOGUE_STACK_GAP)
 	add_child(player_dialogue_info_stack)
 
+	player_dialogue_overlay_backdrop = ColorRect.new()
+	player_dialogue_overlay_backdrop.name = "PlayerDialogueOverlayBackdrop"
+	player_dialogue_overlay_backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	player_dialogue_overlay_backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	player_dialogue_overlay_backdrop.color = Color(0.02, 0.03, 0.05, 0.42)
+	player_dialogue_overlay_backdrop.visible = false
+	add_child(player_dialogue_overlay_backdrop)
+
 	player_dialogue_overlay = PanelContainer.new()
 	player_dialogue_overlay.name = "PlayerDialogueOverlay"
 	player_dialogue_overlay.visible = false
@@ -474,6 +510,8 @@ func _connect_task_signals() -> void:
 	var board = get_node_or_null("/root/TaskBoard")
 	if board == null:
 		return
+	if board.has_signal("task_updated") and not board.task_updated.is_connected(_on_task_updated):
+		board.task_updated.connect(_on_task_updated)
 	if board.has_signal("task_created") and not board.task_created.is_connected(_on_task_created):
 		board.task_created.connect(_on_task_created)
 	if board.has_signal("task_completed") and not board.task_completed.is_connected(_on_task_completed):
@@ -504,6 +542,9 @@ func _cache_initial_day_notice() -> void:
 func _refresh_day_phase_label(_hour: int = -1, _minute: int = -1) -> void:
 	if day_phase_label == null:
 		return
+	if _trial_session_active:
+		day_phase_label.text = "Trial Session"
+		return
 	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
 	if time_mgr == null:
 		return
@@ -517,24 +558,55 @@ func _on_period_changed_label(_period_name: String, _is_peak: bool) -> void:
 func _on_day_changed_notice(day: int) -> void:
 	if day <= 0:
 		return
-	if not _tutorial_started:
+	if not _formal_session_started:
 		_pending_day_notice = day
 		return
 	_initial_day_notice_shown = true
 	var message := "You have entered Day %d." % day
 	if day == 1:
-		message = "Welcome to the restaurant. You have entered Day 1."
+		message = "The formal session is starting. You have entered Day 1."
 	_show_player_dialogue_overlay("System", message, "system")
 
 func _on_task_created(task: Dictionary) -> void:
 	var payload: Dictionary = task.get("payload", {})
+	if _trial_session_active and _is_trial_customer_task(payload):
+		var order_kind := str(payload.get("order_kind", "food"))
+		if order_kind == "food" and _trial_step == "await_food_order":
+			_trial_step = "await_drink_order"
+			call_deferred("_ensure_trial_drink_request")
+		elif order_kind == "drink":
+			_trial_drink_task_id = str(task.get("id", ""))
+			_show_trial_guide_for_drink_request()
+			_trial_step = "await_take_order"
 	if str(payload.get("order_kind", "")) != "drink":
 		return
 	if str(task.get("assigned_to", "")).strip_edges() != "":
 		return
 	_play_new_order_notice()
 
+func _on_task_updated(task: Dictionary) -> void:
+	if not _trial_session_active:
+		return
+	if str(task.get("id", "")) != _trial_drink_task_id or _trial_drink_task_id == "":
+		return
+	var board = get_node_or_null("/root/TaskBoard")
+	if board == null or not board.has_method("get_current_step_name"):
+		return
+	var step_name := str(board.get_current_step_name(_trial_drink_task_id))
+	var assignee := str(task.get("assigned_to", ""))
+	if _trial_step == "await_take_order" and assignee == "player" and step_name == "PICKUP_FROM_KITCHEN":
+		_trial_step = "await_pickup"
+		_show_trial_guide_for_drink_pickup()
+	elif (_trial_step == "await_pickup" or _trial_step == "await_delivery") and step_name == "DELIVER_AND_SERVE":
+		_trial_step = "await_delivery"
+		_show_trial_guide_for_drink_delivery()
+
 func _on_task_completed(task: Dictionary) -> void:
+	if _trial_session_active:
+		if str(task.get("id", "")) == _trial_drink_task_id:
+			_trial_step = "await_delegation"
+			call_deferred("_start_trial_delegation_demo")
+		return
 	_success_count += 1
 	var payload: Dictionary = task.get("payload", {})
 	var order_kind := str(payload.get("order_kind", "food"))
@@ -547,6 +619,10 @@ func _on_task_completed(task: Dictionary) -> void:
 	_update_customer_panel()
 
 func _on_task_failed(task: Dictionary) -> void:
+	if _trial_session_active:
+		if str(task.get("id", "")) == _trial_drink_task_id:
+			call_deferred("_finish_trial_session", false)
+		return
 	_failed_count += 1
 	var payload: Dictionary = task.get("payload", {})
 	var order_kind := str(payload.get("order_kind", "food"))
@@ -654,6 +730,7 @@ func _process(_dt: float) -> void:
 	_update_player_task_panel()
 	_update_customer_panel()
 	_update_gameplay_panel_layout()
+	_update_trial_guide_overlay()
 
 func _update_gameplay_panel_layout() -> void:
 	if inventory_panel == null or dialogue_panel == null or customer_panel == null:
@@ -1272,6 +1349,10 @@ func _on_help_request_resolved(request: Dictionary) -> void:
 func show_kitchen_pick_popup(options: Array[String], title: String = "Kitchen Pickup") -> void:
 	if options.size() < 3:
 		return
+	if _trial_session_active and _trial_step == "await_pickup":
+		_hide_trial_guide()
+	if player_dialogue_overlay_backdrop:
+		player_dialogue_overlay_backdrop.visible = true
 	_popup_mode = POPUP_MODE_KITCHEN_PICK
 	_kitchen_pick_options.clear()
 	for i in range(3):
@@ -1294,6 +1375,8 @@ func hide_kitchen_pick_popup() -> void:
 	_popup_mode = POPUP_MODE_NONE
 	_kitchen_pick_options.clear()
 	_reset_help_buttons()
+	if _trial_session_active and _trial_step == "await_pickup":
+		call_deferred("_show_trial_guide_for_drink_pickup")
 
 func is_kitchen_pick_popup_visible() -> bool:
 	return _popup_mode == POPUP_MODE_KITCHEN_PICK and player_dialogue_overlay != null and player_dialogue_overlay.visible
@@ -1302,7 +1385,7 @@ func is_help_request_popup_visible() -> bool:
 	return help_prompt_stack != null and help_prompt_stack.visible and not _help_prompt_cards.is_empty()
 
 func show_quick_notice(text: String) -> void:
-	_append_feed_line("Notice", text)
+	_append_feed_line("System", text)
 
 func show_kitchen_pick_feedback(item_name: String, success: bool) -> void:
 	if _popup_mode != POPUP_MODE_KITCHEN_PICK:
@@ -1355,16 +1438,7 @@ func _flash_kitchen_pick_button(button: Button, success: bool) -> void:
 	button.add_theme_stylebox_override("focus", flash_style)
 	var tween := create_tween()
 	tween.tween_interval(0.8)
-	tween.tween_callback(func():
-		if button == null or not is_instance_valid(button):
-			return
-		if int(button.get_meta("kitchen_flash_token", 0)) != flash_token:
-			return
-		button.remove_theme_stylebox_override("normal")
-		button.remove_theme_stylebox_override("hover")
-		button.remove_theme_stylebox_override("pressed")
-		button.remove_theme_stylebox_override("focus")
-	)
+	tween.tween_callback(Callable(self, "_clear_kitchen_pick_button_flash").bind(button.get_instance_id(), flash_token))
 
 func _setup_survey_scale_buttons() -> void:
 	if survey_options == null:
@@ -1625,11 +1699,11 @@ func _start_game_from_tutorial() -> void:
 	_tutorial_started = true
 	if tutorial_panel:
 		tutorial_panel.hide()
-	if tutorial_toggle_button:
+	if tutorial_toggle_button and _formal_session_started:
 		tutorial_toggle_button.show()
 	get_tree().paused = false
 	_set_gameplay_panels_visible(true)
-	call_deferred("_show_pending_day_notice")
+	_start_trial_session()
 
 func _show_pending_day_notice() -> void:
 	if _initial_day_notice_shown:
@@ -1674,6 +1748,513 @@ func _set_gameplay_panels_visible(visible: bool) -> void:
 		player_dialogue_overlay.visible = false
 	if player_dialogue_info_stack and not visible:
 		player_dialogue_info_stack.visible = false
+
+func _setup_trial_guide_ui() -> void:
+	_trial_timeout_timer = Timer.new()
+	_trial_timeout_timer.one_shot = true
+	_trial_timeout_timer.wait_time = TRIAL_SESSION_MAX_SEC
+	_trial_timeout_timer.timeout.connect(_on_trial_timeout)
+	add_child(_trial_timeout_timer)
+
+	_trial_guide_layer = Control.new()
+	_trial_guide_layer.name = "TrialGuideLayer"
+	_trial_guide_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_trial_guide_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trial_guide_layer.visible = false
+	add_child(_trial_guide_layer)
+
+	_trial_guide_dim = ColorRect.new()
+	_trial_guide_dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_trial_guide_dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trial_guide_dim.color = Color(0, 0, 0, 0)
+	_trial_guide_layer.add_child(_trial_guide_dim)
+
+	_trial_guide_dim_top = ColorRect.new()
+	_trial_guide_dim_top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trial_guide_dim_top.color = Color(0.02, 0.03, 0.05, 0.38)
+	_trial_guide_dim.add_child(_trial_guide_dim_top)
+
+	_trial_guide_dim_bottom = ColorRect.new()
+	_trial_guide_dim_bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trial_guide_dim_bottom.color = Color(0.02, 0.03, 0.05, 0.38)
+	_trial_guide_dim.add_child(_trial_guide_dim_bottom)
+
+	_trial_guide_dim_left = ColorRect.new()
+	_trial_guide_dim_left.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trial_guide_dim_left.color = Color(0.02, 0.03, 0.05, 0.38)
+	_trial_guide_dim.add_child(_trial_guide_dim_left)
+
+	_trial_guide_dim_right = ColorRect.new()
+	_trial_guide_dim_right.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trial_guide_dim_right.color = Color(0.02, 0.03, 0.05, 0.38)
+	_trial_guide_dim.add_child(_trial_guide_dim_right)
+
+	_trial_guide_focus = PanelContainer.new()
+	_trial_guide_focus.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var focus_style := StyleBoxFlat.new()
+	focus_style.bg_color = Color(0, 0, 0, 0)
+	focus_style.border_width_left = 3
+	focus_style.border_width_top = 3
+	focus_style.border_width_right = 3
+	focus_style.border_width_bottom = 3
+	focus_style.border_color = TRIAL_GUIDE_FOCUS_BORDER
+	focus_style.corner_radius_top_left = 12
+	focus_style.corner_radius_top_right = 12
+	focus_style.corner_radius_bottom_left = 12
+	focus_style.corner_radius_bottom_right = 12
+	_trial_guide_focus.add_theme_stylebox_override("panel", focus_style)
+	_trial_guide_layer.add_child(_trial_guide_focus)
+
+	_trial_guide_arrow = TextureRect.new()
+	_trial_guide_arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trial_guide_arrow.texture = TRIAL_GUIDE_ARROW_TEXTURE
+	_trial_guide_arrow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_trial_guide_arrow.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_trial_guide_arrow.custom_minimum_size = TRIAL_GUIDE_ARROW_SIZE
+	_trial_guide_arrow.size = TRIAL_GUIDE_ARROW_SIZE
+	_trial_guide_arrow.pivot_offset = TRIAL_GUIDE_ARROW_SIZE * 0.5
+	_trial_guide_layer.add_child(_trial_guide_arrow)
+
+	_trial_guide_message_panel = PanelContainer.new()
+	_trial_guide_message_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var message_style := StyleBoxFlat.new()
+	message_style.bg_color = Color(0.08, 0.11, 0.16, 0.94)
+	message_style.border_width_left = 2
+	message_style.border_width_top = 2
+	message_style.border_width_right = 2
+	message_style.border_width_bottom = 2
+	message_style.border_color = TRIAL_GUIDE_FOCUS_BORDER
+	message_style.corner_radius_top_left = 12
+	message_style.corner_radius_top_right = 12
+	message_style.corner_radius_bottom_left = 12
+	message_style.corner_radius_bottom_right = 12
+	message_style.content_margin_left = 14
+	message_style.content_margin_right = 14
+	message_style.content_margin_top = 10
+	message_style.content_margin_bottom = 10
+	_trial_guide_message_panel.add_theme_stylebox_override("panel", message_style)
+	_trial_guide_layer.add_child(_trial_guide_message_panel)
+
+	_trial_guide_message_label = RichTextLabel.new()
+	_trial_guide_message_label.bbcode_enabled = true
+	_trial_guide_message_label.fit_content = true
+	_trial_guide_message_label.scroll_active = false
+	_trial_guide_message_label.selection_enabled = false
+	_trial_guide_message_label.custom_minimum_size = Vector2(280.0, 0.0)
+	_trial_guide_message_panel.add_child(_trial_guide_message_label)
+
+func _trial_wait(seconds: float) -> bool:
+	if seconds <= 0.0:
+		return true
+	var timer := Timer.new()
+	timer.one_shot = true
+	timer.wait_time = seconds
+	add_child(timer)
+	timer.start()
+	await timer.timeout
+	if is_instance_valid(timer):
+		timer.queue_free()
+	return is_inside_tree()
+
+func _start_trial_session() -> void:
+	if _trial_session_active or _formal_session_started:
+		return
+	_trial_session_active = true
+	_trial_step = "intro"
+	_trial_drink_task_id = ""
+	_trial_help_demo_active = false
+	_refresh_day_phase_label()
+	_reset_trial_world_state()
+	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
+	if time_mgr and time_mgr.has_method("pause"):
+		time_mgr.pause()
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_customer_spawner"):
+		var spawner = game_mgr.get_customer_spawner()
+		if spawner and spawner.has_method("disable"):
+			spawner.disable()
+	if tutorial_toggle_button:
+		tutorial_toggle_button.hide()
+	if _trial_timeout_timer:
+		_trial_timeout_timer.start(TRIAL_SESSION_MAX_SEC)
+	call_deferred("_run_trial_intro")
+
+func _run_trial_intro() -> void:
+	_hide_trial_guide()
+	_show_player_dialogue_overlay("System", "Welcome to the restaurant.", "system")
+	if not await _trial_wait(PLAYER_DIALOGUE_OVERLAY_SHOW_SEC + 0.1):
+		return
+	if not _trial_session_active:
+		return
+	_show_player_dialogue_overlay("System", "You are now entering the trial session.", "system")
+	if not await _trial_wait(1.0):
+		return
+	if not _trial_session_active:
+		return
+	_spawn_trial_customer()
+	_trial_step = "await_food_order"
+	_show_trial_guide_for_customer_orders()
+
+func _spawn_trial_customer() -> void:
+	if _trial_customer != null and is_instance_valid(_trial_customer):
+		return
+	var customer = TrialCustomerScene.instantiate()
+	customer.preset_food_item = "pizza"
+	customer.preset_drink_item = "coffee"
+	customer.start_delay_sec = 0.2
+	var current_scene = get_tree().current_scene
+	if current_scene == null:
+		return
+	current_scene.add_child(customer)
+	var spawn_marker = current_scene.find_child("CS1", true, false)
+	if spawn_marker != null and spawn_marker is Node2D:
+		customer.global_position = (spawn_marker as Node2D).global_position
+	_trial_customer = customer as Node2D
+
+func _ensure_trial_drink_request() -> void:
+	if not await _trial_wait(2.5):
+		return
+	if not _trial_session_active or _trial_customer == null or not is_instance_valid(_trial_customer):
+		return
+	if _trial_drink_task_id != "":
+		return
+	if _trial_customer.has_method("on_food_order_taken"):
+		_trial_customer.call("on_food_order_taken")
+
+func _show_trial_guide_for_customer_orders() -> void:
+	_show_trial_guide(
+		"The robot will handle the food order first, and you will handle the drink order.",
+		{"type": "control", "id": customer_panel.get_instance_id(), "prefer_below": true},
+		"→"
+	)
+
+func _show_trial_guide_for_drink_request() -> void:
+	_show_trial_guide(
+		"The customer is now requesting a drink. Walk to the customer and press [b]E[/b] to take the drink order.",
+		{"type": "world_customer", "id": _trial_customer.get_instance_id(), "size": Vector2(104.0, 150.0), "offset": Vector2(0.0, -24.0)},
+		"↓"
+	)
+
+func _show_trial_guide_for_drink_pickup() -> void:
+	_show_trial_guide(
+		"Next, go to the drink cabinet and press [b]E[/b]. Select the requested drink to pick it up.",
+		_drink_cabinet_trial_target(),
+		"↓"
+	)
+
+func _show_trial_guide_for_drink_delivery() -> void:
+	_show_trial_guide(
+		"Take the drink back to the customer and deliver it.",
+		{"type": "world_customer", "id": _trial_customer.get_instance_id(), "size": Vector2(104.0, 150.0), "offset": Vector2(0.0, -24.0)},
+		"↓"
+	)
+
+func _start_trial_delegation_demo() -> void:
+	if not _trial_session_active or _trial_help_demo_active:
+		return
+	_trial_help_demo_active = true
+	if not await _trial_wait(1.0):
+		return
+	if not _trial_session_active:
+		return
+	_show_trial_help_demo_card()
+	_show_trial_guide(
+		"When the robot is overloaded, it may delegate a task like this. Accept the request to continue the session.",
+		{"type": "control", "id": help_prompt_stack.get_instance_id()},
+		"↓"
+	)
+
+func _show_trial_help_demo_card() -> void:
+	_clear_trial_help_demo_card()
+	if help_prompt_stack == null:
+		return
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, 0.0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.11, 0.16, 0.92)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = Color(0.58, 0.88, 1.0, 1.0)
+	style.corner_radius_top_left = 12
+	style.corner_radius_top_right = 12
+	style.corner_radius_bottom_left = 12
+	style.corner_radius_bottom_right = 12
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	card.add_theme_stylebox_override("panel", style)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	card.add_child(vbox)
+
+	var label := RichTextLabel.new()
+	label.bbcode_enabled = true
+	label.fit_content = true
+	label.scroll_active = false
+	label.selection_enabled = false
+	label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, 0.0)
+	vbox.add_child(label)
+	label.push_color(Color(0.58, 0.88, 1.0, 1.0))
+	label.add_text("Robot Request")
+	label.pop()
+	label.add_text("\n\nThe robot is overloaded and asks you to take over an order.")
+
+	var buttons := HBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_child(buttons)
+
+	var accept_btn := Button.new()
+	accept_btn.text = "Accept"
+	accept_btn.pressed.connect(_on_trial_help_demo_accept)
+	buttons.add_child(accept_btn)
+
+	help_prompt_stack.add_child(card)
+	help_prompt_stack.visible = true
+	_trial_help_demo_card = card
+	_update_gameplay_panel_layout()
+
+func _on_trial_help_demo_accept() -> void:
+	_clear_trial_help_demo_card()
+	_finish_trial_session(true)
+
+func _clear_trial_help_demo_card() -> void:
+	if _trial_help_demo_card != null and is_instance_valid(_trial_help_demo_card):
+		_trial_help_demo_card.queue_free()
+	_trial_help_demo_card = null
+	if help_prompt_stack:
+		help_prompt_stack.visible = not _help_prompt_cards.is_empty()
+	_update_gameplay_panel_layout()
+
+func _finish_trial_session(success: bool) -> void:
+	if not _trial_session_active:
+		return
+	_trial_session_active = false
+	_trial_step = "complete"
+	if _trial_timeout_timer:
+		_trial_timeout_timer.stop()
+	_clear_trial_help_demo_card()
+	_hide_trial_guide()
+	_reset_trial_world_state()
+	_formal_session_started = true
+	_initial_day_notice_shown = false
+	_pending_day_notice = 1
+	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
+	if time_mgr and time_mgr.has_method("reset_runtime"):
+		time_mgr.reset_runtime()
+	if time_mgr and time_mgr.has_method("resume"):
+		time_mgr.resume()
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_customer_spawner"):
+		var spawner = game_mgr.get_customer_spawner()
+		if spawner:
+			if spawner.has_method("clear_all_customers"):
+				spawner.clear_all_customers()
+			if spawner.has_method("enable"):
+				spawner.enable()
+	if tutorial_toggle_button:
+		tutorial_toggle_button.show()
+	_refresh_day_phase_label()
+	call_deferred("_show_formal_session_transition", success)
+
+func _on_trial_timeout() -> void:
+	_finish_trial_session(false)
+
+func _show_formal_session_transition(success: bool) -> void:
+	if success:
+		_show_player_dialogue_overlay("System", "Trial complete. The formal session will start now.", "system")
+	else:
+		_show_player_dialogue_overlay("System", "The trial session has ended. The formal session will start now.", "system")
+	await _trial_wait(PLAYER_DIALOGUE_OVERLAY_SHOW_SEC + 0.1)
+	_show_pending_day_notice()
+
+func _reset_trial_world_state() -> void:
+	var board = get_node_or_null("/root/TaskBoard")
+	if board and board.has_method("reset_all"):
+		board.reset_all()
+	var help_mgr = get_node_or_null("/root/HelpRequestManager")
+	if help_mgr and help_mgr.has_method("reset_all"):
+		help_mgr.reset_all()
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_customer_spawner"):
+		var spawner = game_mgr.get_customer_spawner()
+		if spawner and spawner.has_method("clear_all_customers"):
+			spawner.clear_all_customers()
+	if _trial_customer != null and is_instance_valid(_trial_customer):
+		_trial_customer.queue_free()
+	_trial_customer = null
+	_trial_drink_task_id = ""
+	_trial_help_demo_active = false
+	_clear_trial_help_demo_card()
+	_clear_actor_inventory("player")
+	_clear_actor_inventory("robot")
+	_score = 0
+	_success_count = 0
+	_failed_count = 0
+	_score_game_over = false
+	_customer_history_page = 0
+	_last_player_live_task_ids.clear()
+	_refresh_score_label()
+	if dialogue_log:
+		dialogue_log.clear()
+	_update_player_task_panel()
+	_update_robot_task_panel()
+	_update_customer_panel()
+
+func _clear_actor_inventory(group_name: String) -> void:
+	var actors = get_tree().get_nodes_in_group(group_name)
+	if actors.is_empty():
+		return
+	var actor = actors[0]
+	var inv = actor.get_node_or_null("Inventory")
+	if inv == null or not (inv is Inventory):
+		return
+	var inventory_node := inv as Inventory
+	inventory_node.items.clear()
+	inventory_node.emit_signal("inventory_changed", inventory_node.items)
+
+func _is_trial_customer_task(payload: Dictionary) -> bool:
+	if _trial_customer == null or not is_instance_valid(_trial_customer):
+		return false
+	return int(payload.get("customer_instance_id", 0)) == _trial_customer.get_instance_id()
+
+func _show_trial_guide(text: String, target: Dictionary, arrow: String = "↓") -> void:
+	if _trial_guide_layer == null or _trial_guide_message_label == null:
+		return
+	_trial_guide_target = target.duplicate(true)
+	_trial_guide_layer.visible = true
+	_trial_guide_message_label.clear()
+	_trial_guide_message_label.append_text(text)
+	_set_trial_guide_arrow_direction(arrow)
+	_update_trial_guide_overlay()
+
+func _set_trial_guide_arrow_direction(arrow: String) -> void:
+	_trial_guide_arrow_direction = arrow
+
+	if _trial_guide_arrow == null:
+		return
+
+	match arrow:
+		"↓":
+			_trial_guide_arrow.rotation_degrees = 90.0
+		"←":
+			_trial_guide_arrow.rotation_degrees = 180.0
+		"↑":
+			_trial_guide_arrow.rotation_degrees = -90.0
+		_:
+			_trial_guide_arrow.rotation_degrees = 0.0
+
+func _hide_trial_guide() -> void:
+	_trial_guide_target.clear()
+	if _trial_guide_layer:
+		_trial_guide_layer.visible = false
+
+func _update_trial_guide_overlay() -> void:
+	if _trial_guide_layer == null or not _trial_guide_layer.visible:
+		return
+	var rect := _resolve_trial_guide_target_rect()
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return
+	var focus_rect := rect.grow(8.0)
+	var view_size := get_viewport().get_visible_rect().size
+	var clipped_focus := Rect2(
+		Vector2(clampf(focus_rect.position.x, 0.0, view_size.x), clampf(focus_rect.position.y, 0.0, view_size.y)),
+		Vector2(
+			clampf(focus_rect.end.x, 0.0, view_size.x) - clampf(focus_rect.position.x, 0.0, view_size.x),
+			clampf(focus_rect.end.y, 0.0, view_size.y) - clampf(focus_rect.position.y, 0.0, view_size.y)
+		)
+	)
+	if _trial_guide_dim_top:
+		_trial_guide_dim_top.position = Vector2.ZERO
+		_trial_guide_dim_top.size = Vector2(view_size.x, maxf(0.0, clipped_focus.position.y))
+	if _trial_guide_dim_bottom:
+		_trial_guide_dim_bottom.position = Vector2(0.0, clipped_focus.end.y)
+		_trial_guide_dim_bottom.size = Vector2(view_size.x, maxf(0.0, view_size.y - clipped_focus.end.y))
+	if _trial_guide_dim_left:
+		_trial_guide_dim_left.position = Vector2(0.0, clipped_focus.position.y)
+		_trial_guide_dim_left.size = Vector2(maxf(0.0, clipped_focus.position.x), maxf(0.0, clipped_focus.size.y))
+	if _trial_guide_dim_right:
+		_trial_guide_dim_right.position = Vector2(clipped_focus.end.x, clipped_focus.position.y)
+		_trial_guide_dim_right.size = Vector2(maxf(0.0, view_size.x - clipped_focus.end.x), maxf(0.0, clipped_focus.size.y))
+	_trial_guide_focus.position = focus_rect.position
+	_trial_guide_focus.size = focus_rect.size
+	var message_size := _trial_guide_message_panel.get_combined_minimum_size()
+	_trial_guide_message_panel.size = message_size
+	var message_x := clampf(focus_rect.get_center().x - message_size.x * 0.5, 24.0, maxf(24.0, view_size.x - message_size.x - 24.0))
+	var prefer_below := bool(_trial_guide_target.get("prefer_below", false))
+	var place_above := focus_rect.position.y >= message_size.y + 70.0 and not prefer_below
+	var message_y := focus_rect.position.y - message_size.y - 48.0 if place_above else focus_rect.position.y + focus_rect.size.y + 56.0
+	message_y += float(_trial_guide_target.get("message_offset_y", 0.0))
+	_trial_guide_message_panel.position = Vector2(message_x, message_y)
+	var arrow_size := TRIAL_GUIDE_ARROW_SIZE
+
+	if _trial_guide_arrow_direction == "→":
+		_trial_guide_arrow.position = Vector2(
+			focus_rect.position.x - arrow_size.x - 8.0,
+			focus_rect.get_center().y - arrow_size.y * 0.5
+		)
+	elif _trial_guide_arrow_direction == "←":
+		_trial_guide_arrow.position = Vector2(
+			focus_rect.position.x + focus_rect.size.x + 8.0,
+			focus_rect.get_center().y - arrow_size.y * 0.5
+		)
+	elif place_above:
+		_trial_guide_arrow.position = Vector2(
+			focus_rect.get_center().x - arrow_size.x * 0.5,
+			focus_rect.position.y - arrow_size.y - 8.0
+		)
+	else:
+		_trial_guide_arrow.position = Vector2(
+			focus_rect.get_center().x - arrow_size.x * 0.5,
+			focus_rect.position.y + focus_rect.size.y + 8.0
+		)
+
+func _resolve_trial_guide_target_rect() -> Rect2:
+	if _trial_guide_target.is_empty():
+		return Rect2()
+	var target_type := str(_trial_guide_target.get("type", ""))
+	match target_type:
+		"control":
+			var control = instance_from_id(int(_trial_guide_target.get("id", 0)))
+			if control != null and control is Control:
+				return (control as Control).get_global_rect()
+		"world_customer":
+			var node = instance_from_id(int(_trial_guide_target.get("id", 0)))
+			if node != null and node is Node2D:
+				var size: Vector2 = _trial_guide_target.get("size", Vector2(96.0, 132.0))
+				var offset: Vector2 = _trial_guide_target.get("offset", Vector2.ZERO)
+				var screen := _world_to_screen((node as Node2D).global_position + offset)
+				return Rect2(screen - size * 0.5, size)
+		"world_rect":
+			var center: Vector2 = _trial_guide_target.get("center", Vector2.ZERO)
+			var size: Vector2 = _trial_guide_target.get("size", Vector2.ZERO)
+			var offset: Vector2 = _trial_guide_target.get("offset", Vector2.ZERO)
+			var screen := _world_to_screen(center + offset)
+			return Rect2(screen - size * 0.5, size)
+	return Rect2()
+
+func _world_to_screen(world_pos: Vector2) -> Vector2:
+	return get_viewport().get_canvas_transform() * world_pos
+
+func _drink_cabinet_trial_target() -> Dictionary:
+	return {"type": "world_rect", "center": Vector2(-208.0, -358.0), "size": Vector2(246.0, 130.0)}
+
+func _player_holding_bar_trial_target() -> Dictionary:
+	var players := get_tree().get_nodes_in_group("player")
+	if players.is_empty():
+		return {"type": "world_rect", "center": Vector2.ZERO, "size": Vector2(160.0, 56.0)}
+	var player = players[0]
+	var bar_root = player.get_node_or_null("HoldingBar")
+	if bar_root != null:
+		var panel = bar_root.get_child(0) if bar_root.get_child_count() > 0 else null
+		if panel != null and panel is Control:
+			return {"type": "control", "id": (panel as Control).get_instance_id()}
+	if player is Node2D:
+		return {"type": "world_rect", "center": (player as Node2D).global_position + Vector2(0.0, -98.0), "size": Vector2(180.0, 56.0)}
+	return {"type": "world_rect", "center": Vector2.ZERO, "size": Vector2(180.0, 56.0)}
 
 func _auto_open_help_request(request: Dictionary) -> void:
 	if survey_panel and survey_panel.visible:
@@ -1776,14 +2357,30 @@ func _append_feed_line(speaker: String, text: String) -> void:
 	var content := text.strip_edges()
 	if content == "":
 		return
-	var line := "%s: %s\n" % [speaker, content]
+	var speaker_color := _dialogue_speaker_color(speaker)
+	dialogue_log.push_color(speaker_color)
+	dialogue_log.add_text("%s:" % speaker)
+	dialogue_log.pop()
 	dialogue_log.push_color(FEED_COLOR_DIALOGUE)
-	dialogue_log.add_text(line)
+	dialogue_log.add_text(" %s\n" % content)
 	dialogue_log.pop()
 	var max_lines := 80
 	if dialogue_log.get_line_count() > max_lines:
 		dialogue_log.clear()
 	dialogue_log.scroll_to_line(max(0, dialogue_log.get_line_count() - 1))
+
+func _dialogue_speaker_color(speaker: String) -> Color:
+	var key := speaker.strip_edges().to_lower()
+	match key:
+		"robot":
+			return Color(0.58, 0.88, 1.0, 1.0)
+		"customer":
+			return Color(1.0, 0.64, 0.72, 1.0)
+		"system":
+			return Color(1.0, 0.84, 0.36, 1.0)
+		"player", "you":
+			return Color(0.40, 0.86, 0.48, 1.0)
+	return FEED_COLOR_DIALOGUE
 
 func _is_player_related_dialogue(source: Node2D, recipient: Node2D, kind: String, recipient_kind: String) -> bool:
 	if recipient_kind == "player":
@@ -1857,9 +2454,7 @@ func _show_player_dialogue_overlay(speaker: String, text: String, kind: String) 
 	tween.tween_property(card, "scale", Vector2(1.0, 1.0), 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tween.tween_interval(PLAYER_DIALOGUE_OVERLAY_SHOW_SEC)
 	tween.tween_property(card, "modulate:a", 0.0, 0.22).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	tween.tween_callback(func():
-		_remove_player_dialogue_info_card(card)
-	)
+	tween.tween_callback(Callable(self, "_remove_player_dialogue_info_card_by_id").bind(card.get_instance_id()))
 
 func _show_player_dialogue_prompt(title: String, body: String, button_texts: Array[String] = [], show_third_button: bool = true) -> void:
 	if player_dialogue_overlay == null or player_dialogue_overlay_label == null:
@@ -2040,6 +2635,8 @@ func _hide_player_dialogue_overlay() -> void:
 	if player_dialogue_overlay == null:
 		return
 	_hide_player_dialogue_overlay_buttons()
+	if player_dialogue_overlay_backdrop:
+		player_dialogue_overlay_backdrop.visible = false
 	player_dialogue_overlay.visible = false
 	player_dialogue_overlay.modulate = Color(1, 1, 1, 1)
 	_update_gameplay_panel_layout()
@@ -2062,3 +2659,21 @@ func _remove_player_dialogue_info_card(card: Control) -> void:
 	if player_dialogue_info_stack and _player_dialogue_info_cards.is_empty():
 		player_dialogue_info_stack.visible = false
 	_update_gameplay_panel_layout()
+
+func _remove_player_dialogue_info_card_by_id(card_instance_id: int) -> void:
+	var card = instance_from_id(card_instance_id)
+	if card == null or not (card is Control):
+		return
+	_remove_player_dialogue_info_card(card as Control)
+
+func _clear_kitchen_pick_button_flash(button_instance_id: int, flash_token: int) -> void:
+	var button = instance_from_id(button_instance_id)
+	if button == null or not (button is Button):
+		return
+	var button_node := button as Button
+	if int(button_node.get_meta("kitchen_flash_token", 0)) != flash_token:
+		return
+	button_node.remove_theme_stylebox_override("normal")
+	button_node.remove_theme_stylebox_override("hover")
+	button_node.remove_theme_stylebox_override("pressed")
+	button_node.remove_theme_stylebox_override("focus")

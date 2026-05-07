@@ -15,6 +15,8 @@ signal customer_left(customer: Node)
 @export var interact_radius: float = 64.0
 @export var drink_order_probability: float = 0.50
 @export var force_drink_order: bool = false
+@export var preset_food_item: String = ""
+@export var preset_drink_item: String = ""
 const MIN_PATIENCE_SECONDS := 90.0
 const DRINK_CHOICES := ["cola", "tea", "coffee"]
 const PLAYER_DELIVERY_FEEDBACK_BUBBLE_SHOW_SEC := 0.8
@@ -165,7 +167,10 @@ func _ready() -> void:
 	
 
 	var food_choices = ["pizza", "hotdog", "sandwich"]
-	request_text = "Can I order a " + food_choices[randi() % food_choices.size()] + "?"
+	var chosen_food := preset_food_item.strip_edges().to_lower()
+	if chosen_food == "":
+		chosen_food = food_choices[randi() % food_choices.size()]
+	request_text = "Can I order a " + chosen_food + "?"
 	_roll_optional_drink_order()
 	
 	inventory = InventoryScript.new()
@@ -290,13 +295,17 @@ func _pick_seat_and_go():
 	print("[Customer] Navigating to seat...")
 
 func _roll_optional_drink_order() -> void:
-	_drink_required = force_drink_order or randf() < clampf(drink_order_probability, 0.0, 1.0)
+	var forced_drink := preset_drink_item.strip_edges().to_lower()
+	_drink_required = forced_drink != "" or force_drink_order or randf() < clampf(drink_order_probability, 0.0, 1.0)
 	force_drink_order = false
 	if not _drink_required:
 		_drink_item = ""
 		_drink_request_text = ""
 		return
-	_drink_item = DRINK_CHOICES[randi() % DRINK_CHOICES.size()]
+	if forced_drink != "":
+		_drink_item = forced_drink
+	else:
+		_drink_item = DRINK_CHOICES[randi() % DRINK_CHOICES.size()]
 	_drink_request_text = "Can I also get a " + _drink_item + "?"
 
 func _setup_order_bubble() -> void:
@@ -391,26 +400,31 @@ func _show_player_delivery_feedback_bubble() -> void:
 	tween.tween_property(_feedback_bubble_panel, "scale", Vector2(1.0, 1.0), 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tween.tween_interval(PLAYER_DELIVERY_FEEDBACK_BUBBLE_SHOW_SEC)
 	tween.tween_property(_feedback_bubble_panel, "modulate:a", 0.0, 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	tween.tween_callback(func():
-		if _feedback_bubble_panel == null or not is_instance_valid(_feedback_bubble_panel):
-			return
-		if token != _feedback_bubble_token:
-			return
-		if _feedback_bubble_icon != null and is_instance_valid(_feedback_bubble_icon):
-			_feedback_bubble_icon.texture = null
-		_feedback_bubble_panel.visible = false
-		_feedback_bubble_panel.modulate = Color(1, 1, 1, 1)
-	)
+	tween.tween_callback(Callable(self, "_hide_player_delivery_feedback_bubble").bind(token))
 
 func _load_player_delivery_feedback_icon_texture() -> Texture2D:
 	if _player_delivery_feedback_icon_texture != null:
 		return _player_delivery_feedback_icon_texture
 	var loaded := load(PLAYER_DELIVERY_FEEDBACK_ICON_PATH)
-	if loaded == null or not (loaded is Texture2D):
+	if loaded != null and loaded is Texture2D:
+		_player_delivery_feedback_icon_texture = loaded as Texture2D
+		return _player_delivery_feedback_icon_texture
+	var image := Image.load_from_file(PLAYER_DELIVERY_FEEDBACK_ICON_PATH)
+	if image == null or image.is_empty():
 		push_warning("[Customer] Failed to load player delivery feedback icon: %s" % PLAYER_DELIVERY_FEEDBACK_ICON_PATH)
 		return null
-	_player_delivery_feedback_icon_texture = loaded as Texture2D
+	_player_delivery_feedback_icon_texture = ImageTexture.create_from_image(image)
 	return _player_delivery_feedback_icon_texture
+
+func _hide_player_delivery_feedback_bubble(token: int) -> void:
+	if _feedback_bubble_panel == null or not is_instance_valid(_feedback_bubble_panel):
+		return
+	if token != _feedback_bubble_token:
+		return
+	if _feedback_bubble_icon != null and is_instance_valid(_feedback_bubble_icon):
+		_feedback_bubble_icon.texture = null
+	_feedback_bubble_panel.visible = false
+	_feedback_bubble_panel.modulate = Color(1, 1, 1, 1)
 
 func _physics_process(dt: float) -> void:
 	if current_state == State.LEFT:
