@@ -15,6 +15,8 @@ signal customer_left(customer: Node)
 @export var interact_radius: float = 64.0
 @export var drink_order_probability: float = 0.50
 @export var force_drink_order: bool = false
+@export var preset_food_item: String = ""
+@export var preset_drink_item: String = ""
 const MIN_PATIENCE_SECONDS := 90.0
 const DRINK_CHOICES := ["cola", "tea", "coffee"]
 const PLAYER_DELIVERY_FEEDBACK_BUBBLE_SHOW_SEC := 0.8
@@ -165,7 +167,10 @@ func _ready() -> void:
 	
 
 	var food_choices = ["pizza", "hotdog", "sandwich"]
-	request_text = "Can I order a " + food_choices[randi() % food_choices.size()] + "?"
+	var chosen_food := preset_food_item.strip_edges().to_lower()
+	if chosen_food == "":
+		chosen_food = food_choices[randi() % food_choices.size()]
+	request_text = "Can I order a " + chosen_food + "?"
 	_roll_optional_drink_order()
 	
 	inventory = InventoryScript.new()
@@ -290,13 +295,17 @@ func _pick_seat_and_go():
 	print("[Customer] Navigating to seat...")
 
 func _roll_optional_drink_order() -> void:
-	_drink_required = force_drink_order or randf() < clampf(drink_order_probability, 0.0, 1.0)
+	var forced_drink := preset_drink_item.strip_edges().to_lower()
+	_drink_required = forced_drink != "" or force_drink_order or randf() < clampf(drink_order_probability, 0.0, 1.0)
 	force_drink_order = false
 	if not _drink_required:
 		_drink_item = ""
 		_drink_request_text = ""
 		return
-	_drink_item = DRINK_CHOICES[randi() % DRINK_CHOICES.size()]
+	if forced_drink != "":
+		_drink_item = forced_drink
+	else:
+		_drink_item = DRINK_CHOICES[randi() % DRINK_CHOICES.size()]
 	_drink_request_text = "Can I also get a " + _drink_item + "?"
 
 func _setup_order_bubble() -> void:
