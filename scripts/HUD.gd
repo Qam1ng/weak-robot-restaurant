@@ -1642,7 +1642,7 @@ func _show_tipi_result() -> void:
 		survey_result_spacer.hide()
 	for button in _survey_scale_buttons:
 		button.hide()
-	survey_confirm.text = "Start Game"
+	survey_confirm.text = "Start Tutorial"
 	survey_confirm.show()
 	_recenter_survey_panel()
 

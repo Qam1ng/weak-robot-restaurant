@@ -251,7 +251,11 @@ func _on_period_changed(period_name: String, is_peak: bool) -> void:
 
 func enable() -> void:
 	_enabled = true
-	_schedule_next_spawn()
+	_cleanup_inactive_customers()
+	if active_customers.is_empty():
+		spawn_timer.start(0.0)
+	else:
+		_schedule_next_spawn()
 	print("[CustomerSpawner] Enabled")
 
 func disable() -> void:
