@@ -2,14 +2,16 @@
 
 ## 1. Core Manipulated Variables
 
-### 1.1 Time structure and session pacing
-File: `scripts/TimeManager.gd`
+### 1.1 Time structure, busyness, and spawn density by phase
+Files: `scripts/TimeManager.gd`, `scripts/CustomerSpawner.gd`
 
+Global settings:
 - `real_to_game_ratio = 2.0`
 - `start_hour = 6`
 - `start_minute = 0`
+- `absolute_max_customers = 6`
 
-Core formula:
+Core time formula:
 
 ```text
 game_minutes_per_real_second = real_to_game_ratio × phase_multiplier
@@ -22,65 +24,25 @@ game_minutes_per_real_second = 2.0
 1 real minute = 120 game minutes = 2 game hours
 ```
 
-Current phase schedule:
-
-- Morning: `06:00–10:00`
-- Lunch: `10:00–14:00`
-- Afternoon: `14:00–17:00`
-- Dinner: `17:00–23:00`
-- Night: `23:00–06:00`
-
-Current real-time duration per phase:
-
-- Morning -> `2.0` min
-- Lunch -> `2.0` min
-- Afternoon -> `1.5` min
-- Dinner -> `3.0` min
-- Night -> `3.5` min
-
 Total per in-game day:
 
 ```text
 12.0 minutes
 ```
 
-### 1.2 Phase busyness
-File: `scripts/TimeManager.gd`
+Phase summary:
 
-- Dinner = `1.6`
-- Lunch = `1.6`
-- Morning = `1.3`
-- Afternoon = `1.3`
-- Night = `1.0`
+| Phase | Clock time | Real-time duration | Busyness | Max active customers | Spawn interval | Batch size |
+|---|---|---:|---:|---:|---|---|
+| Morning | `06:00–10:00` | `2.0 min` | `1.3` | `4` | `22–38 s` | `1–2` |
+| Lunch | `10:00–14:00` | `2.0 min` | `1.6` | `6` | `10–18 s` | `2` |
+| Afternoon | `14:00–17:00` | `1.5 min` | `1.3` | `4` | `24–42 s` | `1–2` |
+| Dinner | `17:00–23:00` | `3.0 min` | `1.6` | `6` | `9–16 s` | `2` |
+| Night | `23:00–06:00` | `3.5 min` | `1.0` | `3` | `36–60 s` | `1` |
 
-Formula:
+The first spawned customer is forced to have a drink order. When formal spawning is re-enabled and the restaurant is empty, the first customer appears immediately.
 
-```text
-busyness(phase) =
-  1.6  for dinner or lunch
-  1.3  for morning or afternoon
-  1.0  for night
-```
-
-These values enter the delegation / persuasion context.
-
-### 1.3 Customer spawning and workload density
-File: `scripts/CustomerSpawner.gd`
-
-| Phase | Max active customers | Spawn interval | Batch size |
-|---|---:|---|---|
-| Morning | 5 | 22–38 s | 1 |
-| Lunch | 8 | 10–18 s | 1–2 |
-| Afternoon | 5 | 24–42 s | 1 |
-| Dinner | 8 | 9–16 s | 1–2 |
-| Night | 3 | 36–60 s | 1 |
-
-Other workload controls:
-- `absolute_max_customers = 8`
-- first spawned customer is forced to have a drink order
-- when formal spawning is re-enabled and the restaurant is empty, the first customer appears immediately
-
-### 1.4 Drink-order generation
+### 1.2 Drink-order generation
 File: `scripts/Customer.gd`
 
 - `drink_order_probability = 0.50`
@@ -95,7 +57,7 @@ drink_required =
   OR rand() < 0.50
 ```
 
-### 1.5 Service deadlines
+### 1.3 Service deadlines
 File: `scripts/TaskBoard.gd`
 
 - `SERVE_WINDOW_MS = 90_000`
@@ -105,7 +67,7 @@ Interpretation:
 - food deadline = `90 s`
 - drink deadline = `60 s`
 
-### 1.6 Robot battery and energy pressure
+### 1.4 Robot battery and energy pressure
 File: `scripts/RobotServer.gd`
 
 - `battery_capacity = 100.0`
@@ -130,7 +92,7 @@ drain_rate = 1.0 if moving
 charge_rate = 14.0 if charging, else 0
 ```
 
-### 1.7 Scoring and failure pressure
+### 1.5 Scoring and failure pressure
 File: `scripts/HUD.gd`
 
 - food success = `+2`
