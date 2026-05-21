@@ -39,9 +39,6 @@ window/size/viewport_height=1000
 
 [experiment]
 
-ab_enabled=true
-ab_seed=17
-forced_variant=""
 replay_logging_enabled=true
 help_logging_enabled=true
 llm_utterance_enabled=true

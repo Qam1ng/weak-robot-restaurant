@@ -1,12 +1,6 @@
 extends Node
 
-const VARIANT_A := "A"
-const VARIANT_B := "B"
-
 const DEFAULTS := {
-	"ab_enabled": true,
-	"ab_seed": 17,
-	"forced_variant": "",
 	"replay_logging_enabled": true,
 	"help_logging_enabled": true,
 	"llm_utterance_enabled": true,
@@ -38,30 +32,8 @@ func get_llm_model() -> String:
 func get_llm_temperature() -> float:
 	return float(_cached.get("llm_temperature", 0.4))
 
-func resolve_variant(request_id: String) -> String:
-	var forced := str(_cached.get("forced_variant", "")).strip_edges()
-	if forced == VARIANT_A or forced == VARIANT_B:
-		return forced
-	if not bool(_cached.get("ab_enabled", true)):
-		return VARIANT_A
-	var seed := int(_cached.get("ab_seed", 17))
-	var value := hash("%s|%d" % [request_id, seed])
-	if abs(value) % 2 == 0:
-		return VARIANT_A
-	return VARIANT_B
-
-func apply_dialogue_variant(variant: String, _request_type: String, persuasion: Dictionary, _payload: Dictionary, _escalation_count: int) -> Dictionary:
-	var out := persuasion.duplicate(true)
-	var intent: Dictionary = out.get("dialogue_intent", {})
-	intent["variant"] = variant
-	out["dialogue_intent"] = intent
-	return out
-
 func _cache_settings() -> void:
 	_cached = DEFAULTS.duplicate(true)
-	_cached["ab_enabled"] = _get_setting("experiment/ab_enabled", DEFAULTS["ab_enabled"])
-	_cached["ab_seed"] = int(_get_setting("experiment/ab_seed", DEFAULTS["ab_seed"]))
-	_cached["forced_variant"] = str(_get_setting("experiment/forced_variant", DEFAULTS["forced_variant"]))
 	_cached["replay_logging_enabled"] = _get_setting("experiment/replay_logging_enabled", DEFAULTS["replay_logging_enabled"])
 	_cached["help_logging_enabled"] = _get_setting("experiment/help_logging_enabled", DEFAULTS["help_logging_enabled"])
 	_cached["llm_utterance_enabled"] = _get_setting("experiment/llm_utterance_enabled", DEFAULTS["llm_utterance_enabled"])

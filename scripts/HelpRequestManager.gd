@@ -107,18 +107,12 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 	var context = _build_context(robot, req, options)
 	req["context_snapshot"] = context
 	var exp = _experiment_config()
-	var variant := "A"
-	if exp and exp.has_method("resolve_variant"):
-		variant = str(exp.resolve_variant(request_id))
 	var exp_snapshot := {}
 	if exp and exp.has_method("get_snapshot"):
 		exp_snapshot = exp.get_snapshot()
-	exp_snapshot["assigned_variant"] = variant
 	req["experiment"] = exp_snapshot
 
 	var persuasion = PersuasionEngineScript.generate_dialogue(request_type, context, int(req["escalation_count"]), payload)
-	if exp and exp.has_method("apply_dialogue_variant"):
-		persuasion = exp.apply_dialogue_variant(variant, request_type, persuasion, payload, int(req["escalation_count"]))
 	req["strategy"] = persuasion.get("strategy", "")
 	req["strategy_scores"] = persuasion.get("strategy_scores", {})
 	req["dialogue_intent"] = persuasion.get("dialogue_intent", {})
