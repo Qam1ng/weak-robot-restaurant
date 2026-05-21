@@ -1,41 +1,15 @@
-# Weak Robot Restaurant: Experimental Variables, Models, and Logged Data
+# Core Experimental Variables and Models
 
-Technical reference for manipulated variables, logged variables, and core formulas/models in the current implementation.
+## 1. Core Manipulated Variables
 
-## 1. Study Structure
-
-The current game flow is:
-
-1. Pre-game questions (TIPI questionnaire)
-2. Trial session (tutorial / warm-up)
-3. Formal session (Day 1 onward)
-
-The implementation therefore contains:
-- a **training phase** (`trial session`)
-- a **formal phase** (`formal session`)
-
-These phases should be analyzed separately.
-
-## 2. Manipulated Variables
-
-### 2.1 Dialogue / persuasion configuration
-File: `scripts/ExperimentConfig.gd`
-
-Current configurable experimental variables:
-
-- `replay_logging_enabled: bool = true`
-- `help_logging_enabled: bool = true`
-- `llm_utterance_enabled: bool = true`
-- `llm_model: String = "gpt-4o-mini"`
-- `llm_temperature: float = 0.4`
-
-### 2.2 Time structure and phase durations
+### 1.1 Time structure and session pacing
 File: `scripts/TimeManager.gd`
 
-#### Core time conversion
 - `real_to_game_ratio = 2.0`
+- `start_hour = 6`
+- `start_minute = 0`
 
-Formula:
+Core formula:
 
 ```text
 game_minutes_per_real_second = real_to_game_ratio × phase_multiplier
@@ -45,21 +19,9 @@ Default:
 
 ```text
 game_minutes_per_real_second = 2.0
-```
-
-Implication:
-
-```text
 1 real minute = 120 game minutes = 2 game hours
 ```
 
-#### Day start
-- `start_hour = 6`
-- `start_minute = 0`
-
-A new day is triggered when the clock returns to `06:00`.
-
-#### Phase schedule
 Current phase schedule:
 
 - Morning: `06:00–10:00`
@@ -68,70 +30,63 @@ Current phase schedule:
 - Dinner: `17:00–23:00`
 - Night: `23:00–06:00`
 
-#### Real-time duration per phase
-Given the `2.0` ratio, the current effective real durations are:
+Current real-time duration per phase:
 
-- Morning (`4` game hours) -> `2.0` minutes
-- Lunch (`4` game hours) -> `2.0` minutes
-- Afternoon (`3` game hours) -> `1.5` minutes
-- Dinner (`6` game hours) -> `3.0` minutes
-- Night (`7` game hours) -> `3.5` minutes
+- Morning -> `2.0` min
+- Lunch -> `2.0` min
+- Afternoon -> `1.5` min
+- Dinner -> `3.0` min
+- Night -> `3.5` min
 
 Total per in-game day:
 
 ```text
-2.0 + 2.0 + 1.5 + 3.0 + 3.5 = 12.0 minutes
+12.0 minutes
 ```
 
-### 2.3 Busyness manipulation by phase
+### 1.2 Phase busyness
 File: `scripts/TimeManager.gd`
 
-Current busyness multipliers:
-
-- Dinner = `1.5`
-- Lunch = `1.5`
+- Dinner = `1.6`
+- Lunch = `1.6`
 - Morning = `1.3`
 - Afternoon = `1.3`
-- Night = `1.1`
+- Night = `1.0`
 
-Formally:
+Formula:
 
 ```text
 busyness(phase) =
-  1.5  for dinner or lunch
+  1.6  for dinner or lunch
   1.3  for morning or afternoon
-  1.1  for night
+  1.0  for night
 ```
 
-These values affect persuasion context and workload pressure.
+These values enter the delegation / persuasion context.
 
-### 2.4 Customer spawning manipulation
+### 1.3 Customer spawning and workload density
 File: `scripts/CustomerSpawner.gd`
-
-Current phase-specific spawn settings:
 
 | Phase | Max active customers | Spawn interval | Batch size |
 |---|---:|---|---|
-| Morning | 2 | 30–60 s | 1 |
-| Lunch | 5 | 15–25 s | 1–2 |
-| Afternoon | 2 | 40–80 s | 1 |
-| Dinner | 5 | 12–20 s | 1–2 |
-| Night | 0 | 999 s | 0 |
+| Morning | 5 | 22–38 s | 1 |
+| Lunch | 8 | 10–18 s | 1–2 |
+| Afternoon | 5 | 24–42 s | 1 |
+| Dinner | 8 | 9–16 s | 1–2 |
+| Night | 3 | 36–60 s | 1 |
 
-Other parameters:
+Other workload controls:
+- `absolute_max_customers = 8`
+- first spawned customer is forced to have a drink order
+- when formal spawning is re-enabled and the restaurant is empty, the first customer appears immediately
 
-- `absolute_max_customers = 5`
-- the first spawned customer is forced to have a drink order
-- after spawning is re-enabled, if there are no active customers, the first formal-session customer appears immediately
-
-### 2.5 Drink-order probability manipulation
+### 1.4 Drink-order generation
 File: `scripts/Customer.gd`
 
 - `drink_order_probability = 0.50`
-- `force_drink_order = false` by default
-- the first spawned customer is forced to have a drink via the spawner
+- first spawned customer is forced to have a drink order
 
-Current drink-order rule:
+Rule:
 
 ```text
 drink_required =
@@ -140,28 +95,26 @@ drink_required =
   OR rand() < 0.50
 ```
 
-So under normal formal gameplay:
-- first spawned customer: guaranteed drink order
-- later customers: `50%` drink probability
+### 1.5 Service deadlines
+File: `scripts/TaskBoard.gd`
 
-### 2.6 Robot battery manipulation
+- `SERVE_WINDOW_MS = 90_000`
+- `DRINK_WINDOW_MS = 60_000`
+
+Interpretation:
+- food deadline = `90 s`
+- drink deadline = `60 s`
+
+### 1.6 Robot battery and energy pressure
 File: `scripts/RobotServer.gd`
 
-Battery parameters:
-
 - `battery_capacity = 100.0`
-- `battery_level = 100.0` initially
 - `battery_drain_move_per_sec = 1.0`
 - `battery_drain_idle_per_sec = 0.1`
 - `battery_charge_per_sec = 14.0`
 - `battery_conserve_threshold = 50.0`
 - `battery_emergency_threshold = 20.0`
 - `EMERGENCY_RECHARGE_RESUME_LEVEL = 55.0`
-
-Interpretation:
-- moving: lose `1.0` percentage point per second
-- idle: lose `0.1` percentage point per second
-- charging: gain `14.0` percentage points per second
 
 Battery update rule:
 
@@ -177,10 +130,8 @@ drain_rate = 1.0 if moving
 charge_rate = 14.0 if charging, else 0
 ```
 
-### 2.7 Scoring manipulation
+### 1.7 Scoring and failure pressure
 File: `scripts/HUD.gd`
-
-Current score rule:
 
 - food success = `+2`
 - food failure = `-6`
@@ -188,7 +139,7 @@ Current score rule:
 - drink failure = `-3`
 - game-over threshold = `-30`
 
-Formally:
+Formula:
 
 ```text
 score += 2   for successful food delivery
@@ -197,45 +148,21 @@ score += 1   for successful drink delivery
 score -= 3   for failed drink delivery
 ```
 
-Game over is triggered when:
+Game over:
 
 ```text
 score <= -30
 ```
 
-### 2.8 Task deadlines
-File: `scripts/TaskBoard.gd`
+## 2. Core Collected Variables
 
-Current service windows:
-
-- food serve window: `90,000 ms` (`90 s`)
-- drink serve window: `60,000 ms` (`60 s`)
-
-Current constants:
-
-- `SERVE_WINDOW_MS = 90_000`
-- `DRINK_WINDOW_MS = 60_000`
-
-### 2.9 Player inventory constraints
-Files: `scripts/HumanServer.gd`, `scripts/RobotServer.gd`
-
-Current player-side handling constraints:
-
-- inventory capacity = `3`
-- item TTL in player inventory = `120,000 ms` (`120 s`)
-- player interaction radius = `48`
-- player pickup-station radius = `72`
-- `player_max_active_tasks = 3` (soft threshold; used in persuasion context, not hard blocking)
-
-## 3. Measured / Collected Variables
-
-### 3.1 Survey responses and personality scores
+### 2.1 Survey responses and derived personality variables
 Files: `scripts/PlayerProfile.gd`, `scripts/HUD.gd`
 
-The system collects:
+Collected:
 - 10 TIPI responses (`1–7` scale)
-- 5 derived Big Five trait scores
-- 6 derived persuasion strategy-affinity values
+- 5 derived Big Five scores
+- 6 derived persuasion strategy-affinity scores
 
 Stored profile structure:
 
@@ -247,11 +174,8 @@ Stored profile structure:
 }
 ```
 
-### 3.2 Help-request records
+### 2.2 Delegation / help-request records
 Files: `scripts/HelpRequestManager.gd`, `scripts/EpisodeLogger.gd`
-
-Help-request logs are written to:
-- `user://data/help_requests/help_requests.jsonl`
 
 Per-record fields include:
 - `request_id`
@@ -268,25 +192,18 @@ Per-record fields include:
 - `final_response`
 - `final_path`
 - `payload`
-- `robot_instance_id`
 - `context_snapshot`
-- `experiment`
 - `episode_id`
 - `timestamp`
 - `event_type`
 
-Primary source for delegation-response analysis.
+These records are the primary source for analyzing delegation behavior.
 
-### 3.3 Episode-level behavioral data
+### 2.3 Episode-level behavioral data
 File: `scripts/EpisodeLogger.gd`
 
-Episode summary CSV path:
-- `user://data/episodes_summary.csv`
-
-CSV columns:
-
+Episode summary fields:
 - `episode_id`
-- `timestamp`
 - `food_item`
 - `customer_seat`
 - `success`
@@ -300,39 +217,28 @@ CSV columns:
 - `total_distance`
 - `failure_reason`
 
-Episode JSON contains:
-- task identity
-- success/failure outcome
-- player-help flag
+Episode JSON additionally contains:
 - action/event stream
 - path waypoints
+- task identity
 - robot movement distance
-- stuck/evasion/action metrics
 
-### 3.4 Replay events
-File: `scripts/EpisodeLogger.gd`
-
-Replay logs are written to:
-- `user://data/replay/replay_events.jsonl`
-
-These logs store timestamped replay events.
-
-### 3.5 Formal gameplay outcomes implicitly measurable from tasks
+### 2.4 Task-level gameplay outcomes
 Files: `scripts/TaskBoard.gd`, `scripts/HUD.gd`, `scripts/Customer.gd`
 
 Derivable outcome variables:
-- number of completed food tasks
-- number of failed food tasks
-- number of completed drink tasks
-- number of failed drink tasks
-- player score trajectory
+- completed food tasks
+- failed food tasks
+- completed drink tasks
+- failed drink tasks
+- score trajectory
 - whether a request was accepted / declined / later
-- whether a delivery was performed by the player vs. robot
+- whether delivery was performed by the player vs. robot
 - whether a customer timed out
 
-## 4. Core Models and Formulas
+## 3. Core Models and Formulas
 
-### 4.1 TIPI scoring model
+### 3.1 TIPI scoring model
 File: `scripts/PlayerProfile.gd`
 
 Responses are on a `1–7` scale.
@@ -358,7 +264,7 @@ Trait normalization:
 normalized_trait = clamp((raw_trait - 4.0) / 3.0, -1.0, 1.0)
 ```
 
-### 4.2 Strategy-affinity model from personality
+### 3.2 Strategy-affinity model from personality
 File: `scripts/PlayerProfile.gd`
 
 Current weighted affinities:
@@ -374,7 +280,7 @@ scarcity    = 0.7 × N
 
 If the questionnaire is incomplete, all affinities default to `0.0`.
 
-### 4.3 Persuasion strategy scoring model
+### 3.3 Persuasion strategy scoring model
 File: `scripts/PersuasionEngine.gd`
 
 Inputs:
@@ -423,7 +329,7 @@ Selection rule:
 selected_strategy = argmax_s score(s)
 ```
 
-### 4.4 Task slack model
+### 3.4 Task slack model
 File: `scripts/TaskBoard.gd`
 
 Current task slack:
@@ -440,7 +346,7 @@ If no deadline exists, the code returns a large sentinel value:
 
 which effectively means “not urgent yet.”
 
-### 4.5 Robot delivery-priority model
+### 3.5 Robot delivery-priority model
 File: `scripts/RobotServer.gd`
 
 Robot delivery tasks are prioritized using:
@@ -453,7 +359,7 @@ The robot chooses the task with the **minimum** score.
 
 Lower scores are prioritized.
 
-### 4.6 Robot overload / delegation trigger model
+### 3.6 Robot overload / delegation trigger model
 File: `scripts/RobotServer.gd`
 
 Current robot handoff threshold:
@@ -472,32 +378,7 @@ DEADLINE_HANDOFF_TRIGGER_MS = 45,000
 
 So tasks whose remaining slack falls below `45 s` become candidates for critical handoff.
 
-## 5. Operational Definitions
-
-Operational definitions consistent with the current code:
-
-### 5.1 What counts as an episode?
-An `episode` currently refers to a robot food-service episode logged by `EpisodeLogger`, centered on serving a customer’s main dish.
-
-### 5.2 What counts as player help?
-`player_helped = true` is logged when the player provides item-level help within an episode, e.g. handing over or taking over a relevant item during robot execution.
-
-### 5.3 What counts as success vs. failure?
-- **Food success**: the food-delivery task is completed.
-- **Food failure**: the task times out or the customer leaves before service completion.
-- **Drink success**: the drink task is completed.
-- **Drink failure**: the drink task times out or otherwise fails.
-
-### 5.4 What counts as a delegation / handoff?
-A delegation request is represented by a `HelpRequest` of type `HANDOFF`, and includes:
-- robot state/context,
-- urgency,
-- persuasion strategy,
-- a natural-language request utterance,
-- user response (`accept`, `decline`, `later`), and
-- final resolution path.
-
-## 6. Open Methodological Issues
+## 4. Open Methodological Issues
 
 The following table summarizes the parts of the current implementation that are still under-specified, only pilot-tuned, or not yet justified in a paper-ready way.
 
@@ -509,7 +390,7 @@ The following table summarizes the parts of the current implementation that are 
 | Drink service deadline | `DRINK_WINDOW_MS = 60,000` | Same issue as above; currently a design calibration rather than a justified experimental constant. | Present it as a **pilot-calibrated service window**. |
 | Battery thresholds | `50 / 20 / 55` for conserve / emergency / resume | These thresholds are operationally sensible, but not yet formally justified in the current write-up. | State that they were **chosen to produce visible low-battery delegation pressure without making the robot unusable**. |
 | Score weights | `+2 / -6 / +1 / -3` and fail threshold `-30` | These values reflect gameplay balancing and asymmetry between food and drink importance, but are not yet documented as such. | State that scores were **designed to weight food errors more heavily than drink errors** and tuned during pilot balancing. |
-| Phase busyness values | `Dinner/Lunch = 1.5`, `Morning/Afternoon = 1.3`, `Night = 1.1` | These are behavior-shaping coefficients, but they are currently author-set rather than empirically fit. | Present them as **phase-dependent demand-pressure coefficients tuned for workload variation across the day**. |
+| Phase busyness values | `Dinner/Lunch = 1.6`, `Morning/Afternoon = 1.3`, `Night = 1.0` | These are behavior-shaping coefficients, but they are currently author-set rather than empirically fit. | Present them as **phase-dependent demand-pressure coefficients tuned for workload variation across the day**. |
 | Drink-order probability | `0.50` plus first-customer forced drink | The probability is currently a design choice to ensure enough player-facing drink activity. | State that it was **set to ensure frequent enough drink-order interaction during the session**. |
 | Customer spawn intervals and caps | Phase-specific ranges and maxima in `CustomerSpawner.gd` | These directly shape pacing and congestion, but currently read as engineering settings rather than study parameters. | Describe them as **pilot-tuned pacing parameters controlling perceived busyness across phases**. |
 | Episode definition | Robot-centered food-service episode logged in `EpisodeLogger` | This is implied by the code but not yet crisply stated in paper language. | Explicitly define an episode as a **robot food-service attempt associated with one customer main-dish task**. |
@@ -519,50 +400,3 @@ The following table summarizes the parts of the current implementation that are 
 | Trial vs. formal session boundary | Trial session is scripted and precedes formal Day 1 | Trial events are behaviorally different and should not be mixed casually into formal-session analysis. | State explicitly that the **trial session is excluded from formal behavioral analysis unless separately analyzed**. |
 | Food/drink coordination rule | Customer starts eating only after food arrives, and if drink was ordered, after drink also arrives | This is a behavioral design choice, not an assumed real-world truth. | State it as an **implemented customer-state rule** rather than a realism claim. |
 | Dialogue-generation architecture | Rule-based persuasion policy with optional LLM surface realization and fallback templates | Without explanation, readers may incorrectly assume a fully generative dialogue system. | Describe it as a **rule-based persuasion engine with optional LLM-based wording realization**. |
-
-## 7. Recommended Paper-Ready Refinements
-
-Useful next refinements:
-
-### 7.1 Define one explicit independent-variable table
-Suggested table:
-
-| Variable | Type | Levels / Range | Current implementation |
-|---|---|---|---|
-| LLM utterance | manipulated IV | on / off | implemented |
-| Drink probability | environment manipulation | 0.50 | implemented |
-| Phase busyness | environment manipulation | 1.1–1.5 | implemented |
-| Battery drain | environment manipulation | move 1.0, idle 0.1 | implemented |
-| Trial session presence | procedural manipulation | yes | implemented |
-
-### 7.2 Define one dependent-variable table
-Suggested DVs:
-
-- acceptance rate of handoff requests
-- response latency to handoff requests
-- task completion rate
-- drink failure rate
-- score trajectory
-- episode duration
-- robot stuck count / evasion count
-- total robot path distance
-- personality-derived strategy affinity
-
-### 7.3 Explicitly distinguish manipulated vs merely contextual variables
-Explicitly separate:
-- manipulated variables
-- contextual state variables
-- logged outcome variables
-
-## 8. Proposed Short Methods Summary
-
-Compact summary:
-
-> Participants complete a pre-game TIPI questionnaire, then enter a brief tutorial session followed by a formal gameplay session. The game simulates a restaurant with time-varying customer demand across five daily phases. The robot autonomously serves main-dish orders and may delegate tasks to the participant when workload, time pressure, or battery constraints increase. Help requests are generated using a persuasion model combining urgency, busyness, player load, interaction history, robot battery state, and personality-derived strategy affinities. The system logs questionnaire responses, help requests, episode metrics, replay events, and task outcomes for later analysis.
-
-## 9. Suggested Next Step
-
-Next step: convert this document into three appendix tables:
-1. manipulated variables
-2. dependent / logged variables
-3. formulas and decision rules
