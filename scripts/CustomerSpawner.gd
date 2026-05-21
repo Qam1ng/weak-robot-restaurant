@@ -12,14 +12,14 @@ signal customer_left(customer: Node)
 const CustomerScene = preload("res://scenes/Customer.tscn")
 
 
-@export var absolute_max_customers: int = 8
+@export var absolute_max_customers: int = 6
 
 
 const PERIOD_CONFIG = {
-	"morning": {"max": 5, "interval_min": 22.0, "interval_max": 38.0, "batch_min": 1, "batch_max": 1},
-	"lunch": {"max": 8, "interval_min": 10.0, "interval_max": 18.0, "batch_min": 1, "batch_max": 2},
-	"afternoon": {"max": 5, "interval_min": 24.0, "interval_max": 42.0, "batch_min": 1, "batch_max": 1},
-	"dinner": {"max": 8, "interval_min": 9.0, "interval_max": 16.0, "batch_min": 1, "batch_max": 2},
+	"morning": {"max": 4, "interval_min": 22.0, "interval_max": 38.0, "batch_min": 1, "batch_max": 1},
+	"lunch": {"max": 6, "interval_min": 10.0, "interval_max": 18.0, "batch_min": 1, "batch_max": 2},
+	"afternoon": {"max": 4, "interval_min": 24.0, "interval_max": 42.0, "batch_min": 1, "batch_max": 1},
+	"dinner": {"max": 6, "interval_min": 9.0, "interval_max": 16.0, "batch_min": 1, "batch_max": 2},
 	"night": {"max": 3, "interval_min": 36.0, "interval_max": 60.0, "batch_min": 1, "batch_max": 1}
 }
 

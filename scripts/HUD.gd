@@ -1326,7 +1326,7 @@ func _build_help_text(request: Dictionary) -> String:
 	var utterance = str(request.get("utterance", ""))
 	if utterance == "":
 		utterance = "Can you help now?"
-	return utterance + "\n\nChoose: Accept / Decline / Later"
+	return utterance
 
 func _respond(response: String) -> void:
 	if _popup_mode == POPUP_MODE_KITCHEN_PICK:
