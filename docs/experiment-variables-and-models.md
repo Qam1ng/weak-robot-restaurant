@@ -1,6 +1,6 @@
 # Weak Robot Restaurant: Experimental Variables, Models, and Logged Data
 
-This document summarizes the variables currently manipulated in the codebase, the variables currently collected and exported, and the core formulas/models that govern system behavior. It is intended as a technical reference for methods writing and paper preparation.
+Technical reference for manipulated variables, logged variables, and core formulas/models in the current implementation.
 
 ## 1. Study Structure
 
@@ -10,11 +10,11 @@ The current game flow is:
 2. Trial session (tutorial / warm-up)
 3. Formal session (Day 1 onward)
 
-The current implementation therefore contains both:
-- a **training phase** (`trial session`), and
-- a **formal data-collection phase** (`formal session`).
+The implementation therefore contains:
+- a **training phase** (`trial session`)
+- a **formal phase** (`formal session`)
 
-This distinction is important for paper writing, because not all events before the formal session should necessarily be analyzed together with formal gameplay data.
+These phases should be analyzed separately.
 
 ## 2. Manipulated Variables
 
@@ -35,19 +35,19 @@ File: `scripts/TimeManager.gd`
 #### Core time conversion
 - `real_to_game_ratio = 2.0`
 
-This means:
+Formula:
 
 ```text
 game_minutes_per_real_second = real_to_game_ratio × phase_multiplier
 ```
 
-At default settings:
+Default:
 
 ```text
 game_minutes_per_real_second = 2.0
 ```
 
-So:
+Implication:
 
 ```text
 1 real minute = 120 game minutes = 2 game hours
@@ -103,7 +103,7 @@ busyness(phase) =
   1.1  for night
 ```
 
-These values affect the robot’s persuasion context and perceived environmental pressure.
+These values affect persuasion context and workload pressure.
 
 ### 2.4 Customer spawning manipulation
 File: `scripts/CustomerSpawner.gd`
@@ -211,7 +211,7 @@ Current service windows:
 - food serve window: `90,000 ms` (`90 s`)
 - drink serve window: `60,000 ms` (`60 s`)
 
-These are currently hard-coded constants:
+Current constants:
 
 - `SERVE_WINDOW_MS = 90_000`
 - `DRINK_WINDOW_MS = 60_000`
@@ -275,7 +275,7 @@ Per-record fields include:
 - `timestamp`
 - `event_type`
 
-This is the main source for analyzing delegation requests and user responses.
+Primary source for delegation-response analysis.
 
 ### 3.3 Episode-level behavioral data
 File: `scripts/EpisodeLogger.gd`
@@ -315,12 +315,12 @@ File: `scripts/EpisodeLogger.gd`
 Replay logs are written to:
 - `user://data/replay/replay_events.jsonl`
 
-These logs store timestamped replay events, allowing reconstruction of key interaction steps.
+These logs store timestamped replay events.
 
 ### 3.5 Formal gameplay outcomes implicitly measurable from tasks
 Files: `scripts/TaskBoard.gd`, `scripts/HUD.gd`, `scripts/Customer.gd`
 
-The system also makes it possible to derive:
+Derivable outcome variables:
 - number of completed food tasks
 - number of failed food tasks
 - number of completed drink tasks
@@ -417,7 +417,7 @@ liking
 = 1.4·annoyance + 0.8·(1 - player_task_load) + 0.4·acceptance_rate - 0.3·player_task_load + 0.5·personality_boost
 ```
 
-The selected strategy is simply the maximum-scoring strategy:
+Selection rule:
 
 ```text
 selected_strategy = argmax_s score(s)
@@ -451,7 +451,7 @@ priority_score = slack_ms + distance_to_customer
 
 The robot chooses the task with the **minimum** score.
 
-This means both urgency and spatial cost jointly determine delivery order.
+Lower scores are prioritized.
 
 ### 4.6 Robot overload / delegation trigger model
 File: `scripts/RobotServer.gd`
@@ -474,7 +474,7 @@ So tasks whose remaining slack falls below `45 s` become candidates for critical
 
 ## 5. Operational Definitions
 
-To write the paper cleanly, the following operational definitions are consistent with the current code.
+Operational definitions consistent with the current code:
 
 ### 5.1 What counts as an episode?
 An `episode` currently refers to a robot food-service episode logged by `EpisodeLogger`, centered on serving a customer’s main dish.
@@ -499,85 +499,33 @@ A delegation request is represented by a `HelpRequest` of type `HANDOFF`, and in
 
 ## 6. Open Methodological Issues
 
-This section lists the parts of the current implementation that are still under-specified, only pilot-tuned, or not yet justified in a paper-ready way.
+The following table summarizes the parts of the current implementation that are still under-specified, only pilot-tuned, or not yet justified in a paper-ready way.
 
-### 6.1 Heuristic parameters that currently lack formal justification
-The following values are currently engineering constants rather than theory-driven or pre-registered parameters:
-
-- `robot_handoff_threshold_tasks = 5`
-- `DEADLINE_HANDOFF_TRIGGER_MS = 45,000`
-- `SERVE_WINDOW_MS = 90,000`
-- `DRINK_WINDOW_MS = 60,000`
-- battery thresholds `50 / 20 / 55`
-- score weights `+2 / -6 / +1 / -3`
-- busyness values `1.5 / 1.3 / 1.1`
-- drink probability `0.50`
-- customer spawn intervals and per-phase customer caps
-
-#### Recommended treatment
-For each of these, the paper should do one of the following:
-- explicitly label it as a **pilot-tuned parameter**, or
-- provide a principled rationale (e.g. balancing target difficulty, ecological plausibility, or pretest calibration).
-
-### 6.2 Operational definitions that should be made explicit
-The current codebase implies the following constructs, but the paper should define them explicitly:
-
-- what counts as a `delegation` event
-- what counts as `acceptance rate`
-- what counts as `player helped`
-- what counts as an `episode`
-- whether `trial session` data are excluded from formal analysis
-- whether one customer can contribute multiple analyzable task outcomes
-
-#### Recommended treatment
-Add a small operational-definition table in the appendix or methods section so that these quantities are unambiguous.
-
-### 6.3 Internal food/drink coordination logic is behaviorally specific
-Current customer logic requires:
-- food must arrive before eating begins; and
-- if a drink was ordered, drink must also arrive before eating begins.
-
-Formally:
-
-```text
-start_eating if and only if
-  has_received_food = true
-  AND (drink_not_required OR has_received_drink = true)
-```
-
-This is a design choice, not a natural law. If the paper discusses customer realism, this rule should be stated explicitly.
-
-### 6.4 Trial session and formal session should be separated analytically
-The tutorial/trial session now includes:
-- scripted customer flow,
-- scripted drink request,
-- scripted handoff scenario,
-- special gating and prompts.
-
-These events should not be mixed naively with formal-session behavior in analysis.
-
-#### Recommended treatment
-For exported data and paper methods, explicitly distinguish:
-- trial session events,
-- formal session events.
-
-### 6.5 Dialogue generation is hybrid, not fully generative
-Dialogue generation currently uses a hybrid approach:
-- first create template-level intent and wording,
-- optionally call the backend / OpenAI model,
-- fallback to template wording on failure.
-
-This means the system is not “LLM-only,” but rather “template + LLM realization + fallback.”
-
-#### Recommended treatment
-In the paper, describe the dialogue policy as a **rule-based persuasion model with optional LLM surface realization**, rather than a purely generative dialogue system.
+| Topic | Current value / implementation | Why it is still open | Recommended paper-facing treatment |
+|---|---|---|---|
+| Robot overload threshold | `robot_handoff_threshold_tasks() = 5` | This is currently a hand-tuned trigger for delegation, not a theory-driven threshold. | Describe it as a **pilot-tuned workload threshold** unless you want to justify it through pretesting. |
+| Deadline-based handoff trigger | `DEADLINE_HANDOFF_TRIGGER_MS = 45,000` | This is currently a heuristic urgency cutoff. | Describe it as a **pilot-tuned urgency threshold** or add a pretest-based rationale. |
+| Food service deadline | `SERVE_WINDOW_MS = 90,000` | The main-dish deadline appears to be chosen for pacing/balance rather than derived from an external standard. | Present it as a **pilot-calibrated service window**. |
+| Drink service deadline | `DRINK_WINDOW_MS = 60,000` | Same issue as above; currently a design calibration rather than a justified experimental constant. | Present it as a **pilot-calibrated service window**. |
+| Battery thresholds | `50 / 20 / 55` for conserve / emergency / resume | These thresholds are operationally sensible, but not yet formally justified in the current write-up. | State that they were **chosen to produce visible low-battery delegation pressure without making the robot unusable**. |
+| Score weights | `+2 / -6 / +1 / -3` and fail threshold `-30` | These values reflect gameplay balancing and asymmetry between food and drink importance, but are not yet documented as such. | State that scores were **designed to weight food errors more heavily than drink errors** and tuned during pilot balancing. |
+| Phase busyness values | `Dinner/Lunch = 1.5`, `Morning/Afternoon = 1.3`, `Night = 1.1` | These are behavior-shaping coefficients, but they are currently author-set rather than empirically fit. | Present them as **phase-dependent demand-pressure coefficients tuned for workload variation across the day**. |
+| Drink-order probability | `0.50` plus first-customer forced drink | The probability is currently a design choice to ensure enough player-facing drink activity. | State that it was **set to ensure frequent enough drink-order interaction during the session**. |
+| Customer spawn intervals and caps | Phase-specific ranges and maxima in `CustomerSpawner.gd` | These directly shape pacing and congestion, but currently read as engineering settings rather than study parameters. | Describe them as **pilot-tuned pacing parameters controlling perceived busyness across phases**. |
+| Episode definition | Robot-centered food-service episode logged in `EpisodeLogger` | This is implied by the code but not yet crisply stated in paper language. | Explicitly define an episode as a **robot food-service attempt associated with one customer main-dish task**. |
+| Delegation definition | `HelpRequest` of type `HANDOFF` with user response and resolution path | The code is clear, but the concept should be operationalized in the write-up. | Define delegation as a **robot-initiated handoff request requiring an accept / decline / later response**. |
+| Acceptance-rate definition | Derived from `HelpRequestManager` interaction model | The metric exists, but the exact numerator/denominator should be made explicit. | Define it explicitly, e.g. **accepted requests / all surfaced requests** over the analysis window. |
+| Player-helped definition | Episode outcome flag set when the player assists item flow | The meaning is implicit in code and logs but should be stated explicitly. | Define it as **whether the player materially assisted the robot’s service episode through item exchange or takeover**. |
+| Trial vs. formal session boundary | Trial session is scripted and precedes formal Day 1 | Trial events are behaviorally different and should not be mixed casually into formal-session analysis. | State explicitly that the **trial session is excluded from formal behavioral analysis unless separately analyzed**. |
+| Food/drink coordination rule | Customer starts eating only after food arrives, and if drink was ordered, after drink also arrives | This is a behavioral design choice, not an assumed real-world truth. | State it as an **implemented customer-state rule** rather than a realism claim. |
+| Dialogue-generation architecture | Rule-based persuasion policy with optional LLM surface realization and fallback templates | Without explanation, readers may incorrectly assume a fully generative dialogue system. | Describe it as a **rule-based persuasion engine with optional LLM-based wording realization**. |
 
 ## 7. Recommended Paper-Ready Refinements
 
-To make the study description more rigorous, the following changes would be worthwhile.
+Useful next refinements:
 
 ### 7.1 Define one explicit independent-variable table
-Suggested structure:
+Suggested table:
 
 | Variable | Type | Levels / Range | Current implementation |
 |---|---|---|---|
@@ -601,23 +549,20 @@ Suggested DVs:
 - personality-derived strategy affinity
 
 ### 7.3 Explicitly distinguish manipulated vs merely contextual variables
-Some current variables are:
-- **manipulated** (set by experimenter / code configuration)
-- **contextual** (emerge from gameplay)
-- **logged outcomes**
-
-This distinction should be explicit in the paper.
+Explicitly separate:
+- manipulated variables
+- contextual state variables
+- logged outcome variables
 
 ## 8. Proposed Short Methods Summary
 
-A compact paper-ready summary of the current system would be:
+Compact summary:
 
 > Participants complete a pre-game TIPI questionnaire, then enter a brief tutorial session followed by a formal gameplay session. The game simulates a restaurant with time-varying customer demand across five daily phases. The robot autonomously serves main-dish orders and may delegate tasks to the participant when workload, time pressure, or battery constraints increase. Help requests are generated using a persuasion model combining urgency, busyness, player load, interaction history, robot battery state, and personality-derived strategy affinities. The system logs questionnaire responses, help requests, episode metrics, replay events, and task outcomes for later analysis.
 
 ## 9. Suggested Next Step
 
-The current codebase is now well enough specified to produce a formal appendix table. The most useful next step would be to derive from this document a cleaner paper-facing version with three tables:
-
+Next step: convert this document into three appendix tables:
 1. manipulated variables
 2. dependent / logged variables
-3. core formulas and decision rules
+3. formulas and decision rules
