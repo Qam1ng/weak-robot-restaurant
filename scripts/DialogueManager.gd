@@ -34,7 +34,7 @@ func realize_help_utterance(request: Dictionary) -> void:
 	if request_id == "":
 		return
 
-	var intent: Dictionary = request.get("dialogue_intent", {})
+	var message_context: Dictionary = request.get("message_context", {})
 	var strategy := str(request.get("strategy", ""))
 	var fallback := str(request.get("utterance", ""))
 	if fallback == "":
@@ -44,7 +44,7 @@ func realize_help_utterance(request: Dictionary) -> void:
 	var context: Dictionary = request.get("context_snapshot", {})
 	var personality_hint := _format_personality_hint(context.get("personality", {}))
 	var request_type := str(request.get("type", "HANDOFF"))
-	var urgency := str(intent.get("urgency_level", "medium"))
+	var urgency := str(message_context.get("urgency_level", "medium"))
 	var escalation := int(request.get("escalation_count", 0))
 	var item := str(payload.get("item_needed", "item"))
 

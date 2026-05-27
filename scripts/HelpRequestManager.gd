@@ -34,6 +34,8 @@ func reset_all() -> void:
 	_requests_by_id.clear()
 	_order.clear()
 	_next_id = 1
+	if PersuasionEngineScript.has_method("reset_assignment_state"):
+		PersuasionEngineScript.reset_assignment_state()
 	_interaction_model = {
 		"total": 0,
 		"accepted": 0,
@@ -94,8 +96,10 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"resolution_path": "",
 		"context_snapshot": {},
 		"strategy": "",
-		"strategy_scores": {},
-		"dialogue_intent": {},
+		"assignment_method": "",
+		"assignment_stratum": "",
+		"assignment_buckets": {},
+		"message_context": {},
 		"system_notice": "",
 		"utterance": "",
 		"utterance_source": "template",
@@ -114,8 +118,10 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 
 	var persuasion = PersuasionEngineScript.generate_dialogue(request_type, context, int(req["escalation_count"]), payload)
 	req["strategy"] = persuasion.get("strategy", "")
-	req["strategy_scores"] = persuasion.get("strategy_scores", {})
-	req["dialogue_intent"] = persuasion.get("dialogue_intent", {})
+	req["assignment_method"] = persuasion.get("assignment_method", "")
+	req["assignment_stratum"] = persuasion.get("assignment_stratum", "")
+	req["assignment_buckets"] = persuasion.get("assignment_buckets", {})
+	req["message_context"] = persuasion.get("message_context", {})
 	req["system_notice"] = _build_system_notice(payload)
 	req["utterance"] = persuasion.get("utterance", "")
 	req["utterance_source"] = "template"
@@ -333,7 +339,9 @@ func _build_context(robot: Node, req: Dictionary, options: Dictionary) -> Dictio
 		"environment": {
 			"urgency": urgency,
 			"busyness": busyness,
-			"slack_ms": slack_ms
+			"slack_ms": slack_ms,
+			"phase_name": game_mgr.get_period() if game_mgr and game_mgr.has_method("get_period") else "unknown",
+			"is_peak_time": bool(game_mgr.is_peak_time()) if game_mgr and game_mgr.has_method("is_peak_time") else false
 		},
 		"history": {
 			"acceptance_rate": float(_interaction_model.get("acceptance_rate", 0.5)),
@@ -369,8 +377,9 @@ func _sample_personality_profile() -> Dictionary:
 	if profile and profile.has_method("get_profile"):
 		return profile.get_profile()
 	return {
+		"tipi_responses": {},
 		"tipi_scores": {},
-		"strategy_affinity": {}
+		"question_count": 0
 	}
 
 func _update_interaction_model(response: String, latency_ms: int) -> void:
