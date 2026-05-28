@@ -9,6 +9,7 @@ const RESPONSE_DECLINE := "decline"
 const RESPONSE_LATER := "later"
 
 const TYPE_HANDOFF := "HANDOFF"
+const API_ASSIGN_STRATEGY_URL := "https://us-central1-weak-robot-restaurant-web.cloudfunctions.net/apiAssignStrategy"
 
 const STATUS_PENDING := "pending"
 const STATUS_COOLDOWN := "cooldown"
@@ -26,7 +27,6 @@ var _interaction_model := {
 	"declined": 0,
 	"later": 0,
 	"avg_latency_ms": 0.0,
-	"annoyance": 0.0,
 	"acceptance_rate": 0.5
 }
 
@@ -34,13 +34,14 @@ func reset_all() -> void:
 	_requests_by_id.clear()
 	_order.clear()
 	_next_id = 1
+	if PersuasionEngineScript.has_method("reset_assignment_state"):
+		PersuasionEngineScript.reset_assignment_state()
 	_interaction_model = {
 		"total": 0,
 		"accepted": 0,
 		"declined": 0,
 		"later": 0,
 		"avg_latency_ms": 0.0,
-		"annoyance": 0.0,
 		"acceptance_rate": 0.5
 	}
 
@@ -48,6 +49,12 @@ func _ready() -> void:
 	var dm = _dialogue_manager()
 	if dm and dm.has_signal("utterance_generated") and not dm.utterance_generated.is_connected(_on_utterance_generated):
 		dm.utterance_generated.connect(_on_utterance_generated)
+	var board = get_node_or_null("/root/TaskBoard")
+	if board:
+		if board.has_signal("task_completed") and not board.task_completed.is_connected(_on_task_completed):
+			board.task_completed.connect(_on_task_completed)
+		if board.has_signal("task_failed") and not board.task_failed.is_connected(_on_task_failed):
+			board.task_failed.connect(_on_task_failed)
 
 func _process(_dt: float) -> void:
 	var now_ms := Time.get_ticks_msec()
@@ -94,50 +101,37 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"resolution_path": "",
 		"context_snapshot": {},
 		"strategy": "",
-		"strategy_scores": {},
-		"dialogue_intent": {},
+		"assignment_method": "",
+		"assignment_buckets": {},
 		"system_notice": "",
 		"utterance": "",
 		"utterance_source": "template",
 		"utterance_pending": false,
 		"last_response": "",
-		"experiment": {}
+		"task_completed": false,
+		"task_failed": false,
+		"delivery_actor": "",
+		"customer_timed_out": false,
+		"score_delta": 0,
+		"experiment": {},
+		"assignment_pending": true
 	}
 
 	var context = _build_context(robot, req, options)
 	req["context_snapshot"] = context
 	var exp = _experiment_config()
-	var variant := "A"
-	if exp and exp.has_method("resolve_variant"):
-		variant = str(exp.resolve_variant(request_id))
 	var exp_snapshot := {}
 	if exp and exp.has_method("get_snapshot"):
 		exp_snapshot = exp.get_snapshot()
-	exp_snapshot["assigned_variant"] = variant
 	req["experiment"] = exp_snapshot
 
-	var persuasion = PersuasionEngineScript.generate_dialogue(request_type, context, int(req["escalation_count"]), payload)
-	if exp and exp.has_method("apply_dialogue_variant"):
-		persuasion = exp.apply_dialogue_variant(variant, request_type, persuasion, payload, int(req["escalation_count"]))
-	req["strategy"] = persuasion.get("strategy", "")
-	req["strategy_scores"] = persuasion.get("strategy_scores", {})
-	req["dialogue_intent"] = persuasion.get("dialogue_intent", {})
+	req["assignment_buckets"] = PersuasionEngineScript.build_assignment_buckets(request_type, context)
 	req["system_notice"] = _build_system_notice(payload)
-	req["utterance"] = persuasion.get("utterance", "")
-	req["utterance_source"] = "template"
-	if _should_request_help_utterance(req):
-		req["utterance_pending"] = true
 
 	_requests_by_id[request_id] = req
 	_order.append(request_id)
-	print("[HelpRequest] Created ", request_id, " type=", request_type)
-	_log_help_event("created", req)
-	if bool(req.get("utterance_pending", false)):
-		_request_utterance_realization(req)
-
-	var copied := _copy(req)
-	request_created.emit(copied)
-	return copied
+	_begin_strategy_assignment(request_id)
+	return _copy(req)
 
 func get_request(request_id: String) -> Dictionary:
 	return _copy(_requests_by_id.get(request_id, {}))
@@ -158,6 +152,8 @@ func get_promptable_request_for_robot(robot: Node) -> Dictionary:
 			continue
 		var status := str(req.get("status", ""))
 		if status != STATUS_PENDING and status != STATUS_COOLDOWN:
+			continue
+		if bool(req.get("assignment_pending", false)):
 			continue
 		if now_ms < int(req.get("cooldown_until_ms", 0)):
 			continue
@@ -297,6 +293,116 @@ func _copy(req: Dictionary) -> Dictionary:
 		return {}
 	return req.duplicate(true)
 
+func _begin_strategy_assignment(request_id: String) -> void:
+	var req: Dictionary = _requests_by_id.get(request_id, {})
+	if req.is_empty():
+		return
+	if _should_use_backend_assignment():
+		_request_remote_strategy_assignment(req)
+		return
+	var request_type := str(req.get("type", TYPE_HANDOFF))
+	var context: Dictionary = req.get("context_snapshot", {})
+	var assignment := PersuasionEngineScript.assign_strategy_locally(request_type, context)
+	_finalize_strategy_assignment(request_id, assignment)
+
+func _request_remote_strategy_assignment(req: Dictionary) -> void:
+	var request_id := str(req.get("id", ""))
+	if request_id == "":
+		return
+	var body := {
+		"request_id": request_id,
+		"request_type": str(req.get("type", TYPE_HANDOFF)),
+		"assignment_buckets": req.get("assignment_buckets", {})
+	}
+	var http := HTTPRequest.new()
+	add_child(http)
+	http.request_completed.connect(_on_strategy_assignment_completed.bind(http, request_id))
+	var err := http.request(API_ASSIGN_STRATEGY_URL, PackedStringArray([
+		"Content-Type: application/json"
+	]), HTTPClient.METHOD_POST, JSON.stringify(body))
+	if err != OK:
+		if is_instance_valid(http):
+			http.queue_free()
+		var fallback := PersuasionEngineScript.assign_strategy_locally(
+			str(req.get("type", TYPE_HANDOFF)),
+			req.get("context_snapshot", {})
+		)
+		_finalize_strategy_assignment(request_id, fallback)
+
+func _on_strategy_assignment_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, request_id: String) -> void:
+	if is_instance_valid(http):
+		http.queue_free()
+	var req: Dictionary = _requests_by_id.get(request_id, {})
+	if req.is_empty():
+		return
+	if code < 200 or code >= 300:
+		var fallback := PersuasionEngineScript.assign_strategy_locally(
+			str(req.get("type", TYPE_HANDOFF)),
+			req.get("context_snapshot", {})
+		)
+		_finalize_strategy_assignment(request_id, fallback)
+		return
+	var top = JSON.parse_string(body.get_string_from_utf8())
+	if not (top is Dictionary):
+		var fallback_parse := PersuasionEngineScript.assign_strategy_locally(
+			str(req.get("type", TYPE_HANDOFF)),
+			req.get("context_snapshot", {})
+		)
+		_finalize_strategy_assignment(request_id, fallback_parse)
+		return
+	var assignment := {
+		"strategy": str(top.get("strategy", "")),
+		"method": str(top.get("assignment_method", "")),
+		"buckets": top.get("assignment_buckets", {})
+	}
+	_finalize_strategy_assignment(request_id, assignment)
+
+func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -> void:
+	var req: Dictionary = _requests_by_id.get(request_id, {})
+	if req.is_empty():
+		return
+	if str(req.get("status", "")) == STATUS_RESOLVED:
+		return
+	var strategy := str(assignment.get("strategy", "")).strip_edges()
+	if strategy == "":
+		strategy = PersuasionEngineScript.STRATEGY_AUTHORITY
+	var method := str(assignment.get("method", "")).strip_edges()
+	if method == "":
+		method = "session_local_stratified_weighted_random"
+	var buckets: Dictionary = assignment.get("buckets", {})
+	if buckets.is_empty():
+		buckets = PersuasionEngineScript.build_assignment_buckets(
+			str(req.get("type", TYPE_HANDOFF)),
+			req.get("context_snapshot", {})
+		)
+	req["strategy"] = strategy
+	req["assignment_method"] = method
+	req["assignment_buckets"] = buckets
+	req["utterance"] = PersuasionEngineScript.render_template(
+		str(req.get("type", TYPE_HANDOFF)),
+		strategy,
+		req.get("context_snapshot", {}),
+		int(req.get("escalation_count", 0)),
+		req.get("payload", {})
+	)
+	req["utterance_source"] = "template"
+	req["assignment_pending"] = false
+	req["updated_at_ms"] = Time.get_ticks_msec()
+	if _should_request_help_utterance(req):
+		req["utterance_pending"] = true
+	else:
+		req["utterance_pending"] = false
+	_requests_by_id[request_id] = req
+	print("[HelpRequest] Created ", request_id, " type=", str(req.get("type", "")))
+	_log_help_event("created", req)
+	if bool(req.get("utterance_pending", false)):
+		_request_utterance_realization(req)
+	var copied := _copy(req)
+	request_created.emit(copied)
+
+func _should_use_backend_assignment() -> bool:
+	return OS.has_feature("web")
+
 func _robot_from_request(req: Dictionary) -> Node:
 	var iid := int(req.get("robot_instance_id", 0))
 	if iid <= 0:
@@ -309,9 +415,7 @@ func _robot_from_request(req: Dictionary) -> Node:
 func _build_context(robot: Node, req: Dictionary, options: Dictionary) -> Dictionary:
 	var robot_state := {
 		"battery_level": float(robot.get("battery_level")),
-		"battery_mode": str(robot.get("_battery_mode")),
-		"waiting_for_help": bool(robot.get("_waiting_for_help")),
-		"active_step": str(robot.get("_active_task_step"))
+		"battery_mode": str(robot.get("_battery_mode"))
 	}
 	if robot_state["battery_level"] == 0.0 and robot.get("battery_level") == null:
 		robot_state["battery_level"] = 100.0
@@ -339,35 +443,24 @@ func _build_context(robot: Node, req: Dictionary, options: Dictionary) -> Dictio
 		"environment": {
 			"urgency": urgency,
 			"busyness": busyness,
-			"slack_ms": slack_ms
+			"slack_ms": slack_ms,
+			"phase_name": game_mgr.get_period() if game_mgr and game_mgr.has_method("get_period") else "unknown"
 		},
 		"history": {
 			"acceptance_rate": float(_interaction_model.get("acceptance_rate", 0.5)),
-			"avg_latency_ms": float(_interaction_model.get("avg_latency_ms", 0.0)),
-			"annoyance": float(_interaction_model.get("annoyance", 0.0))
+			"avg_latency_ms": float(_interaction_model.get("avg_latency_ms", 0.0))
 		}
 	}
 
 func _sample_player_state() -> Dictionary:
-	var player_max_active_tasks := 3
 	var player_active_tasks := 0
-	var players := get_tree().get_nodes_in_group("player")
-	if not players.is_empty():
-		var player = players[0]
-		if player != null:
-			player_max_active_tasks = maxi(1, int(player.get("player_max_active_tasks")))
-
 	var board = get_node_or_null("/root/TaskBoard")
 	if board and board.has_method("get_in_progress_tasks_for_assignee"):
 		var tasks: Array[Dictionary] = board.get_in_progress_tasks_for_assignee("player")
 		player_active_tasks = tasks.size()
 
-	var player_task_load := float(player_active_tasks) / float(maxi(1, player_max_active_tasks))
-
 	return {
-		"active_tasks": player_active_tasks,
-		"max_active_tasks": player_max_active_tasks,
-		"task_load": player_task_load
+		"active_tasks": player_active_tasks
 	}
 
 func _sample_personality_profile() -> Dictionary:
@@ -375,21 +468,19 @@ func _sample_personality_profile() -> Dictionary:
 	if profile and profile.has_method("get_profile"):
 		return profile.get_profile()
 	return {
+		"tipi_responses": {},
 		"tipi_scores": {},
-		"strategy_affinity": {}
+		"question_count": 0
 	}
 
 func _update_interaction_model(response: String, latency_ms: int) -> void:
 	_interaction_model["total"] = int(_interaction_model.get("total", 0)) + 1
 	if response == RESPONSE_ACCEPT:
 		_interaction_model["accepted"] = int(_interaction_model.get("accepted", 0)) + 1
-		_interaction_model["annoyance"] = maxf(0.0, float(_interaction_model.get("annoyance", 0.0)) - 0.12)
 	elif response == RESPONSE_DECLINE:
 		_interaction_model["declined"] = int(_interaction_model.get("declined", 0)) + 1
-		_interaction_model["annoyance"] = minf(1.0, float(_interaction_model.get("annoyance", 0.0)) + 0.18)
 	elif response == RESPONSE_LATER:
 		_interaction_model["later"] = int(_interaction_model.get("later", 0)) + 1
-		_interaction_model["annoyance"] = minf(1.0, float(_interaction_model.get("annoyance", 0.0)) + 0.08)
 
 	var total := maxf(float(_interaction_model["total"]), 1.0)
 	_interaction_model["acceptance_rate"] = float(_interaction_model.get("accepted", 0)) / total
@@ -459,6 +550,56 @@ func _on_utterance_generated(request_id: String, utterance: String, meta: Dictio
 	_requests_by_id[request_id] = req
 	_log_help_event("utterance_realization_failed", req, meta)
 	request_updated.emit(_copy(req))
+
+func _on_task_completed(task: Dictionary) -> void:
+	_attach_task_outcome(task, true)
+
+func _on_task_failed(task: Dictionary) -> void:
+	_attach_task_outcome(task, false)
+
+func _attach_task_outcome(task: Dictionary, completed: bool) -> void:
+	if task.is_empty():
+		return
+	var task_id := str(task.get("id", ""))
+	if task_id == "":
+		return
+	var request_id := _latest_request_id_for_task(task_id)
+	if request_id == "":
+		return
+	var req: Dictionary = _requests_by_id.get(request_id, {})
+	if req.is_empty():
+		return
+	var payload: Dictionary = task.get("payload", {})
+	var order_kind := str(payload.get("order_kind", "food"))
+	var failure_reason := str(task.get("failure_reason", ""))
+	req["task_completed"] = completed
+	req["task_failed"] = not completed
+	req["delivery_actor"] = str(task.get("assigned_to", ""))
+	req["customer_timed_out"] = (not completed) and (failure_reason == "task_deadline_expired" or failure_reason == "customer_drink_timeout")
+	req["score_delta"] = _score_delta_for_outcome(order_kind, completed)
+	req["updated_at_ms"] = Time.get_ticks_msec()
+	_requests_by_id[request_id] = req
+	_log_help_event("task_outcome_attached", req, {
+		"task_id": task_id,
+		"completed": completed
+	})
+	request_updated.emit(_copy(req))
+
+func _latest_request_id_for_task(task_id: String) -> String:
+	for i in range(_order.size() - 1, -1, -1):
+		var request_id := _order[i]
+		var req: Dictionary = _requests_by_id.get(request_id, {})
+		if req.is_empty():
+			continue
+		var payload: Dictionary = req.get("payload", {})
+		if str(payload.get("task_id", "")) == task_id:
+			return request_id
+	return ""
+
+func _score_delta_for_outcome(order_kind: String, completed: bool) -> int:
+	if completed:
+		return 1 if order_kind == "drink" else 2
+	return -3 if order_kind == "drink" else -6
 
 func _build_system_notice(payload: Dictionary) -> String:
 	var reason := str(payload.get("reason", "")).strip_edges()

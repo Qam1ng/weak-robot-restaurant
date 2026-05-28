@@ -17,122 +17,75 @@ const STRATEGIES := [
 	STRATEGY_SCARCITY
 ]
 
-static func generate_dialogue(request_type: String, context: Dictionary, escalation_count: int, payload: Dictionary) -> Dictionary:
-	var scores := _score_all(context)
-	var strategy := _pick_best(scores)
-	var intent := _build_intent(request_type, strategy, context, escalation_count, payload)
-	var utterance := _render_template(intent, payload)
+static var _assignment_counts: Dictionary = {}
+static var _rng := RandomNumberGenerator.new()
+static var _rng_seeded := false
+
+static func reset_assignment_state() -> void:
+	_assignment_counts.clear()
+
+static func assign_strategy_locally(request_type: String, context: Dictionary) -> Dictionary:
+	_ensure_rng_seeded()
+	var buckets := build_assignment_buckets(request_type, context)
+	var assignment_key := _assignment_key_from_buckets(buckets)
+	var counts: Dictionary = _assignment_counts.get(assignment_key, {})
+	if counts.is_empty():
+		for strategy in STRATEGIES:
+			counts[strategy] = 0
+
+	var chosen := _weighted_choice_from_counts(counts)
+	counts[chosen] = int(counts.get(chosen, 0)) + 1
+	_assignment_counts[assignment_key] = counts
 
 	return {
-		"strategy": strategy,
-		"strategy_scores": scores,
-		"dialogue_intent": intent,
-		"utterance": utterance
+		"strategy": chosen,
+		"method": "session_local_stratified_weighted_random",
+		"buckets": buckets
 	}
 
-static func _score_all(context: Dictionary) -> Dictionary:
-	var scores := {}
-	for s in STRATEGIES:
-		scores[s] = _score(s, context)
-	return scores
-
-static func _score(strategy: String, context: Dictionary) -> float:
+static func build_assignment_buckets(request_type: String, context: Dictionary) -> Dictionary:
+	_ = request_type
 	var robot: Dictionary = context.get("robot", {})
 	var player: Dictionary = context.get("player", {})
-	var personality: Dictionary = context.get("personality", {})
 	var env: Dictionary = context.get("environment", {})
-	var history: Dictionary = context.get("history", {})
 
-	var urgency := float(env.get("urgency", 0.5))
-	var busyness := float(env.get("busyness", 0.5))
-	var player_task_load := float(player.get("task_load", 0.5))
-	var acceptance_rate := float(history.get("acceptance_rate", 0.5))
-	var annoyance := float(history.get("annoyance", 0.0))
-	var battery_level := float(robot.get("battery_level", 100.0))
-	var battery_mode := str(robot.get("battery_mode", "normal"))
-	var affinity: Dictionary = personality.get("strategy_affinity", {})
-	var personality_boost := float(affinity.get(strategy, 0.0))
-
-	var battery_pressure := clampf((100.0 - battery_level) / 100.0, 0.0, 1.0)
-	if battery_mode == "emergency":
-		battery_pressure = 1.0
-	elif battery_mode == "conserve":
-		battery_pressure = maxf(battery_pressure, 0.6)
-
-	match strategy:
-		STRATEGY_SCARCITY:
-			return 2.2 * urgency + 1.8 * battery_pressure - 1.2 * player_task_load + 0.5 * personality_boost
-		STRATEGY_AUTHORITY:
-			return 1.7 * urgency + 1.2 * busyness + 1.0 * battery_pressure - 1.0 * player_task_load + 0.5 * personality_boost
-		STRATEGY_COMMITMENT:
-			return 1.8 * acceptance_rate + 0.6 * urgency - 0.6 * annoyance - 0.4 * player_task_load + 0.5 * personality_boost
-		STRATEGY_RECIPROCITY:
-			return 1.2 * acceptance_rate + 0.8 * (1.0 - player_task_load) + 0.5 * busyness - 0.6 * annoyance - 0.5 * player_task_load + 0.5 * personality_boost
-		STRATEGY_SOCIAL_PROOF:
-			return 1.6 * busyness + 0.8 * urgency - 0.7 * player_task_load + 0.5 * personality_boost
-		STRATEGY_LIKING:
-			return 1.4 * annoyance + 0.8 * (1.0 - player_task_load) + 0.4 * acceptance_rate - 0.3 * player_task_load + 0.5 * personality_boost
-		_:
-			return 0.0
-
-static func _pick_best(scores: Dictionary) -> String:
-	var best_strategy := STRATEGY_SCARCITY
-	var best_score := -INF
-	for s in scores.keys():
-		var v := float(scores[s])
-		if v > best_score:
-			best_score = v
-			best_strategy = str(s)
-	return best_strategy
-
-static func _build_intent(request_type: String, strategy: String, context: Dictionary, escalation_count: int, payload: Dictionary) -> Dictionary:
-	var urgency := float(context.get("environment", {}).get("urgency", 0.5))
-	var urgency_level := "medium"
-	if urgency >= 0.75:
-		urgency_level = "high"
-	elif urgency <= 0.35:
-		urgency_level = "low"
-
-	var evidence := []
-	var slack_ms := int(context.get("environment", {}).get("slack_ms", 0))
-	if slack_ms != 0:
-		evidence.append("slack_ms:%d" % slack_ms)
-	var battery_mode := str(context.get("robot", {}).get("battery_mode", "normal"))
-	evidence.append("battery_mode:%s" % battery_mode)
-	var player_active_tasks := int(context.get("player", {}).get("active_tasks", 0))
-	var player_task_load := float(context.get("player", {}).get("task_load", 0.0))
-	evidence.append("player_active_tasks:%d" % player_active_tasks)
-	evidence.append("player_task_load:%.2f" % player_task_load)
+	var urgency_bucket := _urgency_bucket(float(env.get("urgency", 0.5)))
+	var busyness_bucket := _busyness_bucket(float(env.get("busyness", 1.0)))
+	var player_active_tasks_bucket := _player_active_tasks_bucket(int(player.get("active_tasks", 0)))
+	var battery_mode := str(robot.get("battery_mode", "normal")).strip_edges().to_lower()
+	if battery_mode == "":
+		battery_mode = "normal"
 
 	return {
-		"request_type": request_type,
-		"strategy": strategy,
-		"urgency_level": urgency_level,
-		"escalation_count": escalation_count,
-		"politeness": "high" if escalation_count <= 1 else "medium",
-		"evidence": evidence,
-		"constraints": {
-			"no_remote_acceptance": true,
-			"response_options": ["accept", "decline", "later"]
-		},
-		"cta": _default_cta(request_type, payload)
+		"urgency_bucket": urgency_bucket,
+		"busyness_bucket": busyness_bucket,
+		"player_active_tasks_bucket": player_active_tasks_bucket,
+		"battery_mode_bucket": battery_mode
 	}
 
-static func _render_template(intent: Dictionary, payload: Dictionary) -> String:
-	var strategy := str(intent.get("strategy", STRATEGY_SCARCITY))
-	var request_type := str(intent.get("request_type", "HANDOFF"))
-	var escalation := int(intent.get("escalation_count", 0))
+static func _assignment_key_from_buckets(buckets: Dictionary) -> String:
+	return "urgency:%s|busyness:%s|player_active_tasks:%s|battery:%s" % [
+		str(buckets.get("urgency_bucket", "medium")),
+		str(buckets.get("busyness_bucket", "medium")),
+		str(buckets.get("player_active_tasks_bucket", "medium")),
+		str(buckets.get("battery_mode_bucket", "normal"))
+	]
+
+static func render_template(request_type: String, strategy: String, context: Dictionary, escalation_count: int, payload: Dictionary) -> String:
+	var env: Dictionary = context.get("environment", {})
+	var urgency := float(env.get("urgency", 0.5))
+	var urgency_level := _urgency_bucket(urgency)
 	var item := str(payload.get("item_needed", "item"))
 
 	var intro := ""
-	if escalation >= 2:
+	if escalation_count >= 2:
 		intro = "This is my final request. "
-	elif escalation == 1:
+	elif escalation_count == 1:
 		intro = "Following up on my previous request. "
 
 	match strategy:
 		STRATEGY_AUTHORITY:
-			return intro + "Please hand off %s right away." % item
+			return intro + ("Please hand off %s right away." % item if urgency_level == "high" else "Please hand off %s now." % item)
 		STRATEGY_SOCIAL_PROOF:
 			return intro + "Please hand off %s now so we can keep service moving." % item
 		STRATEGY_LIKING:
@@ -144,5 +97,48 @@ static func _render_template(intent: Dictionary, payload: Dictionary) -> String:
 		_:
 			return intro + "Please hand off %s now, or this order may miss the service window." % item
 
-static func _default_cta(request_type: String, payload: Dictionary) -> String:
-	return "Provide requested item: %s" % str(payload.get("item_needed", "item"))
+static func _weighted_choice_from_counts(counts: Dictionary) -> String:
+	_ensure_rng_seeded()
+	var total_weight := 0.0
+	var weights := {}
+	for strategy in STRATEGIES:
+		var count := max(int(counts.get(strategy, 0)), 0)
+		var weight := 1.0 / float(count + 1)
+		weights[strategy] = weight
+		total_weight += weight
+	if total_weight <= 0.0:
+		return STRATEGY_AUTHORITY
+	var draw := _rng.randf() * total_weight
+	var cumulative := 0.0
+	for strategy in STRATEGIES:
+		cumulative += float(weights.get(strategy, 0.0))
+		if draw <= cumulative:
+			return strategy
+	return STRATEGIES.back()
+
+static func _urgency_bucket(urgency: float) -> String:
+	if urgency >= 0.75:
+		return "high"
+	if urgency <= 0.35:
+		return "low"
+	return "medium"
+
+static func _busyness_bucket(busyness: float) -> String:
+	if busyness >= 1.5:
+		return "high"
+	if busyness <= 1.05:
+		return "low"
+	return "medium"
+
+static func _player_active_tasks_bucket(active_tasks: int) -> String:
+	if active_tasks >= 3:
+		return "high"
+	if active_tasks <= 1:
+		return "low"
+	return "medium"
+
+static func _ensure_rng_seeded() -> void:
+	if _rng_seeded:
+		return
+	_rng.randomize()
+	_rng_seeded = true

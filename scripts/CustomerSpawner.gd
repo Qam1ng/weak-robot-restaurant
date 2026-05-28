@@ -12,15 +12,15 @@ signal customer_left(customer: Node)
 const CustomerScene = preload("res://scenes/Customer.tscn")
 
 
-@export var absolute_max_customers: int = 5
+@export var absolute_max_customers: int = 6
 
 
 const PERIOD_CONFIG = {
-	"morning": {"max": 2, "interval_min": 30.0, "interval_max": 60.0, "batch_min": 1, "batch_max": 1},
-	"lunch": {"max": 5, "interval_min": 15.0, "interval_max": 25.0, "batch_min": 1, "batch_max": 2},
-	"afternoon": {"max": 2, "interval_min": 40.0, "interval_max": 80.0, "batch_min": 1, "batch_max": 1},
-	"dinner": {"max": 5, "interval_min": 12.0, "interval_max": 20.0, "batch_min": 1, "batch_max": 2},
-	"night": {"max": 0, "interval_min": 999.0, "interval_max": 999.0, "batch_min": 0, "batch_max": 0}
+	"morning": {"max": 4, "interval_min": 22.0, "interval_max": 38.0, "batch_min": 1, "batch_max": 2},
+	"lunch": {"max": 6, "interval_min": 10.0, "interval_max": 18.0, "batch_min": 2, "batch_max": 2},
+	"afternoon": {"max": 4, "interval_min": 24.0, "interval_max": 42.0, "batch_min": 1, "batch_max": 2},
+	"dinner": {"max": 6, "interval_min": 9.0, "interval_max": 16.0, "batch_min": 2, "batch_max": 2},
+	"night": {"max": 3, "interval_min": 36.0, "interval_max": 60.0, "batch_min": 1, "batch_max": 1}
 }
 
 
@@ -251,7 +251,11 @@ func _on_period_changed(period_name: String, is_peak: bool) -> void:
 
 func enable() -> void:
 	_enabled = true
-	_schedule_next_spawn()
+	_cleanup_inactive_customers()
+	if active_customers.is_empty():
+		spawn_timer.start(0.0)
+	else:
+		_schedule_next_spawn()
 	print("[CustomerSpawner] Enabled")
 
 func disable() -> void:

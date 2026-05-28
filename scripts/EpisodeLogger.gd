@@ -7,11 +7,7 @@ var _current_episode: Dictionary = {}
 var _episode_active: bool = false
 var _episode_start_time: int = 0
 var _episode_counter: int = 0
-
-# Metrics tracking
-var _start_position: Vector2 = Vector2.ZERO
-var _total_distance: float = 0.0
-var _last_position: Vector2 = Vector2.ZERO
+var _participant_id: String = ""
 
 # File paths
 const DATA_DIR = "user://data/episodes/"
@@ -21,7 +17,6 @@ const HELP_JSONL_FILE = "user://data/help_requests/help_requests.jsonl"
 const REPLAY_DIR = "user://data/replay/"
 const REPLAY_JSONL_FILE = "user://data/replay/replay_events.jsonl"
 
-var _help_event_seq: int = 0
 var _session_id: String = ""
 const API_LOG_URL := "https://us-central1-weak-robot-restaurant-web.cloudfunctions.net/apiLog"
 
@@ -30,6 +25,7 @@ signal episode_ended(episode_data: Dictionary)
 
 func _ready() -> void:
 	_session_id = _generate_session_id()
+	_participant_id = _session_id
 	if _should_write_local_files():
 		# Ensure data directory exists
 		DirAccess.make_dir_recursive_absolute(DATA_DIR.replace("user://", OS.get_user_data_dir() + "/"))
@@ -45,12 +41,12 @@ func _ensure_csv_header() -> void:
 	if not FileAccess.file_exists(csv_path):
 		var file = FileAccess.open(csv_path, FileAccess.WRITE)
 		if file:
-			file.store_line("episode_id,timestamp,food_item,customer_seat,success,player_helped,help_item,duration_ms,stuck_count,stuck_total_ms,evasion_count,action_count,total_distance,failure_reason")
+			file.store_line("episode_id,timestamp,success,player_helped,help_item,duration_ms,failure_reason")
 			file.close()
 
 # ==================== Public API ====================
 
-func start_episode(food_item: String, customer_seat: String, customer_pos: Vector2, robot_pos: Vector2) -> String:
+func start_episode(_food_item: String, _customer_seat: String, _customer_pos: Vector2, _robot_pos: Vector2) -> String:
 	if _episode_active:
 		push_warning("[EpisodeLogger] Previous episode not ended, forcing end")
 		end_episode(false, "interrupted_by_new_episode")
@@ -60,57 +56,22 @@ func start_episode(food_item: String, customer_seat: String, customer_pos: Vecto
 	var episode_id = "ep_%s_%03d" % [timestamp, _episode_counter]
 	
 	_episode_start_time = Time.get_ticks_msec()
-	_start_position = robot_pos
-	_last_position = robot_pos
-	_total_distance = 0.0
 	
 	_current_episode = {
 		"episode_id": episode_id,
 		"timestamp_start": Time.get_datetime_string_from_system(),
 		"timestamp_end": "",
 		"duration_ms": 0,
-		
-		"task": {
-			"food_item": food_item,
-			"customer_seat": customer_seat,
-			"customer_position": {"x": customer_pos.x, "y": customer_pos.y}
-		},
-		
+
 		"outcome": {
 			"success": false,
 			"failure_reason": null,
 			"player_helped": false,
 			"help_item": null
-		},
-		
-		"metrics": {
-			"total_distance": 0.0,
-			"stuck_count": 0,
-			"stuck_total_ms": 0,
-			"evasion_count": 0,
-			"action_count": 0
-		},
-		
-		"events": [],
-		
-		"path_data": {
-			"waypoints": [
-				{"x": robot_pos.x, "y": robot_pos.y, "timestamp_ms": 0}
-			]
 		}
 	}
 	
 	_episode_active = true
-	
-	log_event("episode_start", {
-		"food_item": food_item,
-		"customer_seat": customer_seat
-	})
-	_post_remote_log("episode_started", {
-		"episode_id": episode_id,
-		"food_item": food_item,
-		"customer_seat": customer_seat
-	})
 	
 	print("[EpisodeLogger] Started episode: ", episode_id)
 	episode_started.emit(episode_id)
@@ -119,48 +80,15 @@ func start_episode(food_item: String, customer_seat: String, customer_pos: Vecto
 func log_event(event_type: String, data: Dictionary = {}) -> void:
 	if not _episode_active:
 		return
-	
-	var timestamp_ms = Time.get_ticks_msec() - _episode_start_time
-	
-	var event = {
-		"timestamp_ms": timestamp_ms,
-		"type": event_type,
-		"data": data
-	}
-	
-	_current_episode["events"].append(event)
-	
-	# Update metrics based on event type
+
 	match event_type:
-		"action_start":
-			_current_episode["metrics"]["action_count"] += 1
-		"obstacle_stuck":
-			_current_episode["metrics"]["stuck_count"] += 1
-			if data.has("duration_ms"):
-				_current_episode["metrics"]["stuck_total_ms"] += data["duration_ms"]
-		"evasion":
-			_current_episode["metrics"]["evasion_count"] += 1
 		"player_help":
 			_current_episode["outcome"]["player_helped"] = true
 			if data.has("item_given"):
 				_current_episode["outcome"]["help_item"] = data["item_given"]
 
 func log_position(pos: Vector2) -> void:
-	if not _episode_active:
-		return
-	
-	# Calculate distance traveled
-	var dist = _last_position.distance_to(pos)
-	if dist > 5.0:  # Only log significant movement
-		_total_distance += dist
-		_last_position = pos
-		
-		var timestamp_ms = Time.get_ticks_msec() - _episode_start_time
-		_current_episode["path_data"]["waypoints"].append({
-			"x": pos.x,
-			"y": pos.y,
-			"timestamp_ms": timestamp_ms
-		})
+	_ = pos
 
 func end_episode(success: bool, failure_reason: String = "") -> Dictionary:
 	if not _episode_active:
@@ -173,19 +101,17 @@ func end_episode(success: bool, failure_reason: String = "") -> Dictionary:
 	_current_episode["duration_ms"] = duration_ms
 	_current_episode["outcome"]["success"] = success
 	_current_episode["outcome"]["failure_reason"] = failure_reason if not success else ""
-	_current_episode["metrics"]["total_distance"] = _total_distance
-	
-	log_event("episode_end", {
-		"success": success,
-		"failure_reason": failure_reason
-	})
 	
 	if _should_write_local_files():
 		_save_json()
 		_append_csv()
-	_post_remote_log("episode_ended", {
+	_post_remote_log("episode_upsert", {
+		"participant_id": _participant_id,
+		"session_id": _session_id,
 		"episode_id": _current_episode.get("episode_id", ""),
+		"timestamp": _current_episode.get("timestamp_start", ""),
 		"success": success,
+		"help_item": str(_current_episode.get("outcome", {}).get("help_item", "")),
 		"failure_reason": failure_reason,
 		"duration_ms": duration_ms,
 		"player_helped": bool(_current_episode.get("outcome", {}).get("player_helped", false))
@@ -213,53 +139,81 @@ func get_current_episode_id() -> String:
 		return _current_episode.get("episode_id", "")
 	return ""
 
-func log_help_request_event(event_type: String, request: Dictionary, extra: Dictionary = {}) -> void:
+func get_participant_id() -> String:
+	return _participant_id
+
+func log_participant_profile(profile: Dictionary) -> void:
+	if profile.is_empty():
+		return
+	var payload := {
+		"participant_id": _participant_id,
+		"session_id": _session_id,
+		"tipi_responses": profile.get("tipi_responses", {}),
+		"tipi_scores": profile.get("tipi_scores", {}),
+		"question_count": int(profile.get("question_count", 0))
+	}
+	_post_remote_log("participant_upsert", payload)
+
+func log_help_request_event(_event_type: String, request: Dictionary, _extra: Dictionary = {}) -> void:
 	if request.is_empty():
 		return
-	var exp = _experiment_config()
-	var exp_snapshot := {}
-	if exp and exp.has_method("get_snapshot"):
-		exp_snapshot = exp.get_snapshot()
+	var payload: Dictionary = request.get("payload", {})
+	var context: Dictionary = request.get("context_snapshot", {})
+	var robot: Dictionary = context.get("robot", {})
+	var player: Dictionary = context.get("player", {})
+	var env: Dictionary = context.get("environment", {})
+	var history: Dictionary = context.get("history", {})
+	var personality: Dictionary = context.get("personality", {})
+	var scores: Dictionary = personality.get("tipi_scores", {})
 	var record := {
-		"kind": "help_request",
-		"event_type": event_type,
-		"event_seq": _help_event_seq + 1,
-		"timestamp": Time.get_datetime_string_from_system(),
-		"timestamp_ms": Time.get_ticks_msec(),
+		"participant_id": _participant_id,
+		"session_id": _session_id,
 		"episode_id": get_current_episode_id(),
 		"request_id": str(request.get("id", "")),
 		"request_type": str(request.get("type", "")),
 		"status": str(request.get("status", "")),
-		"context_snapshot": request.get("context_snapshot", {}),
+		"created_at_ms": int(request.get("created_at_ms", 0)),
+		"updated_at_ms": int(request.get("updated_at_ms", 0)),
+		"cooldown_ms": int(request.get("cooldown_ms", 0)),
+		"cooldown_until_ms": int(request.get("cooldown_until_ms", 0)),
+		"task_id": str(payload.get("task_id", "")),
+		"order_kind": str(payload.get("order_kind", "")),
+		"item_needed": str(payload.get("item_needed", "")),
+		"reason": str(payload.get("reason", "")),
+		"slack_ms": int(payload.get("slack_ms", 0)),
+		"phase_name": str(env.get("phase_name", "")),
+		"busyness": float(env.get("busyness", 0.0)),
+		"urgency": float(env.get("urgency", 0.0)),
+		"player_active_tasks": int(player.get("active_tasks", 0)),
+		"battery_level": float(robot.get("battery_level", 0.0)),
+		"battery_mode": str(robot.get("battery_mode", "")),
+		"acceptance_rate": float(history.get("acceptance_rate", 0.0)),
+		"avg_latency_ms": float(history.get("avg_latency_ms", 0.0)),
+		"trait_O": float(scores.get("O", 0.0)),
+		"trait_C": float(scores.get("C", 0.0)),
+		"trait_E": float(scores.get("E", 0.0)),
+		"trait_A": float(scores.get("A", 0.0)),
+		"trait_N": float(scores.get("N", 0.0)),
 		"strategy": str(request.get("strategy", "")),
-		"strategy_scores": request.get("strategy_scores", {}),
-		"dialogue_intent": request.get("dialogue_intent", {}),
+		"assignment_method": str(request.get("assignment_method", "")),
+		"assignment_buckets": request.get("assignment_buckets", {}),
 		"utterance": str(request.get("utterance", "")),
+		"utterance_source": str(request.get("utterance_source", "")),
 		"response": str(request.get("last_response", "")),
 		"response_latency_ms": int(request.get("response_latency_ms", -1)),
 		"escalation_count": int(request.get("escalation_count", 0)),
 		"max_escalation": int(request.get("max_escalation", 0)),
 		"final_response": str(request.get("final_response", "")),
-		"final_path": str(request.get("resolution_path", "")),
-		"payload": request.get("payload", {}),
-		"robot_instance_id": int(request.get("robot_instance_id", 0)),
-		"experiment": request.get("experiment", exp_snapshot),
-		"extra": extra
+		"resolution_path": str(request.get("resolution_path", "")),
+		"task_completed": bool(request.get("task_completed", false)),
+		"task_failed": bool(request.get("task_failed", false)),
+		"delivery_actor": str(request.get("delivery_actor", "")),
+		"customer_timed_out": bool(request.get("customer_timed_out", false)),
+		"score_delta": int(request.get("score_delta", 0))
 	}
-	_help_event_seq += 1
 	if _should_write_local_files():
 		_append_jsonl(HELP_JSONL_FILE, record)
-	_post_remote_log("help_request_" + event_type, {
-		"request_id": record.get("request_id", ""),
-		"request_type": record.get("request_type", ""),
-		"status": record.get("status", ""),
-		"strategy": record.get("strategy", ""),
-		"response": record.get("response", ""),
-		"final_response": record.get("final_response", ""),
-		"resolution_path": record.get("final_path", ""),
-		"payload": record.get("payload", {}),
-		"extra": extra
-	})
+	_post_remote_log("help_request_upsert", record)
 	if _should_write_local_files() and _is_replay_logging_enabled():
 		_append_jsonl(REPLAY_JSONL_FILE, record)
 
@@ -310,30 +264,20 @@ func _append_csv() -> void:
 		# Create new file with header
 		file = FileAccess.open(csv_path, FileAccess.WRITE)
 		if file:
-			file.store_line("episode_id,timestamp,food_item,customer_seat,success,player_helped,help_item,duration_ms,stuck_count,stuck_total_ms,evasion_count,action_count,total_distance,failure_reason")
+			file.store_line("episode_id,timestamp,success,player_helped,help_item,duration_ms,failure_reason")
 	
 	if file:
 		file.seek_end()
 		
 		var ep = _current_episode
 		var outcome = ep.get("outcome", {})
-		var metrics = ep.get("metrics", {})
-		var task = ep.get("task", {})
-		
 		var row = [
 			ep.get("episode_id", ""),
 			ep.get("timestamp_start", ""),
-			task.get("food_item", ""),
-			task.get("customer_seat", ""),
 			str(outcome.get("success", false)).to_lower(),
 			str(outcome.get("player_helped", false)).to_lower(),
 			str(outcome.get("help_item", "")),
 			str(ep.get("duration_ms", 0)),
-			str(metrics.get("stuck_count", 0)),
-			str(metrics.get("stuck_total_ms", 0)),
-			str(metrics.get("evasion_count", 0)),
-			str(metrics.get("action_count", 0)),
-			str(snapped(metrics.get("total_distance", 0.0), 0.1)),
 			str(outcome.get("failure_reason", ""))
 		]
 		
@@ -372,11 +316,11 @@ func _post_remote_log(event_type: String, payload: Dictionary = {}) -> void:
 	http.request_completed.connect(_on_remote_log_completed.bind(http, event_type))
 	var body := {
 		"session_id": _session_id,
+		"participant_id": _participant_id,
 		"type": event_type,
-		"ts": Time.get_ticks_msec(),
 		"platform": "web" if OS.has_feature("web") else OS.get_name().to_lower(),
 		"build_version": str(ProjectSettings.get_setting("application/config/version", "")),
-		"payload": payload
+		"data": payload
 	}
 	var err := http.request(API_LOG_URL, PackedStringArray([
 		"Content-Type: application/json"

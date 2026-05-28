@@ -78,6 +78,9 @@ var _last_emergency_approach_notice_ms: int = 0
 var _last_overload_approach_notice_ms: int = 0
 var _pending_player_line_request_id: String = ""
 var _idle_charge_cycle_complete: bool = false
+var _trial_handoff_pending_task_id: String = ""
+var _trial_handoff_item_name: String = ""
+var _trial_stationary_pause: bool = false
 
 func _has_property(obj: Object, prop_name: String) -> bool:
 	for p in obj.get_property_list():
@@ -287,6 +290,11 @@ func _check_episode_completion() -> void:
 	var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
 	_constraint_input = _collect_constraint_input()
 
+	if _trial_stationary_pause:
+		bt_runner.bb["planned_actions"] = []
+		velocity = Vector2.ZERO
+		return
+
 	# No active current task: select the next robot job from the claimed queue,
 	# or claim a new nearby order if we are still in take-order batching mode.
 	if _active_task_id == "":
@@ -297,6 +305,9 @@ func _check_episode_completion() -> void:
 		return
 
 	if _sync_active_task_state():
+		return
+
+	if _tick_trial_item_handoff():
 		return
 
 	# Emergency delegation has highest priority for the active task.
@@ -856,6 +867,8 @@ func _clear_current_task_runtime() -> void:
 	_active_help_request_id = ""
 	_active_help_request_type = ""
 	_help_request_suppressed = false
+	_trial_handoff_pending_task_id = ""
+	_trial_handoff_item_name = ""
 	if _get_robot_assigned_food_tasks().is_empty():
 		_overload_handoff_declined_task_id = ""
 		_deadline_handoff_declined_task_id = ""
@@ -1138,6 +1151,27 @@ func _tick_overload_handoff_delegation() -> bool:
 	})
 	_waiting_for_help = true
 	speak("Task load is high. Please take over this order.")
+	return true
+
+func _tick_trial_item_handoff() -> bool:
+	if _active_task_id == "" or _trial_handoff_pending_task_id == "" or _trial_handoff_pending_task_id != _active_task_id:
+		return false
+
+	var help_mgr = _help_manager()
+	if help_mgr == null:
+		return false
+
+	if _active_help_request_id != "":
+		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
+		if not existing.is_empty():
+			var st := str(existing.get("status", ""))
+			if st != "resolved":
+				bt_runner.bb["planned_actions"] = []
+				_waiting_for_help = false
+				return true
+
+	bt_runner.bb["planned_actions"] = []
+	_waiting_for_help = false
 	return true
 
 func _tick_deadline_handoff_delegation() -> bool:
@@ -1480,10 +1514,12 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 			updated = board.reset_task_to_step(task_id, STEP_PICKUP_FROM_KITCHEN)
 
 	if task_id == _active_task_id:
+		var accepted_request_id := _active_help_request_id
 		_end_current_episode(false, "task_handoff_to_player")
 		_clear_current_task_runtime()
 		bt_runner.bb["planned_actions"] = []
 		_active_step_started = false
+		_active_help_request_id = accepted_request_id
 
 	set_waiting_for_help(false, "")
 	speak("Task handoff accepted. You take over this order.")
@@ -1679,9 +1715,42 @@ func set_waiting_for_help(waiting: bool, item_name: String):
 		"urgency": _estimate_help_urgency()
 	})
 
+func start_trial_item_handoff(task_id: String, item_name: String) -> void:
+	_trial_handoff_pending_task_id = task_id
+	_trial_handoff_item_name = item_name
+	_trial_stationary_pause = false
+	_waiting_for_help = false
+	bt_runner.bb["planned_actions"] = []
+	_active_step_started = false
+	var help_mgr = _help_manager()
+	if help_mgr == null or _active_help_request_id != "":
+		return
+	var req: Dictionary = help_mgr.create_request(HELP_TYPE_HANDOFF, self, {
+		"handoff_mode": "TAKEOVER_ITEM",
+		"task_id": task_id,
+		"item_needed": item_name,
+		"reason": "trial_item_handoff",
+		"trial_accept_only": true,
+		"trial_force_prompt": true
+	}, {
+		"cooldown_ms": 100000,
+		"max_escalation": 99,
+		"urgency": 1.0
+	})
+	if req.is_empty():
+		return
+	_active_help_request_id = str(req.get("id", ""))
+	_active_help_request_type = HELP_TYPE_HANDOFF
+
 func receive_player_help():
 	# Deprecated: handoff is now explicit task reassignment to player.
 	return
+
+func set_trial_stationary_pause(paused: bool) -> void:
+	_trial_stationary_pause = paused
+	if paused:
+		bt_runner.bb["planned_actions"] = []
+		velocity = Vector2.ZERO
 
 func on_player_interact(player: Node) -> void:
 	return

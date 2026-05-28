@@ -219,7 +219,8 @@ class ActPickItem extends Core.Task:
 		restore_timer.one_shot = true
 		restore_timer.wait_time = 2.0
 		item_node.add_child(restore_timer)
-		restore_timer.timeout.connect(Callable(self, "_restore_hidden_item").bind(item_node.get_instance_id(), restore_timer.get_instance_id()))
+		restore_timer.timeout.connect(Callable(item_node, "show"))
+		restore_timer.timeout.connect(Callable(restore_timer, "queue_free"))
 		restore_timer.start()
 
 		inventory.add_item(item_name, atlas, region, item_meta)
@@ -234,14 +235,6 @@ class ActPickItem extends Core.Task:
 				if "display_name" in child and child.display_name.to_lower() == item_name.to_lower():
 					return child
 		return null
-
-	func _restore_hidden_item(item_node_id: int, restore_timer_id: int) -> void:
-		var item_node = instance_from_id(item_node_id)
-		if item_node != null and item_node is CanvasItem:
-			(item_node as CanvasItem).visible = true
-		var restore_timer = instance_from_id(restore_timer_id)
-		if restore_timer != null and restore_timer is Timer:
-			(restore_timer as Timer).queue_free()
 
 
 class ActDropItem extends Core.Task:
