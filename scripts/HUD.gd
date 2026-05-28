@@ -1622,6 +1622,9 @@ func _show_tipi_result() -> void:
 	var profile = get_node_or_null("/root/PlayerProfile")
 	if profile and profile.has_method("set_tipi"):
 		profile.set_tipi(_tipi_responses.duplicate(true), _tipi_questions.size())
+		var logger = get_node_or_null("/root/EpisodeLogger")
+		if logger and logger.has_method("log_participant_profile") and profile.has_method("get_profile"):
+			logger.log_participant_profile(profile.get_profile())
 
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 24)
 	survey_question.text = "Your responses have been recorded.\nThey will be taken into account in the robot delegation."
