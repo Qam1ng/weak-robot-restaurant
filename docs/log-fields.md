@@ -86,7 +86,6 @@
 > 用于记录这次请求被分配到哪一种策略、分配时所处的分层 bucket，以及最终展示的话术。
 - `strategy`
 - `assignment_method`
-- `assignment_buckets.request_type_bucket`
 - `assignment_buckets.urgency_bucket`
 - `assignment_buckets.busyness_bucket`
 - `assignment_buckets.player_active_tasks_bucket`

@@ -44,7 +44,6 @@
 > 用于记录这次请求被分配到哪一种策略、分配时所处的分层条件，以及实际展示给玩家的话术内容。
 - `strategy`
 - `assignment_method`
-- `assignment_buckets.request_type_bucket`
 - `assignment_buckets.urgency_bucket`
 - `assignment_buckets.busyness_bucket`
 - `assignment_buckets.player_active_tasks_bucket`

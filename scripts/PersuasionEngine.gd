@@ -44,6 +44,7 @@ static func assign_strategy_locally(request_type: String, context: Dictionary) -
 	}
 
 static func build_assignment_buckets(request_type: String, context: Dictionary) -> Dictionary:
+	_ = request_type
 	var robot: Dictionary = context.get("robot", {})
 	var player: Dictionary = context.get("player", {})
 	var env: Dictionary = context.get("environment", {})
@@ -56,7 +57,6 @@ static func build_assignment_buckets(request_type: String, context: Dictionary) 
 		battery_mode = "normal"
 
 	return {
-		"request_type_bucket": request_type,
 		"urgency_bucket": urgency_bucket,
 		"busyness_bucket": busyness_bucket,
 		"player_active_tasks_bucket": player_active_tasks_bucket,
@@ -64,8 +64,7 @@ static func build_assignment_buckets(request_type: String, context: Dictionary) 
 	}
 
 static func _assignment_key_from_buckets(buckets: Dictionary) -> String:
-	return "%s|urgency:%s|busyness:%s|player_active_tasks:%s|battery:%s" % [
-		str(buckets.get("request_type_bucket", "HANDOFF")),
+	return "urgency:%s|busyness:%s|player_active_tasks:%s|battery:%s" % [
 		str(buckets.get("urgency_bucket", "medium")),
 		str(buckets.get("busyness_bucket", "medium")),
 		str(buckets.get("player_active_tasks_bucket", "medium")),

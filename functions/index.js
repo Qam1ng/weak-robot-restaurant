@@ -99,7 +99,6 @@ function asObject(value) {
 function sanitizeAssignmentBuckets(value) {
   const buckets = asObject(value);
   return {
-    request_type_bucket: sanitizeText(buckets.request_type_bucket, ""),
     urgency_bucket: sanitizeText(buckets.urgency_bucket, ""),
     busyness_bucket: sanitizeText(buckets.busyness_bucket, ""),
     player_active_tasks_bucket: sanitizeText(
@@ -132,7 +131,6 @@ function sanitizeTipiScores(value) {
 
 function assignmentCounterDocId(buckets) {
   return [
-    sanitizeText(buckets.request_type_bucket, "HANDOFF"),
     sanitizeText(buckets.urgency_bucket, "medium"),
     sanitizeText(buckets.busyness_bucket, "medium"),
     sanitizeText(buckets.player_active_tasks_bucket, "medium"),
@@ -161,11 +159,7 @@ function weightedStrategyChoice(counts) {
 
 async function assignStrategyGlobally(data) {
   const requestId = sanitizeText(data.request_id, "");
-  const requestType = sanitizeText(data.request_type, "HANDOFF");
   const buckets = sanitizeAssignmentBuckets(data.assignment_buckets);
-  if (buckets.request_type_bucket === "") {
-    buckets.request_type_bucket = requestType;
-  }
   const counterId = assignmentCounterDocId(buckets);
   const counterRef = db.collection("assignment_counters").doc(counterId);
   let chosen = STRATEGIES[0];
@@ -185,7 +179,6 @@ async function assignStrategyGlobally(data) {
     chosen = weightedStrategyChoice(counts);
     counts[chosen] += 1;
     tx.set(counterRef, {
-      request_type_bucket: buckets.request_type_bucket,
       urgency_bucket: buckets.urgency_bucket,
       busyness_bucket: buckets.busyness_bucket,
       player_active_tasks_bucket: buckets.player_active_tasks_bucket,
