@@ -13,6 +13,14 @@ const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_TEMPERATURE = 0.4;
 const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
+const STRATEGIES = [
+  "reciprocity",
+  "authority",
+  "liking",
+  "commitment",
+  "social_proof",
+  "scarcity",
+];
 
 setGlobalOptions({
   maxInstances: 10,
@@ -119,6 +127,84 @@ function sanitizeTipiScores(value) {
     trait_E: asNumber(raw.E ?? raw.trait_E, 4.0),
     trait_A: asNumber(raw.A ?? raw.trait_A, 4.0),
     trait_N: asNumber(raw.N ?? raw.trait_N, 4.0),
+  };
+}
+
+function assignmentCounterDocId(buckets) {
+  return [
+    sanitizeText(buckets.request_type_bucket, "HANDOFF"),
+    sanitizeText(buckets.urgency_bucket, "medium"),
+    sanitizeText(buckets.busyness_bucket, "medium"),
+    sanitizeText(buckets.player_active_tasks_bucket, "medium"),
+    sanitizeText(buckets.battery_mode_bucket, "normal"),
+  ].join("__");
+}
+
+function weightedStrategyChoice(counts) {
+  let totalWeight = 0.0;
+  const weighted = [];
+  for (const strategy of STRATEGIES) {
+    const count = Math.max(asNumber(counts[strategy], 0), 0);
+    const weight = 1.0 / (count + 1.0);
+    weighted.push({strategy, weight});
+    totalWeight += weight;
+  }
+  let draw = Math.random() * totalWeight;
+  for (const entry of weighted) {
+    draw -= entry.weight;
+    if (draw <= 0.0) {
+      return entry.strategy;
+    }
+  }
+  return STRATEGIES[STRATEGIES.length - 1];
+}
+
+async function assignStrategyGlobally(data) {
+  const requestId = sanitizeText(data.request_id, "");
+  const requestType = sanitizeText(data.request_type, "HANDOFF");
+  const buckets = sanitizeAssignmentBuckets(data.assignment_buckets);
+  if (buckets.request_type_bucket === "") {
+    buckets.request_type_bucket = requestType;
+  }
+  const counterId = assignmentCounterDocId(buckets);
+  const counterRef = db.collection("assignment_counters").doc(counterId);
+  let chosen = STRATEGIES[0];
+
+  await db.runTransaction(async (tx) => {
+    const snapshot = await tx.get(counterRef);
+    const counts = {};
+    for (const strategy of STRATEGIES) {
+      counts[strategy] = 0;
+    }
+    if (snapshot.exists) {
+      const existing = snapshot.data() || {};
+      for (const strategy of STRATEGIES) {
+        counts[strategy] = asNumber(existing[strategy], 0);
+      }
+    }
+    chosen = weightedStrategyChoice(counts);
+    counts[chosen] += 1;
+    tx.set(counterRef, {
+      request_type_bucket: buckets.request_type_bucket,
+      urgency_bucket: buckets.urgency_bucket,
+      busyness_bucket: buckets.busyness_bucket,
+      player_active_tasks_bucket: buckets.player_active_tasks_bucket,
+      battery_mode_bucket: buckets.battery_mode_bucket,
+      reciprocity: counts.reciprocity,
+      authority: counts.authority,
+      liking: counts.liking,
+      commitment: counts.commitment,
+      social_proof: counts.social_proof,
+      scarcity: counts.scarcity,
+      updated_at: FieldValue.serverTimestamp(),
+    }, {merge: true});
+  });
+
+  return {
+    request_id: requestId,
+    strategy: chosen,
+    assignment_method: "global_db_stratified_weighted_random",
+    assignment_buckets: buckets,
   };
 }
 
@@ -388,6 +474,33 @@ exports.apiDialogue = onRequest({secrets: [OPENAI_API_KEY]}, async (req, res) =>
       },
       fallback,
     });
+  }
+});
+
+exports.apiAssignStrategy = onRequest(async (req, res) => {
+  applyCors(res);
+  if (handleOptions(req, res)) {
+    return;
+  }
+  if (!requirePost(req, res)) {
+    return;
+  }
+
+  const body = parseBody(req);
+  if (body == null || typeof body !== "object") {
+    res.status(400).json({error: "invalid_json_body"});
+    return;
+  }
+
+  try {
+    const result = await assignStrategyGlobally(body);
+    res.status(200).json({
+      ok: true,
+      ...result,
+    });
+  } catch (err) {
+    logger.error("apiAssignStrategy failed", err);
+    res.status(500).json({error: "assignment_failed"});
   }
 });
 

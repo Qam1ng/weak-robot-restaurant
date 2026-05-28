@@ -24,49 +24,26 @@ static var _rng_seeded := false
 static func reset_assignment_state() -> void:
 	_assignment_counts.clear()
 
-static func generate_dialogue(request_type: String, context: Dictionary, escalation_count: int, payload: Dictionary) -> Dictionary:
-	var assignment := _assign_strategy(request_type, context)
-	var strategy := str(assignment.get("strategy", STRATEGY_AUTHORITY))
-	var utterance := _render_template(request_type, strategy, context, escalation_count, payload)
-
-	return {
-		"strategy": strategy,
-		"assignment_method": assignment.get("method", "stratified_balanced_random"),
-		"assignment_buckets": assignment.get("buckets", {}),
-		"utterance": utterance
-	}
-
-static func _assign_strategy(request_type: String, context: Dictionary) -> Dictionary:
+static func assign_strategy_locally(request_type: String, context: Dictionary) -> Dictionary:
 	_ensure_rng_seeded()
-	var buckets := _build_assignment_buckets(request_type, context)
+	var buckets := build_assignment_buckets(request_type, context)
 	var assignment_key := _assignment_key_from_buckets(buckets)
 	var counts: Dictionary = _assignment_counts.get(assignment_key, {})
 	if counts.is_empty():
 		for strategy in STRATEGIES:
 			counts[strategy] = 0
 
-	var min_count := INF
-	var candidates: Array[String] = []
-	for strategy in STRATEGIES:
-		var count := int(counts.get(strategy, 0))
-		if count < min_count:
-			min_count = count
-			candidates.clear()
-			candidates.append(strategy)
-		elif count == min_count:
-			candidates.append(strategy)
-
-	var chosen := candidates[_rng.randi_range(0, candidates.size() - 1)]
+	var chosen := _weighted_choice_from_counts(counts)
 	counts[chosen] = int(counts.get(chosen, 0)) + 1
 	_assignment_counts[assignment_key] = counts
 
 	return {
 		"strategy": chosen,
-		"method": "stratified_balanced_random",
+		"method": "session_local_stratified_weighted_random",
 		"buckets": buckets
 	}
 
-static func _build_assignment_buckets(request_type: String, context: Dictionary) -> Dictionary:
+static func build_assignment_buckets(request_type: String, context: Dictionary) -> Dictionary:
 	var robot: Dictionary = context.get("robot", {})
 	var player: Dictionary = context.get("player", {})
 	var env: Dictionary = context.get("environment", {})
@@ -95,7 +72,7 @@ static func _assignment_key_from_buckets(buckets: Dictionary) -> String:
 		str(buckets.get("battery_mode_bucket", "normal"))
 	]
 
-static func _render_template(request_type: String, strategy: String, context: Dictionary, escalation_count: int, payload: Dictionary) -> String:
+static func render_template(request_type: String, strategy: String, context: Dictionary, escalation_count: int, payload: Dictionary) -> String:
 	var env: Dictionary = context.get("environment", {})
 	var urgency := float(env.get("urgency", 0.5))
 	var urgency_level := _urgency_bucket(urgency)
@@ -120,6 +97,25 @@ static func _render_template(request_type: String, strategy: String, context: Di
 			return intro + "You have handled these handoffs well before; could you take %s again?" % item
 		_:
 			return intro + "Please hand off %s now, or this order may miss the service window." % item
+
+static func _weighted_choice_from_counts(counts: Dictionary) -> String:
+	_ensure_rng_seeded()
+	var total_weight := 0.0
+	var weights := {}
+	for strategy in STRATEGIES:
+		var count := max(int(counts.get(strategy, 0)), 0)
+		var weight := 1.0 / float(count + 1)
+		weights[strategy] = weight
+		total_weight += weight
+	if total_weight <= 0.0:
+		return STRATEGY_AUTHORITY
+	var draw := _rng.randf() * total_weight
+	var cumulative := 0.0
+	for strategy in STRATEGIES:
+		cumulative += float(weights.get(strategy, 0.0))
+		if draw <= cumulative:
+			return strategy
+	return STRATEGIES.back()
 
 static func _urgency_bucket(urgency: float) -> String:
 	if urgency >= 0.75:

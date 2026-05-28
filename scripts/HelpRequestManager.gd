@@ -9,6 +9,7 @@ const RESPONSE_DECLINE := "decline"
 const RESPONSE_LATER := "later"
 
 const TYPE_HANDOFF := "HANDOFF"
+const API_ASSIGN_STRATEGY_URL := "https://us-central1-weak-robot-restaurant-web.cloudfunctions.net/apiAssignStrategy"
 
 const STATUS_PENDING := "pending"
 const STATUS_COOLDOWN := "cooldown"
@@ -112,7 +113,8 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"delivery_actor": "",
 		"customer_timed_out": false,
 		"score_delta": 0,
-		"experiment": {}
+		"experiment": {},
+		"assignment_pending": true
 	}
 
 	var context = _build_context(robot, req, options)
@@ -123,26 +125,13 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		exp_snapshot = exp.get_snapshot()
 	req["experiment"] = exp_snapshot
 
-	var persuasion = PersuasionEngineScript.generate_dialogue(request_type, context, int(req["escalation_count"]), payload)
-	req["strategy"] = persuasion.get("strategy", "")
-	req["assignment_method"] = persuasion.get("assignment_method", "")
-	req["assignment_buckets"] = persuasion.get("assignment_buckets", {})
+	req["assignment_buckets"] = PersuasionEngineScript.build_assignment_buckets(request_type, context)
 	req["system_notice"] = _build_system_notice(payload)
-	req["utterance"] = persuasion.get("utterance", "")
-	req["utterance_source"] = "template"
-	if _should_request_help_utterance(req):
-		req["utterance_pending"] = true
 
 	_requests_by_id[request_id] = req
 	_order.append(request_id)
-	print("[HelpRequest] Created ", request_id, " type=", request_type)
-	_log_help_event("created", req)
-	if bool(req.get("utterance_pending", false)):
-		_request_utterance_realization(req)
-
-	var copied := _copy(req)
-	request_created.emit(copied)
-	return copied
+	_begin_strategy_assignment(request_id)
+	return _copy(req)
 
 func get_request(request_id: String) -> Dictionary:
 	return _copy(_requests_by_id.get(request_id, {}))
@@ -163,6 +152,8 @@ func get_promptable_request_for_robot(robot: Node) -> Dictionary:
 			continue
 		var status := str(req.get("status", ""))
 		if status != STATUS_PENDING and status != STATUS_COOLDOWN:
+			continue
+		if bool(req.get("assignment_pending", false)):
 			continue
 		if now_ms < int(req.get("cooldown_until_ms", 0)):
 			continue
@@ -301,6 +292,116 @@ func _copy(req: Dictionary) -> Dictionary:
 	if req.is_empty():
 		return {}
 	return req.duplicate(true)
+
+func _begin_strategy_assignment(request_id: String) -> void:
+	var req: Dictionary = _requests_by_id.get(request_id, {})
+	if req.is_empty():
+		return
+	if _should_use_backend_assignment():
+		_request_remote_strategy_assignment(req)
+		return
+	var request_type := str(req.get("type", TYPE_HANDOFF))
+	var context: Dictionary = req.get("context_snapshot", {})
+	var assignment := PersuasionEngineScript.assign_strategy_locally(request_type, context)
+	_finalize_strategy_assignment(request_id, assignment)
+
+func _request_remote_strategy_assignment(req: Dictionary) -> void:
+	var request_id := str(req.get("id", ""))
+	if request_id == "":
+		return
+	var body := {
+		"request_id": request_id,
+		"request_type": str(req.get("type", TYPE_HANDOFF)),
+		"assignment_buckets": req.get("assignment_buckets", {})
+	}
+	var http := HTTPRequest.new()
+	add_child(http)
+	http.request_completed.connect(_on_strategy_assignment_completed.bind(http, request_id))
+	var err := http.request(API_ASSIGN_STRATEGY_URL, PackedStringArray([
+		"Content-Type: application/json"
+	]), HTTPClient.METHOD_POST, JSON.stringify(body))
+	if err != OK:
+		if is_instance_valid(http):
+			http.queue_free()
+		var fallback := PersuasionEngineScript.assign_strategy_locally(
+			str(req.get("type", TYPE_HANDOFF)),
+			req.get("context_snapshot", {})
+		)
+		_finalize_strategy_assignment(request_id, fallback)
+
+func _on_strategy_assignment_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, request_id: String) -> void:
+	if is_instance_valid(http):
+		http.queue_free()
+	var req: Dictionary = _requests_by_id.get(request_id, {})
+	if req.is_empty():
+		return
+	if code < 200 or code >= 300:
+		var fallback := PersuasionEngineScript.assign_strategy_locally(
+			str(req.get("type", TYPE_HANDOFF)),
+			req.get("context_snapshot", {})
+		)
+		_finalize_strategy_assignment(request_id, fallback)
+		return
+	var top = JSON.parse_string(body.get_string_from_utf8())
+	if not (top is Dictionary):
+		var fallback_parse := PersuasionEngineScript.assign_strategy_locally(
+			str(req.get("type", TYPE_HANDOFF)),
+			req.get("context_snapshot", {})
+		)
+		_finalize_strategy_assignment(request_id, fallback_parse)
+		return
+	var assignment := {
+		"strategy": str(top.get("strategy", "")),
+		"method": str(top.get("assignment_method", "")),
+		"buckets": top.get("assignment_buckets", {})
+	}
+	_finalize_strategy_assignment(request_id, assignment)
+
+func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -> void:
+	var req: Dictionary = _requests_by_id.get(request_id, {})
+	if req.is_empty():
+		return
+	if str(req.get("status", "")) == STATUS_RESOLVED:
+		return
+	var strategy := str(assignment.get("strategy", "")).strip_edges()
+	if strategy == "":
+		strategy = PersuasionEngineScript.STRATEGY_AUTHORITY
+	var method := str(assignment.get("method", "")).strip_edges()
+	if method == "":
+		method = "session_local_stratified_weighted_random"
+	var buckets: Dictionary = assignment.get("buckets", {})
+	if buckets.is_empty():
+		buckets = PersuasionEngineScript.build_assignment_buckets(
+			str(req.get("type", TYPE_HANDOFF)),
+			req.get("context_snapshot", {})
+		)
+	req["strategy"] = strategy
+	req["assignment_method"] = method
+	req["assignment_buckets"] = buckets
+	req["utterance"] = PersuasionEngineScript.render_template(
+		str(req.get("type", TYPE_HANDOFF)),
+		strategy,
+		req.get("context_snapshot", {}),
+		int(req.get("escalation_count", 0)),
+		req.get("payload", {})
+	)
+	req["utterance_source"] = "template"
+	req["assignment_pending"] = false
+	req["updated_at_ms"] = Time.get_ticks_msec()
+	if _should_request_help_utterance(req):
+		req["utterance_pending"] = true
+	else:
+		req["utterance_pending"] = false
+	_requests_by_id[request_id] = req
+	print("[HelpRequest] Created ", request_id, " type=", str(req.get("type", "")))
+	_log_help_event("created", req)
+	if bool(req.get("utterance_pending", false)):
+		_request_utterance_realization(req)
+	var copied := _copy(req)
+	request_created.emit(copied)
+
+func _should_use_backend_assignment() -> bool:
+	return OS.has_feature("web")
 
 func _robot_from_request(req: Dictionary) -> Node:
 	var iid := int(req.get("robot_instance_id", 0))
