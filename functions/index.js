@@ -113,7 +113,8 @@ function sanitizeTipiResponses(value) {
   const raw = asObject(value);
   const cleaned = {};
   for (let i = 1; i <= 10; i += 1) {
-    cleaned[`tipi_response_${i}`] = asNumber(raw[i] ?? raw[`tipi_response_${i}`], 4.0);
+    const rawValue = raw[i] != null ? raw[i] : raw[`tipi_response_${i}`];
+    cleaned[`tipi_response_${i}`] = asNumber(rawValue, 4.0);
   }
   return cleaned;
 }
@@ -121,11 +122,11 @@ function sanitizeTipiResponses(value) {
 function sanitizeTipiScores(value) {
   const raw = asObject(value);
   return {
-    trait_O: asNumber(raw.O ?? raw.trait_O, 4.0),
-    trait_C: asNumber(raw.C ?? raw.trait_C, 4.0),
-    trait_E: asNumber(raw.E ?? raw.trait_E, 4.0),
-    trait_A: asNumber(raw.A ?? raw.trait_A, 4.0),
-    trait_N: asNumber(raw.N ?? raw.trait_N, 4.0),
+    trait_O: asNumber(raw.O != null ? raw.O : raw.trait_O, 4.0),
+    trait_C: asNumber(raw.C != null ? raw.C : raw.trait_C, 4.0),
+    trait_E: asNumber(raw.E != null ? raw.E : raw.trait_E, 4.0),
+    trait_A: asNumber(raw.A != null ? raw.A : raw.trait_A, 4.0),
+    trait_N: asNumber(raw.N != null ? raw.N : raw.trait_N, 4.0),
   };
 }
 
