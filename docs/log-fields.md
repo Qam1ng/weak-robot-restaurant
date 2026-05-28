@@ -1,6 +1,4 @@
-# Step-1 Log Fields
-
-This document lists the Step-1 log fields currently persisted by the system.
+# Log Fields
 
 ## 1. Help-Request Analytic Log Fields
 

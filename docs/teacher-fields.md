@@ -1,6 +1,4 @@
-# Step-1 Teacher Fields
-
-This document lists only the core fields to be used for Step-1 policy learning.
+# Teacher Fields
 
 ## 1. Participant-Level Fields
 
