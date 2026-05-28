@@ -26,7 +26,6 @@ var _interaction_model := {
 	"declined": 0,
 	"later": 0,
 	"avg_latency_ms": 0.0,
-	"annoyance": 0.0,
 	"acceptance_rate": 0.5
 }
 
@@ -42,7 +41,6 @@ func reset_all() -> void:
 		"declined": 0,
 		"later": 0,
 		"avg_latency_ms": 0.0,
-		"annoyance": 0.0,
 		"acceptance_rate": 0.5
 	}
 
@@ -50,6 +48,12 @@ func _ready() -> void:
 	var dm = _dialogue_manager()
 	if dm and dm.has_signal("utterance_generated") and not dm.utterance_generated.is_connected(_on_utterance_generated):
 		dm.utterance_generated.connect(_on_utterance_generated)
+	var board = get_node_or_null("/root/TaskBoard")
+	if board:
+		if board.has_signal("task_completed") and not board.task_completed.is_connected(_on_task_completed):
+			board.task_completed.connect(_on_task_completed)
+		if board.has_signal("task_failed") and not board.task_failed.is_connected(_on_task_failed):
+			board.task_failed.connect(_on_task_failed)
 
 func _process(_dt: float) -> void:
 	var now_ms := Time.get_ticks_msec()
@@ -97,14 +101,17 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"context_snapshot": {},
 		"strategy": "",
 		"assignment_method": "",
-		"assignment_stratum": "",
 		"assignment_buckets": {},
-		"message_context": {},
 		"system_notice": "",
 		"utterance": "",
 		"utterance_source": "template",
 		"utterance_pending": false,
 		"last_response": "",
+		"task_completed": false,
+		"task_failed": false,
+		"delivery_actor": "",
+		"customer_timed_out": false,
+		"score_delta": 0,
 		"experiment": {}
 	}
 
@@ -119,9 +126,7 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 	var persuasion = PersuasionEngineScript.generate_dialogue(request_type, context, int(req["escalation_count"]), payload)
 	req["strategy"] = persuasion.get("strategy", "")
 	req["assignment_method"] = persuasion.get("assignment_method", "")
-	req["assignment_stratum"] = persuasion.get("assignment_stratum", "")
 	req["assignment_buckets"] = persuasion.get("assignment_buckets", {})
-	req["message_context"] = persuasion.get("message_context", {})
 	req["system_notice"] = _build_system_notice(payload)
 	req["utterance"] = persuasion.get("utterance", "")
 	req["utterance_source"] = "template"
@@ -309,9 +314,7 @@ func _robot_from_request(req: Dictionary) -> Node:
 func _build_context(robot: Node, req: Dictionary, options: Dictionary) -> Dictionary:
 	var robot_state := {
 		"battery_level": float(robot.get("battery_level")),
-		"battery_mode": str(robot.get("_battery_mode")),
-		"waiting_for_help": bool(robot.get("_waiting_for_help")),
-		"active_step": str(robot.get("_active_task_step"))
+		"battery_mode": str(robot.get("_battery_mode"))
 	}
 	if robot_state["battery_level"] == 0.0 and robot.get("battery_level") == null:
 		robot_state["battery_level"] = 100.0
@@ -340,36 +343,23 @@ func _build_context(robot: Node, req: Dictionary, options: Dictionary) -> Dictio
 			"urgency": urgency,
 			"busyness": busyness,
 			"slack_ms": slack_ms,
-			"phase_name": game_mgr.get_period() if game_mgr and game_mgr.has_method("get_period") else "unknown",
-			"is_peak_time": bool(game_mgr.is_peak_time()) if game_mgr and game_mgr.has_method("is_peak_time") else false
+			"phase_name": game_mgr.get_period() if game_mgr and game_mgr.has_method("get_period") else "unknown"
 		},
 		"history": {
 			"acceptance_rate": float(_interaction_model.get("acceptance_rate", 0.5)),
-			"avg_latency_ms": float(_interaction_model.get("avg_latency_ms", 0.0)),
-			"annoyance": float(_interaction_model.get("annoyance", 0.0))
+			"avg_latency_ms": float(_interaction_model.get("avg_latency_ms", 0.0))
 		}
 	}
 
 func _sample_player_state() -> Dictionary:
-	var player_max_active_tasks := 3
 	var player_active_tasks := 0
-	var players := get_tree().get_nodes_in_group("player")
-	if not players.is_empty():
-		var player = players[0]
-		if player != null:
-			player_max_active_tasks = maxi(1, int(player.get("player_max_active_tasks")))
-
 	var board = get_node_or_null("/root/TaskBoard")
 	if board and board.has_method("get_in_progress_tasks_for_assignee"):
 		var tasks: Array[Dictionary] = board.get_in_progress_tasks_for_assignee("player")
 		player_active_tasks = tasks.size()
 
-	var player_task_load := float(player_active_tasks) / float(maxi(1, player_max_active_tasks))
-
 	return {
-		"active_tasks": player_active_tasks,
-		"max_active_tasks": player_max_active_tasks,
-		"task_load": player_task_load
+		"active_tasks": player_active_tasks
 	}
 
 func _sample_personality_profile() -> Dictionary:
@@ -386,13 +376,10 @@ func _update_interaction_model(response: String, latency_ms: int) -> void:
 	_interaction_model["total"] = int(_interaction_model.get("total", 0)) + 1
 	if response == RESPONSE_ACCEPT:
 		_interaction_model["accepted"] = int(_interaction_model.get("accepted", 0)) + 1
-		_interaction_model["annoyance"] = maxf(0.0, float(_interaction_model.get("annoyance", 0.0)) - 0.12)
 	elif response == RESPONSE_DECLINE:
 		_interaction_model["declined"] = int(_interaction_model.get("declined", 0)) + 1
-		_interaction_model["annoyance"] = minf(1.0, float(_interaction_model.get("annoyance", 0.0)) + 0.18)
 	elif response == RESPONSE_LATER:
 		_interaction_model["later"] = int(_interaction_model.get("later", 0)) + 1
-		_interaction_model["annoyance"] = minf(1.0, float(_interaction_model.get("annoyance", 0.0)) + 0.08)
 
 	var total := maxf(float(_interaction_model["total"]), 1.0)
 	_interaction_model["acceptance_rate"] = float(_interaction_model.get("accepted", 0)) / total
@@ -462,6 +449,56 @@ func _on_utterance_generated(request_id: String, utterance: String, meta: Dictio
 	_requests_by_id[request_id] = req
 	_log_help_event("utterance_realization_failed", req, meta)
 	request_updated.emit(_copy(req))
+
+func _on_task_completed(task: Dictionary) -> void:
+	_attach_task_outcome(task, true)
+
+func _on_task_failed(task: Dictionary) -> void:
+	_attach_task_outcome(task, false)
+
+func _attach_task_outcome(task: Dictionary, completed: bool) -> void:
+	if task.is_empty():
+		return
+	var task_id := str(task.get("id", ""))
+	if task_id == "":
+		return
+	var request_id := _latest_request_id_for_task(task_id)
+	if request_id == "":
+		return
+	var req: Dictionary = _requests_by_id.get(request_id, {})
+	if req.is_empty():
+		return
+	var payload: Dictionary = task.get("payload", {})
+	var order_kind := str(payload.get("order_kind", "food"))
+	var failure_reason := str(task.get("failure_reason", ""))
+	req["task_completed"] = completed
+	req["task_failed"] = not completed
+	req["delivery_actor"] = str(task.get("assigned_to", ""))
+	req["customer_timed_out"] = (not completed) and (failure_reason == "task_deadline_expired" or failure_reason == "customer_drink_timeout")
+	req["score_delta"] = _score_delta_for_outcome(order_kind, completed)
+	req["updated_at_ms"] = Time.get_ticks_msec()
+	_requests_by_id[request_id] = req
+	_log_help_event("task_outcome_attached", req, {
+		"task_id": task_id,
+		"completed": completed
+	})
+	request_updated.emit(_copy(req))
+
+func _latest_request_id_for_task(task_id: String) -> String:
+	for i in range(_order.size() - 1, -1, -1):
+		var request_id := _order[i]
+		var req: Dictionary = _requests_by_id.get(request_id, {})
+		if req.is_empty():
+			continue
+		var payload: Dictionary = req.get("payload", {})
+		if str(payload.get("task_id", "")) == task_id:
+			return request_id
+	return ""
+
+func _score_delta_for_outcome(order_kind: String, completed: bool) -> int:
+	if completed:
+		return 1 if order_kind == "drink" else 2
+	return -3 if order_kind == "drink" else -6
 
 func _build_system_notice(payload: Dictionary) -> String:
 	var reason := str(payload.get("reason", "")).strip_edges()

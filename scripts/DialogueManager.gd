@@ -34,7 +34,6 @@ func realize_help_utterance(request: Dictionary) -> void:
 	if request_id == "":
 		return
 
-	var message_context: Dictionary = request.get("message_context", {})
 	var strategy := str(request.get("strategy", ""))
 	var fallback := str(request.get("utterance", ""))
 	if fallback == "":
@@ -44,7 +43,7 @@ func realize_help_utterance(request: Dictionary) -> void:
 	var context: Dictionary = request.get("context_snapshot", {})
 	var personality_hint := _format_personality_hint(context.get("personality", {}))
 	var request_type := str(request.get("type", "HANDOFF"))
-	var urgency := str(message_context.get("urgency_level", "medium"))
+	var urgency := _help_urgency_bucket(context)
 	var escalation := int(request.get("escalation_count", 0))
 	var item := str(payload.get("item_needed", "item"))
 
@@ -370,3 +369,12 @@ func _format_personality_hint(personality: Dictionary) -> String:
 		float(tipi_scores.get("A", 4.0)),
 		float(tipi_scores.get("N", 4.0)),
 	]
+
+func _help_urgency_bucket(context: Dictionary) -> String:
+	var env: Dictionary = context.get("environment", {})
+	var urgency := float(env.get("urgency", 0.5))
+	if urgency >= 0.75:
+		return "high"
+	if urgency <= 0.35:
+		return "low"
+	return "medium"
