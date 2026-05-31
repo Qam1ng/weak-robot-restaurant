@@ -96,6 +96,7 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"cooldown_ms": cooldown_ms,
 		"escalation_count": 0,
 		"max_escalation": max_escalation,
+		"escalation": {},
 		"urgency": urgency,
 		"final_response": "",
 		"resolution_path": "",
@@ -213,6 +214,11 @@ func respond(request_id: String, response: String) -> Dictionary:
 			else:
 				req["status"] = STATUS_COOLDOWN
 				req["cooldown_until_ms"] = now_ms + int(req.get("cooldown_ms", 4000))
+				_refresh_request_surface(req)
+				if _should_request_help_utterance(req):
+					req["utterance_pending"] = true
+				else:
+					req["utterance_pending"] = false
 		_:
 			return _copy(req)
 
@@ -221,6 +227,8 @@ func respond(request_id: String, response: String) -> Dictionary:
 	var copied := _copy(req)
 	print("[HelpRequest] Response ", response, " -> ", request_id, " status=", copied.get("status", ""))
 	_log_help_event("responded", req, {"response": response})
+	if response == RESPONSE_LATER and bool(req.get("utterance_pending", false)):
+		_request_utterance_realization(req)
 	request_updated.emit(copied)
 	if str(req.get("status", "")) == STATUS_RESOLVED:
 		_log_help_event("resolved", req)
@@ -378,14 +386,7 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 	req["strategy"] = strategy
 	req["assignment_method"] = method
 	req["assignment_buckets"] = buckets
-	req["utterance"] = PersuasionEngineScript.render_template(
-		str(req.get("type", TYPE_HANDOFF)),
-		strategy,
-		req.get("context_snapshot", {}),
-		int(req.get("escalation_count", 0)),
-		req.get("payload", {})
-	)
-	req["utterance_source"] = "template"
+	_refresh_request_surface(req)
 	req["assignment_pending"] = false
 	req["updated_at_ms"] = Time.get_ticks_msec()
 	if _should_request_help_utterance(req):
@@ -399,6 +400,17 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 		_request_utterance_realization(req)
 	var copied := _copy(req)
 	request_created.emit(copied)
+
+func _refresh_request_surface(req: Dictionary) -> void:
+	req["utterance"] = PersuasionEngineScript.render_template(
+		str(req.get("type", TYPE_HANDOFF)),
+		str(req.get("strategy", PersuasionEngineScript.STRATEGY_AUTHORITY)),
+		req.get("context_snapshot", {}),
+		int(req.get("escalation_count", 0)),
+		req.get("payload", {})
+	)
+	req["escalation"] = PersuasionEngineScript.build_escalation(int(req.get("escalation_count", 0)))
+	req["utterance_source"] = "template"
 
 func _should_use_backend_assignment() -> bool:
 	return OS.has_feature("web")

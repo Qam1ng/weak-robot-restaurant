@@ -307,26 +307,24 @@ function buildDialoguePrompts(body) {
 
   if (kind === "help_utterance") {
     const strategy = sanitizeText(body.strategy, "");
-    const urgency = sanitizeText(body.urgency, "medium");
-    const escalation = asNumber(body.escalation, 0);
-    const personalityHint = sanitizeText(body.personality_hint, "");
     const item = sanitizeText(body.item, "item");
-    const requestType = sanitizeText(body.request_type, "HANDOFF");
+    const escalation = body.escalation && typeof body.escalation === "object" ? body.escalation : null;
+    const lines = [
+      `strategy: ${helpStrategyLabel(strategy)}`,
+      `item: ${item}`,
+      `fallback: ${fallback}`,
+    ];
+    if (escalation) {
+      lines.push(`escalation.count: ${asNumber(escalation.count, 0)}`);
+      lines.push(`escalation.prefix: ${sanitizeText(escalation.prefix, "")}`);
+    }
 
     return {
       model,
       temperature,
       fallback,
-      systemPrompt: "Write one short in-game delegation line from robot to player. Keep it natural, concrete, polite, and under 18 words. No quotes. No options.",
-      userPrompt: [
-        `request_type=${requestType}`,
-        `strategy=${strategy}`,
-        `urgency=${urgency}`,
-        `escalation=${escalation}`,
-        `personality=${personalityHint}`,
-        `item=${item}`,
-        `fallback=${fallback}`,
-      ].join(" "),
+      systemPrompt: "Write one short in-game delegation line from robot to player. Keep it natural, concrete. No quotes. No options. The relevant fields are defined below:\nstrategy: one persuasion framing drawn from our six-strategy set, adapted from Cialdini's six principles of persuasion.\nitem: the item being handed off.\nfallback: the base template utterance associated with the assigned strategy. Rewrite it lightly to sound natural, while preserving the same strategy and core intent.\nescalation: the follow-up stage of the same request, represented by escalation.count and escalation.prefix. escalation.count indicates how many times the request has already been followed up, and higher escalation should sound more insistent. escalation.prefix provides the stage-specific wording, may be lightly rewritten, and should be prepended to the utterance as a prefix.",
+      userPrompt: lines.join("\n"),
     };
   }
 
@@ -350,6 +348,25 @@ function buildDialoguePrompts(body) {
       `fallback=${fallback}`,
     ].join(" "),
   };
+}
+
+function helpStrategyLabel(strategy) {
+  switch (strategy) {
+    case "authority":
+      return "authority — a persuasion framing based on expertise and trustworthiness, expressed as a direct task-oriented request.";
+    case "reciprocity":
+      return "reciprocity — a persuasion framing based on returning help or favors, expressed by offering support in return for cooperation.";
+    case "liking":
+      return "liking — a persuasion framing based on warmth and positive regard, expressed in an appreciative and friendly tone.";
+    case "commitment":
+      return "commitment — a persuasion framing based on consistency with prior actions, expressed by referring to earlier cooperation.";
+    case "social_proof":
+      return "social_proof — a persuasion framing based on shared group behavior, expressed by emphasizing ongoing team coordination.";
+    case "scarcity":
+      return "scarcity — a persuasion framing based on limited opportunity or time, expressed by emphasizing the risk of missing the service window.";
+    default:
+      return strategy;
+  }
 }
 
 async function requestOpenAI(dialogueRequest) {

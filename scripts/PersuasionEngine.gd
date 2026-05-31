@@ -72,30 +72,37 @@ static func _assignment_key_from_buckets(buckets: Dictionary) -> String:
 	]
 
 static func render_template(request_type: String, strategy: String, context: Dictionary, escalation_count: int, payload: Dictionary) -> String:
-	var env: Dictionary = context.get("environment", {})
-	var urgency := float(env.get("urgency", 0.5))
-	var urgency_level := _urgency_bucket(urgency)
+	_ = request_type
+	_ = context
+	_ = escalation_count
 	var item := str(payload.get("item_needed", "item"))
-
-	var intro := ""
-	if escalation_count >= 2:
-		intro = "This is my final request. "
-	elif escalation_count == 1:
-		intro = "Following up on my previous request. "
 
 	match strategy:
 		STRATEGY_AUTHORITY:
-			return intro + ("Please hand off %s right away." % item if urgency_level == "high" else "Please hand off %s now." % item)
+			return "Please hand off %s now." % item
 		STRATEGY_SOCIAL_PROOF:
-			return intro + "Please hand off %s now so we can keep service moving." % item
+			return "Please hand off %s now so we can keep service moving." % item
 		STRATEGY_LIKING:
-			return intro + "Could you please hand off %s? Your help really keeps things moving." % item
+			return "Could you please hand off %s? Your help really keeps things moving." % item
 		STRATEGY_RECIPROCITY:
-			return intro + "Please hand over %s now, and I can clear this table for you next." % item
+			return "Please hand over %s now, and I can clear this table for you next." % item
 		STRATEGY_COMMITMENT:
-			return intro + "You have handled these handoffs well before; could you take %s again?" % item
+			return "You have handled these handoffs well before; could you take %s again?" % item
 		_:
-			return intro + "Please hand off %s now, or this order may miss the service window." % item
+			return "Please hand off %s now, or this order may miss the service window." % item
+
+static func build_escalation(escalation_count: int) -> Dictionary:
+	if escalation_count <= 0:
+		return {}
+	if escalation_count >= 2:
+		return {
+			"count": escalation_count,
+			"prefix": "This is my final request."
+		}
+	return {
+		"count": escalation_count,
+		"prefix": "Following up on my previous request."
+	}
 
 static func _weighted_choice_from_counts(counts: Dictionary) -> String:
 	_ensure_rng_seeded()
