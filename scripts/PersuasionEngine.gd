@@ -79,17 +79,17 @@ static func render_template(request_type: String, strategy: String, context: Dic
 
 	match strategy:
 		STRATEGY_AUTHORITY:
-			return "Please hand off %s now." % item
+			return "Please take over the %s order now." % item
 		STRATEGY_SOCIAL_PROOF:
-			return "Please hand off %s now so we can keep service moving." % item
+			return "Please take over the %s order now so we can keep service moving." % item
 		STRATEGY_LIKING:
-			return "Could you please hand off %s? Your help really keeps things moving." % item
+			return "Could you please take over the %s order? Your help really keeps things moving." % item
 		STRATEGY_RECIPROCITY:
-			return "Please hand over %s now, and I'll speed through the next order for you." % item
+			return "Please take over the %s order now, and I'll move faster on the next order." % item
 		STRATEGY_COMMITMENT:
-			return "You have handled these handoffs well before; could you take %s again?" % item
+			return "You have handled these handoffs well before; could you take over the %s order again?" % item
 		_:
-			return "Please hand off %s now, or this order may miss the service window." % item
+			return "Please take over the %s order now, or this order may miss the service window." % item
 
 static func build_escalation(escalation_count: int) -> Dictionary:
 	if escalation_count <= 0:

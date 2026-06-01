@@ -323,7 +323,7 @@ function buildDialoguePrompts(body) {
       model,
       temperature,
       fallback,
-      systemPrompt: "Write one short in-game delegation line from robot to player. Keep it natural, concrete. No quotes. No options. The relevant fields are defined below:\nstrategy: one persuasion framing drawn from our six-strategy set, adapted from Cialdini's six principles of persuasion.\nitem: the item being handed off.\nfallback: the base template utterance associated with the assigned strategy. Rewrite it lightly to sound natural, while preserving the same strategy and core intent.\nescalation: the follow-up stage of the same request, represented by escalation.count and escalation.prefix. escalation.count indicates how many times the request has already been followed up, and higher escalation should sound more insistent. escalation.prefix provides the stage-specific wording, may be lightly rewritten, and should be prepended to the utterance as a prefix.",
+      systemPrompt: "Write one short in-game delegation line from robot to player. Keep it natural, concrete. No quotes. No options. The relevant fields are defined below:\nstrategy: one persuasion framing drawn from our six-strategy set, adapted from Cialdini's six principles of persuasion.\nitem: the handoff item; the player is being asked to take it over, not give it to the robot.\nfallback: the base template utterance associated with the assigned strategy. Rewrite it lightly to sound natural, while preserving the same strategy and core intent.\nescalation: the follow-up stage of the same request, represented by escalation.count and escalation.prefix. escalation.count indicates how many times the request has already been followed up, and higher escalation should sound more insistent. escalation.prefix provides the stage-specific wording, may be lightly rewritten, and should be prepended to the utterance as a prefix.",
       userPrompt: lines.join("\n"),
     };
   }
@@ -355,7 +355,7 @@ function helpStrategyLabel(strategy) {
     case "authority":
       return "authority — a persuasion framing based on expertise and trustworthiness, expressed as a direct task-oriented request.";
     case "reciprocity":
-      return "reciprocity — a persuasion framing based on returning help or favors, expressed by offering support in return for cooperation.";
+      return "reciprocity — a persuasion framing based on returning help or favors, expressed by offering support in return for cooperation. For reciprocity, the promised payoff is real: if the player accepts, the robot will handle its next order faster. Reflect this promise naturally in the utterance.";
     case "liking":
       return "liking — a persuasion framing based on warmth and positive regard, expressed in an appreciative and friendly tone.";
     case "commitment":
