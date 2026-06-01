@@ -85,7 +85,7 @@ static func render_template(request_type: String, strategy: String, context: Dic
 		STRATEGY_LIKING:
 			return "Could you please hand off %s? Your help really keeps things moving." % item
 		STRATEGY_RECIPROCITY:
-			return "Please hand over %s now, and I can clear this table for you next." % item
+			return "Please hand over %s now, and I'll speed through the next order for you." % item
 		STRATEGY_COMMITMENT:
 			return "You have handled these handoffs well before; could you take %s again?" % item
 		_:

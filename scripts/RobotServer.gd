@@ -46,11 +46,15 @@ const EMERGENCY_HANDOFF_APPROACH_DISTANCE := 120.0
 const DEADLINE_HANDOFF_TRIGGER_MS := 45_000
 const ORPHAN_FOOD_ITEM_TTL_MS := 45_000
 const PLAYER_ITEM_TTL_MS := 120_000
+const RECIPROCITY_FULFILLMENT_MULTIPLIER := 1.15
 var _active_task_id: String = ""
 var _active_task_step: String = ""
 var _active_step_started: bool = false
 var _last_replan_ms: int = 0
 var _pending_overload_handoff_task_id: String = ""
+var _reciprocity_fulfillment_pending: bool = false
+var _reciprocity_fulfillment_active: bool = false
+var _reciprocity_fulfillment_task_id: String = ""
 
 # ---------- Unified Constraints ----------
 const BATTERY_MODE_NORMAL := "normal"
@@ -362,6 +366,7 @@ func _sync_active_task_state() -> bool:
 		_release_robot_food_for_task(_active_task_id, "task_missing")
 		_invalidate_active_help_request("task_missing")
 		_end_current_episode(false, "task_missing")
+		_end_reciprocity_fulfillment_for_task(_active_task_id)
 		_clear_current_task_runtime()
 		return true
 
@@ -371,18 +376,21 @@ func _sync_active_task_state() -> bool:
 		_release_robot_food_for_task(_active_task_id, "task_failed")
 		_invalidate_active_help_request("task_failed")
 		_end_current_episode(false, reason)
+		_end_reciprocity_fulfillment_for_task(_active_task_id)
 		_clear_current_task_runtime()
 		return true
 	if state == TASK_STATE_COMPLETED:
 		_release_robot_food_for_task(_active_task_id, "task_completed")
 		_invalidate_active_help_request("task_completed")
 		_end_current_episode(true)
+		_end_reciprocity_fulfillment_for_task(_active_task_id)
 		_clear_current_task_runtime()
 		return true
 	if state != TASK_STATE_IN_PROGRESS:
 		_release_robot_food_for_task(_active_task_id, "task_invalid_state")
 		_invalidate_active_help_request("task_invalid_state")
 		_end_current_episode(false, "task_invalid_state:" + state)
+		_end_reciprocity_fulfillment_for_task(_active_task_id)
 		_clear_current_task_runtime()
 		return true
 	var payload: Dictionary = task.get("payload", {})
@@ -392,6 +400,7 @@ func _sync_active_task_state() -> bool:
 		_release_robot_food_for_task(_active_task_id, "customer_missing")
 		_invalidate_active_help_request("customer_missing")
 		_end_current_episode(false, "customer_missing")
+		_end_reciprocity_fulfillment_for_task(_active_task_id)
 		_clear_current_task_runtime()
 		return true
 	return false
@@ -479,6 +488,7 @@ func _start_claimed_task(task: Dictionary) -> void:
 	if not _activate_task_context(task):
 		return
 	_idle_charge_cycle_complete = false
+	_try_activate_reciprocity_fulfillment_for_task(_active_task_id)
 	if not _episode_active:
 		var payload: Dictionary = task.get("payload", {})
 		var customer = _resolve_customer_from_payload(payload)
@@ -848,6 +858,7 @@ func _finish_active_task_if_needed() -> void:
 		return
 
 	_end_current_episode(true)
+	_end_reciprocity_fulfillment_for_task(_active_task_id)
 	_clear_current_task_runtime()
 
 func _clear_current_task_runtime() -> void:
@@ -873,6 +884,26 @@ func _clear_current_task_runtime() -> void:
 		_overload_handoff_declined_task_id = ""
 		_deadline_handoff_declined_task_id = ""
 		_inventory_full_handoff_declined_task_id = ""
+
+func _queue_reciprocity_fulfillment() -> void:
+	_reciprocity_fulfillment_pending = true
+
+func _try_activate_reciprocity_fulfillment_for_task(task_id: String) -> void:
+	if not _reciprocity_fulfillment_pending or task_id == "":
+		return
+	_reciprocity_fulfillment_pending = false
+	_reciprocity_fulfillment_active = true
+	_reciprocity_fulfillment_task_id = task_id
+
+func _end_reciprocity_fulfillment_for_task(task_id: String) -> void:
+	if task_id == "":
+		return
+	if _reciprocity_fulfillment_active and _reciprocity_fulfillment_task_id == task_id:
+		_reciprocity_fulfillment_active = false
+		_reciprocity_fulfillment_task_id = ""
+
+func _is_reciprocity_fulfillment_applied_to_current_task() -> bool:
+	return _reciprocity_fulfillment_active and _reciprocity_fulfillment_task_id != "" and _reciprocity_fulfillment_task_id == _active_task_id
 
 func _find_inventory_item_index_for_task(task_id: String, item_name: String, allow_reusable: bool) -> int:
 	if inventory == null:
@@ -1290,6 +1321,8 @@ func _update_battery_and_mode(dt: float) -> void:
 	var drain_rate := battery_drain_idle_per_sec
 	if moving:
 		drain_rate = battery_drain_move_per_sec
+		if _is_reciprocity_fulfillment_applied_to_current_task():
+			drain_rate *= RECIPROCITY_FULFILLMENT_MULTIPLIER
 
 	battery_level -= drain_rate * dt
 	# Charge whenever robot is inside recharge zone, even with an active task/recharge override.
@@ -1321,6 +1354,8 @@ func _update_agent_speed_by_battery_mode() -> void:
 		speed_scale = 0.8
 	elif _battery_mode == BATTERY_MODE_EMERGENCY:
 		speed_scale = 0.6
+	if _is_reciprocity_fulfillment_applied_to_current_task():
+		speed_scale *= RECIPROCITY_FULFILLMENT_MULTIPLIER
 	agent.max_speed = move_speed * speed_scale
 
 func _is_near_recharge_station() -> bool:
@@ -1467,6 +1502,7 @@ func _on_help_request_updated(request: Dictionary) -> void:
 
 func _apply_handoff_accept(request: Dictionary) -> void:
 	var payload: Dictionary = request.get("payload", {})
+	var strategy := str(request.get("strategy", ""))
 	var mode := str(payload.get("handoff_mode", "TAKEOVER_TASK"))
 	var task_id := str(payload.get("task_id", _active_task_id))
 	if task_id == "":
@@ -1516,10 +1552,14 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 	if task_id == _active_task_id:
 		var accepted_request_id := _active_help_request_id
 		_end_current_episode(false, "task_handoff_to_player")
+		_end_reciprocity_fulfillment_for_task(task_id)
 		_clear_current_task_runtime()
 		bt_runner.bb["planned_actions"] = []
 		_active_step_started = false
 		_active_help_request_id = accepted_request_id
+
+	if strategy == "reciprocity":
+		_queue_reciprocity_fulfillment()
 
 	set_waiting_for_help(false, "")
 	speak("Task handoff accepted. You take over this order.")
