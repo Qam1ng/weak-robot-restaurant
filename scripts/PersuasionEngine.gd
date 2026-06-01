@@ -79,7 +79,7 @@ static func render_template(request_type: String, strategy: String, context: Dic
 
 	match strategy:
 		STRATEGY_AUTHORITY:
-			return "Please take over the %s order now." % item
+			return "Take over the %s order now; you are needed on this task." % item
 		STRATEGY_SOCIAL_PROOF:
 			return "Please take over the %s order now so we can keep service moving." % item
 		STRATEGY_LIKING:
