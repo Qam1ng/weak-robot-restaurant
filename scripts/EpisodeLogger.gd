@@ -88,7 +88,7 @@ func log_event(event_type: String, data: Dictionary = {}) -> void:
 				_current_episode["outcome"]["help_item"] = data["item_given"]
 
 func log_position(pos: Vector2) -> void:
-	_ = pos
+	pass
 
 func end_episode(success: bool, failure_reason: String = "") -> Dictionary:
 	if not _episode_active:
@@ -100,7 +100,10 @@ func end_episode(success: bool, failure_reason: String = "") -> Dictionary:
 	_current_episode["timestamp_end"] = Time.get_datetime_string_from_system()
 	_current_episode["duration_ms"] = duration_ms
 	_current_episode["outcome"]["success"] = success
-	_current_episode["outcome"]["failure_reason"] = failure_reason if not success else ""
+	if success:
+		_current_episode["outcome"]["failure_reason"] = ""
+	else:
+		_current_episode["outcome"]["failure_reason"] = failure_reason
 	
 	if _should_write_local_files():
 		_save_json()

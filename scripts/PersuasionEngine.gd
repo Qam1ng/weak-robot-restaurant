@@ -44,15 +44,14 @@ static func assign_strategy_locally(request_type: String, context: Dictionary) -
 	}
 
 static func build_assignment_buckets(request_type: String, context: Dictionary) -> Dictionary:
-	_ = request_type
 	var robot: Dictionary = context.get("robot", {})
 	var player: Dictionary = context.get("player", {})
 	var env: Dictionary = context.get("environment", {})
 
-	var urgency_bucket := _urgency_bucket(float(env.get("urgency", 0.5)))
-	var busyness_bucket := _busyness_bucket(float(env.get("busyness", 1.0)))
-	var player_active_tasks_bucket := _player_active_tasks_bucket(int(player.get("active_tasks", 0)))
-	var battery_mode := str(robot.get("battery_mode", "normal")).strip_edges().to_lower()
+	var urgency_bucket: String = _urgency_bucket(float(env.get("urgency", 0.5)))
+	var busyness_bucket: String = _busyness_bucket(float(env.get("busyness", 1.0)))
+	var player_active_tasks_bucket: String = _player_active_tasks_bucket(int(player.get("active_tasks", 0)))
+	var battery_mode: String = str(robot.get("battery_mode", "normal")).strip_edges().to_lower()
 	if battery_mode == "":
 		battery_mode = "normal"
 
@@ -72,10 +71,7 @@ static func _assignment_key_from_buckets(buckets: Dictionary) -> String:
 	]
 
 static func render_template(request_type: String, strategy: String, context: Dictionary, escalation_count: int, payload: Dictionary) -> String:
-	_ = request_type
-	_ = context
-	_ = escalation_count
-	var item := str(payload.get("item_needed", "item"))
+	var item: String = str(payload.get("item_needed", "item"))
 
 	match strategy:
 		STRATEGY_AUTHORITY:
@@ -107,15 +103,15 @@ static func build_escalation(escalation_count: int) -> Dictionary:
 static func _weighted_choice_from_counts(counts: Dictionary) -> String:
 	_ensure_rng_seeded()
 	var total_weight := 0.0
-	var weights := {}
+	var weights: Dictionary = {}
 	for strategy in STRATEGIES:
-		var count := max(int(counts.get(strategy, 0)), 0)
-		var weight := 1.0 / float(count + 1)
+		var count: int = max(int(counts.get(strategy, 0)), 0)
+		var weight: float = 1.0 / float(count + 1)
 		weights[strategy] = weight
 		total_weight += weight
 	if total_weight <= 0.0:
 		return STRATEGY_AUTHORITY
-	var draw := _rng.randf() * total_weight
+	var draw: float = _rng.randf() * total_weight
 	var cumulative := 0.0
 	for strategy in STRATEGIES:
 		cumulative += float(weights.get(strategy, 0.0))

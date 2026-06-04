@@ -353,7 +353,7 @@ function buildDialoguePrompts(body) {
 function helpStrategyLabel(strategy) {
   switch (strategy) {
     case "authority":
-      return "authority — a persuasion framing based on expertise and trustworthiness, expressed as a direct task-oriented request.";
+      return "authority — a persuasion framing based on role-based coordination authority, expressed as a direct task-oriented request.";
     case "reciprocity":
       return "reciprocity — a persuasion framing based on returning help or favors, expressed by offering support in return for cooperation. For reciprocity, the promised payoff is real: if the player accepts, the robot will handle its next order faster. Reflect this promise naturally in the utterance.";
     case "liking":

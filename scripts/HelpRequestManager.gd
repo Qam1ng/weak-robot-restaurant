@@ -34,8 +34,7 @@ func reset_all() -> void:
 	_requests_by_id.clear()
 	_order.clear()
 	_next_id = 1
-	if PersuasionEngineScript.has_method("reset_assignment_state"):
-		PersuasionEngineScript.reset_assignment_state()
+	PersuasionEngineScript.reset_assignment_state()
 	_interaction_model = {
 		"total": 0,
 		"accepted": 0,
@@ -310,7 +309,7 @@ func _begin_strategy_assignment(request_id: String) -> void:
 		return
 	var request_type := str(req.get("type", TYPE_HANDOFF))
 	var context: Dictionary = req.get("context_snapshot", {})
-	var assignment := PersuasionEngineScript.assign_strategy_locally(request_type, context)
+	var assignment: Dictionary = PersuasionEngineScript.assign_strategy_locally(request_type, context)
 	_finalize_strategy_assignment(request_id, assignment)
 
 func _request_remote_strategy_assignment(req: Dictionary) -> void:
@@ -331,7 +330,7 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 	if err != OK:
 		if is_instance_valid(http):
 			http.queue_free()
-		var fallback := PersuasionEngineScript.assign_strategy_locally(
+		var fallback: Dictionary = PersuasionEngineScript.assign_strategy_locally(
 			str(req.get("type", TYPE_HANDOFF)),
 			req.get("context_snapshot", {})
 		)
@@ -344,21 +343,21 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 	if req.is_empty():
 		return
 	if code < 200 or code >= 300:
-		var fallback := PersuasionEngineScript.assign_strategy_locally(
+		var fallback: Dictionary = PersuasionEngineScript.assign_strategy_locally(
 			str(req.get("type", TYPE_HANDOFF)),
 			req.get("context_snapshot", {})
 		)
 		_finalize_strategy_assignment(request_id, fallback)
 		return
-	var top = JSON.parse_string(body.get_string_from_utf8())
+	var top: Variant = JSON.parse_string(body.get_string_from_utf8())
 	if not (top is Dictionary):
-		var fallback_parse := PersuasionEngineScript.assign_strategy_locally(
+		var fallback_parse: Dictionary = PersuasionEngineScript.assign_strategy_locally(
 			str(req.get("type", TYPE_HANDOFF)),
 			req.get("context_snapshot", {})
 		)
 		_finalize_strategy_assignment(request_id, fallback_parse)
 		return
-	var assignment := {
+	var assignment: Dictionary = {
 		"strategy": str(top.get("strategy", "")),
 		"method": str(top.get("assignment_method", "")),
 		"buckets": top.get("assignment_buckets", {})
@@ -625,8 +624,6 @@ func _build_system_notice(payload: Dictionary) -> String:
 			return "Battery critical. Delegation requested for %s." % item
 		"robot_over_threshold_post_take_order":
 			return "Task load threshold exceeded. Delegation requested for %s." % item
-		"inventory_full_blocked_pickup":
-			return "Inventory full. Delegation requested for %s." % item
 		"robot_stuck_or_pick_fail":
 			return "Pickup blocked. Delegation requested for %s." % item
 		_:

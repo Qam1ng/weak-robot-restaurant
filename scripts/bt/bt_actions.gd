@@ -196,7 +196,6 @@ class ActPickItem extends Core.Task:
 		if inventory.is_full():
 			if actor.has_method("_handle_pickup_inventory_full"):
 				actor.call("_handle_pickup_inventory_full", item_name)
-			actor.speak("Inventory full!")
 			return Core.Status.FAILURE
 
 		var item_node = _find_item_in_scene(actor, item_name)
