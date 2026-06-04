@@ -94,7 +94,7 @@ const DIALOGUE_PANEL_WIDTH := 340.0
 const TUTORIAL_PANEL_WIDTH := 620.0
 const TUTORIAL_PANEL_MIN_HEIGHT := 420.0
 const TUTORIAL_TOGGLE_SIZE := 44.0
-const TUTORIAL_TEXT := "[b]Controls[/b]\nWASD / Arrow Keys: move\nE: interact (take orders, open the cabinet, deliver items)\n\n[b]Goal[/b]\nServe customers' drinks before the deadline\nRespond to robot handoff popups\n\n[b]Robot Handoffs[/b]\nThe robot may hand off tasks when it is overloaded, running out of time, charging, stuck, or carrying a full backpack.\n\n[b]Player Reminders[/b]\nCheck your assigned tasks\nNotice how the robot asks for help"
+const TUTORIAL_TEXT := "[b]Controls[/b]\nWASD / Arrow Keys: move\nE: interact (take orders, pick up items, deliver items)\n\n[b]Goal[/b]\nServe customers' drinks before the deadline\nRespond to robot handoff popups\n\n[b]Robot Handoffs[/b]\nThe robot may hand off tasks when it is overloaded, running out of time, charging, stuck, or carrying a full backpack.\n\n[b]Player Reminders[/b]\nCheck your assigned tasks\nNotice how the robot asks for help"
 var _customer_tab: String = CUSTOMER_TAB_LIVE
 var _score: int = 0
 var _success_count: int = 0
@@ -1627,7 +1627,7 @@ func _show_tipi_result() -> void:
 			logger.log_participant_profile(profile.get_profile())
 
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 24)
-	survey_question.text = "Your responses have been recorded.\nThey will be taken into account in the robot delegation."
+	survey_question.text = "Your responses have been recorded."
 	if survey_question_title:
 		survey_question_title.show()
 		survey_question_title.text = "[b]Question Finished[/b]"
