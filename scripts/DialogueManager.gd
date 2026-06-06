@@ -40,41 +40,30 @@ func realize_help_utterance(request: Dictionary) -> void:
 		fallback = "Can you help now?"
 
 	var payload: Dictionary = request.get("payload", {})
-	var context: Dictionary = request.get("context_snapshot", {})
-	var personality_hint := _format_personality_hint(context.get("personality", {}))
-	var request_type := str(request.get("type", "HANDOFF"))
-	var urgency := _help_urgency_bucket(context)
-	var escalation := int(request.get("escalation_count", 0))
 	var item := str(payload.get("item_needed", "item"))
+	var escalation: Dictionary = request.get("escalation", {})
+	if escalation.is_empty():
+		escalation = {}
 
 	if _use_backend_api():
-		_request_dialogue_via_backend(request_id, {
+		var backend_body := {
 			"kind": "help_utterance",
 			"request_id": request_id,
 			"fallback": fallback,
 			"model": _llm_model(),
 			"temperature": _llm_temperature(),
 			"strategy": strategy,
-			"urgency": urgency,
-			"escalation": escalation,
-			"personality_hint": personality_hint,
-			"item": item,
-			"request_type": request_type
-		}, false, fallback)
+			"item": item
+		}
+		if not escalation.is_empty():
+			backend_body["escalation"] = escalation
+		_request_dialogue_via_backend(request_id, backend_body, false, fallback)
 		return
 
-	var system_prompt := "Write one short in-game delegation line from robot to player. Keep it natural, concrete, polite, and under 18 words. No quotes. No options."
-	var user_prompt := "request_type=%s strategy=%s urgency=%s escalation=%d personality=%s item=%s fallback=%s" % [
-		request_type,
-		strategy,
-		urgency,
-		escalation,
-		personality_hint,
-		item,
-		fallback
-	]
+	var system_prompt := _help_utterance_system_prompt()
+	var user_prompt := _help_utterance_user_prompt(strategy, item, fallback, escalation)
 
-	var body := {
+	var local_body := {
 		"model": _llm_model(),
 		"messages": [
 			{"role": "system", "content": system_prompt},
@@ -91,7 +80,7 @@ func realize_help_utterance(request: Dictionary) -> void:
 	var http := HTTPRequest.new()
 	add_child(http)
 	http.request_completed.connect(_on_request_completed.bind(http, request_id, fallback))
-	var err := http.request(OPENAI_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(body))
+	var err := http.request(OPENAI_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(local_body))
 	if err != OK:
 		http.queue_free()
 		utterance_generated.emit(request_id, "", {
@@ -358,23 +347,33 @@ func _llm_temperature() -> float:
 		return float(exp.get_llm_temperature())
 	return 0.4
 
-func _format_personality_hint(personality: Dictionary) -> String:
-	var tipi_scores: Dictionary = personality.get("tipi_scores", {})
-	if tipi_scores.is_empty():
-		return ""
-	return "O=%.1f C=%.1f E=%.1f A=%.1f N=%.1f" % [
-		float(tipi_scores.get("O", 4.0)),
-		float(tipi_scores.get("C", 4.0)),
-		float(tipi_scores.get("E", 4.0)),
-		float(tipi_scores.get("A", 4.0)),
-		float(tipi_scores.get("N", 4.0)),
-	]
+func _help_utterance_system_prompt() -> String:
+	return "Write one short in-game delegation line from robot to player. Keep it natural, concrete. No quotes. No options. The relevant fields are defined below:\nstrategy: one persuasion framing drawn from our six-strategy set, adapted from Cialdini's six principles of persuasion.\nitem: the handoff item; the player is being asked to take it over, not give it to the robot.\nfallback: the base template utterance associated with the assigned strategy. Rewrite it lightly to sound natural, while preserving the same strategy and core intent.\nescalation: the follow-up stage of the same request, represented by escalation.count and escalation.prefix. escalation.count indicates how many times the request has already been followed up, and higher escalation should sound more insistent. escalation.prefix provides the stage-specific wording, may be lightly rewritten, and should be prepended to the utterance as a prefix."
 
-func _help_urgency_bucket(context: Dictionary) -> String:
-	var env: Dictionary = context.get("environment", {})
-	var urgency := float(env.get("urgency", 0.5))
-	if urgency >= 0.75:
-		return "high"
-	if urgency <= 0.35:
-		return "low"
-	return "medium"
+func _help_utterance_user_prompt(strategy: String, item: String, fallback: String, escalation: Dictionary) -> String:
+	var lines := [
+		"strategy: %s" % _help_strategy_label(strategy),
+		"item: %s" % item,
+		"fallback: %s" % fallback
+	]
+	if not escalation.is_empty():
+		lines.append("escalation.count: %d" % int(escalation.get("count", 0)))
+		lines.append("escalation.prefix: %s" % str(escalation.get("prefix", "")))
+	return "\n".join(lines)
+
+func _help_strategy_label(strategy: String) -> String:
+	match strategy:
+		"authority":
+			return "authority — a persuasion framing based on role-based coordination authority, expressed as a direct task-oriented request."
+		"reciprocity":
+			return "reciprocity — a persuasion framing based on returning help or favors, expressed by offering support in return for cooperation. For reciprocity, the promised payoff is real: if the player accepts, the robot will handle its next order faster. Reflect this promise naturally in the utterance."
+		"liking":
+			return "liking — a persuasion framing based on warmth and positive regard, expressed in an appreciative and friendly tone."
+		"commitment":
+			return "commitment — a persuasion framing based on consistency with prior actions, expressed by referring to earlier cooperation."
+		"social_proof":
+			return "social_proof — a persuasion framing based on shared group behavior, expressed by emphasizing ongoing team coordination."
+		"scarcity":
+			return "scarcity — a persuasion framing based on limited opportunity or time, expressed by emphasizing the risk of missing the service window."
+		_:
+			return strategy

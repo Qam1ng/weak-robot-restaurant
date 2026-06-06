@@ -1,6 +1,7 @@
 extends CanvasLayer
 
 signal kitchen_pick_selected(item_name: String)
+signal inventory_delete_requested(item_uid: int)
 
 const TrialCustomerScene = preload("res://scenes/Customer.tscn")
 
@@ -27,6 +28,8 @@ var robot_items_box: VBoxContainer
 var robot_tasks_box: VBoxContainer
 var player_items_box: VBoxContainer
 var player_tasks_box: VBoxContainer
+var inventory_portal_panel: PanelContainer
+var inventory_portal_list: VBoxContainer
 var customer_tab_buttons: HBoxContainer
 var customer_live_btn: Button
 var customer_history_btn: Button
@@ -94,7 +97,7 @@ const DIALOGUE_PANEL_WIDTH := 340.0
 const TUTORIAL_PANEL_WIDTH := 620.0
 const TUTORIAL_PANEL_MIN_HEIGHT := 420.0
 const TUTORIAL_TOGGLE_SIZE := 44.0
-const TUTORIAL_TEXT := "[b]Controls[/b]\nWASD / Arrow Keys: move\nE: interact (take orders, open the cabinet, deliver items)\n\n[b]Goal[/b]\nServe customers' drinks before the deadline\nRespond to robot handoff popups\n\n[b]Robot Handoffs[/b]\nThe robot may hand off tasks when it is overloaded, running out of time, charging, stuck, or carrying a full backpack.\n\n[b]Player Reminders[/b]\nCheck your assigned tasks\nNotice how the robot asks for help"
+const TUTORIAL_TEXT := "[b]Controls[/b]\nWASD / Arrow Keys: move\nE: interact (take orders, pick up items, deliver items)\nI: inventory / delete items\n\n[b]Goal[/b]\nServe customers' drinks before the deadline\nRespond to robot handoff popups\n\n[b]Robot Handoffs[/b]\nThe robot may hand off tasks when it is overloaded, running out of time, charging, or stuck.\n\n[b]Player Reminders[/b]\nCheck your assigned tasks\nNotice how the robot asks for help"
 var _customer_tab: String = CUSTOMER_TAB_LIVE
 var _score: int = 0
 var _success_count: int = 0
@@ -156,6 +159,7 @@ func _ready() -> void:
 	survey_confirm.pressed.connect(_finish_survey_and_start)
 
 	_setup_inventory_ui()
+	_setup_inventory_portal_ui()
 	_setup_dialogue_feed_ui()
 	_setup_customer_orders_ui()
 	_setup_player_dialogue_overlay_ui()
@@ -322,6 +326,47 @@ func _setup_inventory_ui() -> void:
 	var base_panel_w: float = maxf(measured_panel_w, DIALOGUE_PANEL_WIDTH)
 	_left_panel_width = maxf(200.0, base_panel_w - SYSTEM_PANEL_WIDTH_REDUCTION)
 	inventory_panel.custom_minimum_size = Vector2(_left_panel_width, 0.0)
+
+func _setup_inventory_portal_ui() -> void:
+	inventory_portal_panel = PanelContainer.new()
+	inventory_portal_panel.name = "InventoryPortalPanel"
+	inventory_portal_panel.visible = false
+	add_child(inventory_portal_panel)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.05, 0.08, 0.94)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = Color(0.38, 0.82, 0.92, 1.0)
+	style.corner_radius_top_left = 12
+	style.corner_radius_top_right = 12
+	style.corner_radius_bottom_left = 12
+	style.corner_radius_bottom_right = 12
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 14
+	style.content_margin_bottom = 14
+	inventory_portal_panel.add_theme_stylebox_override("panel", style)
+
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", 10)
+	inventory_portal_panel.add_child(root)
+
+	var title := Label.new()
+	title.text = "Inventory Portal"
+	title.add_theme_color_override("font_color", Color(0.90, 0.97, 1.0, 1.0))
+	root.add_child(title)
+
+	var hint := Label.new()
+	hint.text = "Press I or Esc to close."
+	hint.add_theme_color_override("font_color", Color(0.75, 0.83, 0.90, 0.95))
+	root.add_child(hint)
+
+	inventory_portal_list = VBoxContainer.new()
+	inventory_portal_list.add_theme_constant_override("separation", 6)
+	root.add_child(inventory_portal_list)
 
 func _setup_dialogue_feed_ui() -> void:
 	dialogue_panel = PanelContainer.new()
@@ -758,6 +803,88 @@ func _on_player_inventory_changed(items: Array) -> void:
 			var n = item.get("name", "Unknown")
 			l.text = "[%d] %s" % [i + 1, n]
 			player_items_box.add_child(l)
+	_refresh_inventory_portal(items)
+
+func _refresh_inventory_portal(items: Array) -> void:
+	if inventory_portal_list == null:
+		return
+	_clear_dynamic_children(inventory_portal_list)
+	if items.is_empty():
+		var empty := Label.new()
+		empty.text = "No items in inventory."
+		empty.add_theme_color_override("font_color", Color(0.78, 0.84, 0.90, 0.9))
+		inventory_portal_list.add_child(empty)
+		return
+	for raw_item in items:
+		var item: Dictionary = raw_item
+		var row := HBoxContainer.new()
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_theme_constant_override("separation", 4)
+		var label := Label.new()
+		label.text = str(item.get("name", "Unknown")).capitalize()
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(label)
+		var delete_btn := Button.new()
+		delete_btn.text = "Delete"
+		delete_btn.custom_minimum_size = Vector2(44.0, 0.0)
+		var delete_style := StyleBoxFlat.new()
+		delete_style.bg_color = Color(0.70, 0.18, 0.18, 1.0)
+		delete_style.corner_radius_top_left = 6
+		delete_style.corner_radius_top_right = 6
+		delete_style.corner_radius_bottom_left = 6
+		delete_style.corner_radius_bottom_right = 6
+		delete_style.content_margin_left = 5
+		delete_style.content_margin_right = 5
+		delete_style.content_margin_top = 2
+		delete_style.content_margin_bottom = 2
+		var delete_hover := delete_style.duplicate()
+		delete_hover.bg_color = Color(0.82, 0.24, 0.24, 1.0)
+		var delete_pressed := delete_style.duplicate()
+		delete_pressed.bg_color = Color(0.55, 0.12, 0.12, 1.0)
+		delete_btn.add_theme_stylebox_override("normal", delete_style)
+		delete_btn.add_theme_stylebox_override("hover", delete_hover)
+		delete_btn.add_theme_stylebox_override("pressed", delete_pressed)
+		delete_btn.add_theme_color_override("font_color", Color(1.0, 0.96, 0.96, 1.0))
+		delete_btn.pressed.connect(_on_inventory_portal_delete_pressed.bind(int(item.get("uid", 0))), CONNECT_DEFERRED)
+		row.add_child(delete_btn)
+		inventory_portal_list.add_child(row)
+
+func _on_inventory_portal_delete_pressed(item_uid: int) -> void:
+	if item_uid <= 0:
+		return
+	inventory_delete_requested.emit(item_uid)
+
+func toggle_inventory_portal() -> void:
+	if inventory_portal_panel == null:
+		return
+	if inventory_portal_panel.visible:
+		hide_inventory_portal()
+	else:
+		show_inventory_portal()
+
+func show_inventory_portal() -> void:
+	if inventory_portal_panel == null:
+		return
+	inventory_portal_panel.visible = true
+	var players := get_tree().get_nodes_in_group("player")
+	if not players.is_empty():
+		var player = players[0]
+		var inv = null
+		if "inventory" in player and player.inventory != null:
+			inv = player.inventory
+		else:
+			inv = player.get_node_or_null("Inventory")
+		if inv != null:
+			_refresh_inventory_portal(inv.items)
+	_update_gameplay_panel_layout()
+
+func hide_inventory_portal() -> void:
+	if inventory_portal_panel == null:
+		return
+	inventory_portal_panel.visible = false
+
+func is_inventory_portal_visible() -> bool:
+	return inventory_portal_panel != null and inventory_portal_panel.visible
 
 func _process(_dt: float) -> void:
 	_update_battery_label()
@@ -831,6 +958,26 @@ func _update_gameplay_panel_layout() -> void:
 		tutorial_panel.custom_minimum_size = Vector2(TUTORIAL_PANEL_WIDTH, TUTORIAL_PANEL_MIN_HEIGHT)
 		tutorial_panel.size = tutorial_panel.custom_minimum_size
 		tutorial_panel.position = Vector2((view_size.x - tutorial_panel.size.x) * 0.5, maxf(56.0, (view_size.y - tutorial_panel.size.y) * 0.5))
+	if inventory_portal_panel:
+		var portal_size := inventory_portal_panel.get_combined_minimum_size()
+		portal_size.x = maxf(192.0, portal_size.x)
+		portal_size.y = maxf(160.0, portal_size.y)
+		inventory_portal_panel.custom_minimum_size = portal_size
+		inventory_portal_panel.size = portal_size
+		var portal_pos := Vector2(
+			(view_size.x - portal_size.x) * 0.5,
+			maxf(72.0, gameplay_top_y + 40.0)
+		)
+		var players := get_tree().get_nodes_in_group("player")
+		if not players.is_empty() and players[0] is Node2D:
+			var player_screen := _world_to_screen((players[0] as Node2D).global_position + Vector2(0.0, -118.0))
+			portal_pos = Vector2(
+				player_screen.x - portal_size.x * 0.5,
+				player_screen.y - portal_size.y - 14.0
+			)
+		portal_pos.x = clampf(portal_pos.x, 12.0, maxf(12.0, view_size.x - portal_size.x - 12.0))
+		portal_pos.y = clampf(portal_pos.y, 12.0, maxf(12.0, view_size.y - portal_size.y - 12.0))
+		inventory_portal_panel.position = portal_pos
 	if tutorial_toggle_button:
 		tutorial_toggle_button.size = Vector2(TUTORIAL_TOGGLE_SIZE, TUTORIAL_TOGGLE_SIZE)
 		var panel_size := inventory_panel.size
@@ -1117,7 +1264,7 @@ func _clear_dynamic_children(container: Node) -> void:
 		return
 	for child in container.get_children():
 		container.remove_child(child)
-		child.free()
+		child.queue_free()
 
 func shutdown_immediately() -> void:
 	_help_prompt_cards.clear()
@@ -1417,7 +1564,7 @@ func show_kitchen_pick_popup(options: Array[String], title: String = "Kitchen Pi
 		_kitchen_pick_options.append(str(options[i]))
 	_show_player_dialogue_prompt(
 		title,
-		"Take the item you need.\nTap an option to add +1.\nPress E to close.",
+		"Tap an item to add +1 to your inventory.\nPress E, I, or Esc, or leave the kitchen to close.",
 		[
 			_kitchen_pick_options[0].capitalize(),
 			_kitchen_pick_options[1].capitalize(),
@@ -1627,7 +1774,7 @@ func _show_tipi_result() -> void:
 			logger.log_participant_profile(profile.get_profile())
 
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 24)
-	survey_question.text = "Your responses have been recorded.\nThey will be taken into account in the robot delegation."
+	survey_question.text = "Your responses have been recorded."
 	if survey_question_title:
 		survey_question_title.show()
 		survey_question_title.text = "[b]Question Finished[/b]"

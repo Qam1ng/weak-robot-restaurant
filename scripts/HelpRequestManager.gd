@@ -34,8 +34,7 @@ func reset_all() -> void:
 	_requests_by_id.clear()
 	_order.clear()
 	_next_id = 1
-	if PersuasionEngineScript.has_method("reset_assignment_state"):
-		PersuasionEngineScript.reset_assignment_state()
+	PersuasionEngineScript.reset_assignment_state()
 	_interaction_model = {
 		"total": 0,
 		"accepted": 0,
@@ -96,6 +95,7 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"cooldown_ms": cooldown_ms,
 		"escalation_count": 0,
 		"max_escalation": max_escalation,
+		"escalation": {},
 		"urgency": urgency,
 		"final_response": "",
 		"resolution_path": "",
@@ -213,6 +213,11 @@ func respond(request_id: String, response: String) -> Dictionary:
 			else:
 				req["status"] = STATUS_COOLDOWN
 				req["cooldown_until_ms"] = now_ms + int(req.get("cooldown_ms", 4000))
+				_refresh_request_surface(req)
+				if _should_request_help_utterance(req):
+					req["utterance_pending"] = true
+				else:
+					req["utterance_pending"] = false
 		_:
 			return _copy(req)
 
@@ -221,6 +226,8 @@ func respond(request_id: String, response: String) -> Dictionary:
 	var copied := _copy(req)
 	print("[HelpRequest] Response ", response, " -> ", request_id, " status=", copied.get("status", ""))
 	_log_help_event("responded", req, {"response": response})
+	if response == RESPONSE_LATER and bool(req.get("utterance_pending", false)):
+		_request_utterance_realization(req)
 	request_updated.emit(copied)
 	if str(req.get("status", "")) == STATUS_RESOLVED:
 		_log_help_event("resolved", req)
@@ -302,7 +309,7 @@ func _begin_strategy_assignment(request_id: String) -> void:
 		return
 	var request_type := str(req.get("type", TYPE_HANDOFF))
 	var context: Dictionary = req.get("context_snapshot", {})
-	var assignment := PersuasionEngineScript.assign_strategy_locally(request_type, context)
+	var assignment: Dictionary = PersuasionEngineScript.assign_strategy_locally(request_type, context)
 	_finalize_strategy_assignment(request_id, assignment)
 
 func _request_remote_strategy_assignment(req: Dictionary) -> void:
@@ -323,7 +330,7 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 	if err != OK:
 		if is_instance_valid(http):
 			http.queue_free()
-		var fallback := PersuasionEngineScript.assign_strategy_locally(
+		var fallback: Dictionary = PersuasionEngineScript.assign_strategy_locally(
 			str(req.get("type", TYPE_HANDOFF)),
 			req.get("context_snapshot", {})
 		)
@@ -336,21 +343,21 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 	if req.is_empty():
 		return
 	if code < 200 or code >= 300:
-		var fallback := PersuasionEngineScript.assign_strategy_locally(
+		var fallback: Dictionary = PersuasionEngineScript.assign_strategy_locally(
 			str(req.get("type", TYPE_HANDOFF)),
 			req.get("context_snapshot", {})
 		)
 		_finalize_strategy_assignment(request_id, fallback)
 		return
-	var top = JSON.parse_string(body.get_string_from_utf8())
+	var top: Variant = JSON.parse_string(body.get_string_from_utf8())
 	if not (top is Dictionary):
-		var fallback_parse := PersuasionEngineScript.assign_strategy_locally(
+		var fallback_parse: Dictionary = PersuasionEngineScript.assign_strategy_locally(
 			str(req.get("type", TYPE_HANDOFF)),
 			req.get("context_snapshot", {})
 		)
 		_finalize_strategy_assignment(request_id, fallback_parse)
 		return
-	var assignment := {
+	var assignment: Dictionary = {
 		"strategy": str(top.get("strategy", "")),
 		"method": str(top.get("assignment_method", "")),
 		"buckets": top.get("assignment_buckets", {})
@@ -378,14 +385,7 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 	req["strategy"] = strategy
 	req["assignment_method"] = method
 	req["assignment_buckets"] = buckets
-	req["utterance"] = PersuasionEngineScript.render_template(
-		str(req.get("type", TYPE_HANDOFF)),
-		strategy,
-		req.get("context_snapshot", {}),
-		int(req.get("escalation_count", 0)),
-		req.get("payload", {})
-	)
-	req["utterance_source"] = "template"
+	_refresh_request_surface(req)
 	req["assignment_pending"] = false
 	req["updated_at_ms"] = Time.get_ticks_msec()
 	if _should_request_help_utterance(req):
@@ -399,6 +399,17 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 		_request_utterance_realization(req)
 	var copied := _copy(req)
 	request_created.emit(copied)
+
+func _refresh_request_surface(req: Dictionary) -> void:
+	req["utterance"] = PersuasionEngineScript.render_template(
+		str(req.get("type", TYPE_HANDOFF)),
+		str(req.get("strategy", PersuasionEngineScript.STRATEGY_AUTHORITY)),
+		req.get("context_snapshot", {}),
+		int(req.get("escalation_count", 0)),
+		req.get("payload", {})
+	)
+	req["escalation"] = PersuasionEngineScript.build_escalation(int(req.get("escalation_count", 0)))
+	req["utterance_source"] = "template"
 
 func _should_use_backend_assignment() -> bool:
 	return OS.has_feature("web")
@@ -613,8 +624,6 @@ func _build_system_notice(payload: Dictionary) -> String:
 			return "Battery critical. Delegation requested for %s." % item
 		"robot_over_threshold_post_take_order":
 			return "Task load threshold exceeded. Delegation requested for %s." % item
-		"inventory_full_blocked_pickup":
-			return "Inventory full. Delegation requested for %s." % item
 		"robot_stuck_or_pick_fail":
 			return "Pickup blocked. Delegation requested for %s." % item
 		_:

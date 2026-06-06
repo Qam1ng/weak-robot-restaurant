@@ -44,15 +44,14 @@ static func assign_strategy_locally(request_type: String, context: Dictionary) -
 	}
 
 static func build_assignment_buckets(request_type: String, context: Dictionary) -> Dictionary:
-	_ = request_type
 	var robot: Dictionary = context.get("robot", {})
 	var player: Dictionary = context.get("player", {})
 	var env: Dictionary = context.get("environment", {})
 
-	var urgency_bucket := _urgency_bucket(float(env.get("urgency", 0.5)))
-	var busyness_bucket := _busyness_bucket(float(env.get("busyness", 1.0)))
-	var player_active_tasks_bucket := _player_active_tasks_bucket(int(player.get("active_tasks", 0)))
-	var battery_mode := str(robot.get("battery_mode", "normal")).strip_edges().to_lower()
+	var urgency_bucket: String = _urgency_bucket(float(env.get("urgency", 0.5)))
+	var busyness_bucket: String = _busyness_bucket(float(env.get("busyness", 1.0)))
+	var player_active_tasks_bucket: String = _player_active_tasks_bucket(int(player.get("active_tasks", 0)))
+	var battery_mode: String = str(robot.get("battery_mode", "normal")).strip_edges().to_lower()
 	if battery_mode == "":
 		battery_mode = "normal"
 
@@ -72,43 +71,47 @@ static func _assignment_key_from_buckets(buckets: Dictionary) -> String:
 	]
 
 static func render_template(request_type: String, strategy: String, context: Dictionary, escalation_count: int, payload: Dictionary) -> String:
-	var env: Dictionary = context.get("environment", {})
-	var urgency := float(env.get("urgency", 0.5))
-	var urgency_level := _urgency_bucket(urgency)
-	var item := str(payload.get("item_needed", "item"))
-
-	var intro := ""
-	if escalation_count >= 2:
-		intro = "This is my final request. "
-	elif escalation_count == 1:
-		intro = "Following up on my previous request. "
+	var item: String = str(payload.get("item_needed", "item"))
 
 	match strategy:
 		STRATEGY_AUTHORITY:
-			return intro + ("Please hand off %s right away." % item if urgency_level == "high" else "Please hand off %s now." % item)
+			return "Take over the %s order now; you are needed on this task." % item
 		STRATEGY_SOCIAL_PROOF:
-			return intro + "Please hand off %s now so we can keep service moving." % item
+			return "Please take over the %s order now so we can keep service moving." % item
 		STRATEGY_LIKING:
-			return intro + "Could you please hand off %s? Your help really keeps things moving." % item
+			return "Could you please take over the %s order? Your help really keeps things moving." % item
 		STRATEGY_RECIPROCITY:
-			return intro + "Please hand over %s now, and I can clear this table for you next." % item
+			return "Please take over the %s order now, and I'll move faster on the next order." % item
 		STRATEGY_COMMITMENT:
-			return intro + "You have handled these handoffs well before; could you take %s again?" % item
+			return "You have handled these handoffs well before; could you take over the %s order again?" % item
 		_:
-			return intro + "Please hand off %s now, or this order may miss the service window." % item
+			return "Please take over the %s order now, or this order may miss the service window." % item
+
+static func build_escalation(escalation_count: int) -> Dictionary:
+	if escalation_count <= 0:
+		return {}
+	if escalation_count >= 2:
+		return {
+			"count": escalation_count,
+			"prefix": "This is my final request."
+		}
+	return {
+		"count": escalation_count,
+		"prefix": "Following up on my previous request."
+	}
 
 static func _weighted_choice_from_counts(counts: Dictionary) -> String:
 	_ensure_rng_seeded()
 	var total_weight := 0.0
-	var weights := {}
+	var weights: Dictionary = {}
 	for strategy in STRATEGIES:
-		var count := max(int(counts.get(strategy, 0)), 0)
-		var weight := 1.0 / float(count + 1)
+		var count: int = max(int(counts.get(strategy, 0)), 0)
+		var weight: float = 1.0 / float(count + 1)
 		weights[strategy] = weight
 		total_weight += weight
 	if total_weight <= 0.0:
 		return STRATEGY_AUTHORITY
-	var draw := _rng.randf() * total_weight
+	var draw: float = _rng.randf() * total_weight
 	var cumulative := 0.0
 	for strategy in STRATEGIES:
 		cumulative += float(weights.get(strategy, 0.0))

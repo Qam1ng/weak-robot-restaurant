@@ -108,6 +108,21 @@ func _update_animation(input_dir: Vector2) -> void:
 		anim.play(anim_name)
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey:
+		var key_event := event as InputEventKey
+		var hud := _get_hud()
+		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_ESCAPE:
+			if hud and hud.has_method("is_kitchen_pick_popup_visible") and bool(hud.call("is_kitchen_pick_popup_visible")):
+				hud.call("hide_kitchen_pick_popup")
+				_active_pick_station_kind = ""
+				return
+			if hud and hud.has_method("is_inventory_portal_visible") and bool(hud.call("is_inventory_portal_visible")):
+				hud.call("hide_inventory_portal")
+				return
+		if key_event.pressed and not key_event.echo and key_event.keycode == KEY_I:
+			if hud and hud.has_method("toggle_inventory_portal"):
+				hud.call("toggle_inventory_portal")
+			return
 	if event.is_action_pressed("interact"):
 		if _handle_kitchen_pick_interact():
 			return
@@ -166,6 +181,8 @@ func _connect_hud_signals() -> void:
 		return
 	if hud.has_signal("kitchen_pick_selected") and not hud.kitchen_pick_selected.is_connected(_on_kitchen_pick_selected):
 		hud.kitchen_pick_selected.connect(_on_kitchen_pick_selected)
+	if hud.has_signal("inventory_delete_requested") and not hud.inventory_delete_requested.is_connected(_on_inventory_delete_requested):
+		hud.inventory_delete_requested.connect(_on_inventory_delete_requested)
 
 func _get_hud() -> Node:
 	var huds := get_tree().get_nodes_in_group("hud")
@@ -183,15 +200,23 @@ func _on_kitchen_pick_selected(item_name: String) -> void:
 			hud.call("show_kitchen_pick_feedback", wanted, false)
 		_notify_player("Bag full. Cannot pick more.")
 		return
-	if not _complete_one_matching_pickup_step(wanted, _active_pick_station_kind):
-		if hud and hud.has_method("show_kitchen_pick_feedback"):
-			hud.call("show_kitchen_pick_feedback", wanted, false)
-		_notify_player("No matching pickup task for " + wanted.capitalize() + ".")
-		return
+	_complete_one_matching_pickup_step(wanted, _active_pick_station_kind)
 	inventory.add_item(wanted, null, Rect2i(), _player_item_meta(wanted))
 	if hud and hud.has_method("show_kitchen_pick_feedback"):
 		hud.call("show_kitchen_pick_feedback", wanted, true)
 	_notify_player("Picked: " + wanted.capitalize())
+
+func _on_inventory_delete_requested(item_uid: int) -> void:
+	if inventory == null or item_uid <= 0:
+		return
+	for i in range(inventory.items.size()):
+		var entry: Dictionary = inventory.items[i]
+		if int(entry.get("uid", 0)) != item_uid:
+			continue
+		var removed := inventory.remove_at(i)
+		var item_name := str(removed.get("name", "item")).capitalize()
+		_notify_player("Deleted: " + item_name)
+		return
 
 func _complete_one_matching_pickup_step(item_name: String, station_kind: String) -> bool:
 	var board = get_node_or_null("/root/TaskBoard")
