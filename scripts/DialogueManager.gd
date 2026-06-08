@@ -35,10 +35,6 @@ func realize_help_utterance(request: Dictionary) -> void:
 		return
 
 	var strategy := str(request.get("strategy", ""))
-	var fallback := str(request.get("utterance", ""))
-	if fallback == "":
-		fallback = "Can you help now?"
-
 	var payload: Dictionary = request.get("payload", {})
 	var item := str(payload.get("item_needed", "item"))
 	var escalation: Dictionary = request.get("escalation", {})
@@ -49,7 +45,6 @@ func realize_help_utterance(request: Dictionary) -> void:
 		var backend_body := {
 			"kind": "help_utterance",
 			"request_id": request_id,
-			"fallback": fallback,
 			"model": _llm_model(),
 			"temperature": _llm_temperature(),
 			"strategy": strategy,
@@ -57,11 +52,11 @@ func realize_help_utterance(request: Dictionary) -> void:
 		}
 		if not escalation.is_empty():
 			backend_body["escalation"] = escalation
-		_request_dialogue_via_backend(request_id, backend_body, false, fallback)
+		_request_dialogue_via_backend(request_id, backend_body, false, "")
 		return
 
 	var system_prompt := _help_utterance_system_prompt()
-	var user_prompt := _help_utterance_user_prompt(strategy, item, fallback, escalation)
+	var user_prompt := _help_utterance_user_prompt(strategy, item, escalation)
 
 	var local_body := {
 		"model": _llm_model(),
@@ -79,14 +74,13 @@ func realize_help_utterance(request: Dictionary) -> void:
 
 	var http := HTTPRequest.new()
 	add_child(http)
-	http.request_completed.connect(_on_request_completed.bind(http, request_id, fallback))
+	http.request_completed.connect(_on_request_completed.bind(http, request_id, ""))
 	var err := http.request(OPENAI_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(local_body))
 	if err != OK:
 		http.queue_free()
 		utterance_generated.emit(request_id, "", {
-			"provider": "fallback",
-			"status": "request_error",
-			"fallback": fallback
+			"provider": "llm",
+			"status": "request_error"
 		})
 
 func realize_directed_utterance(request: Dictionary) -> void:
@@ -172,28 +166,25 @@ func _on_request_completed(_result: int, code: int, _headers: PackedStringArray,
 
 	if code < 200 or code >= 300:
 		utterance_generated.emit(request_id, "", {
-			"provider": "fallback",
+			"provider": "llm",
 			"status": "http_error",
-			"http_code": code,
-			"fallback": fallback
+			"http_code": code
 		})
 		return
 
 	var top = JSON.parse_string(body.get_string_from_utf8())
 	if not (top is Dictionary):
 		utterance_generated.emit(request_id, "", {
-			"provider": "fallback",
-			"status": "parse_error",
-			"fallback": fallback
+			"provider": "llm",
+			"status": "parse_error"
 		})
 		return
 
 	var choices: Array = top.get("choices", [])
 	if choices.is_empty():
 		utterance_generated.emit(request_id, "", {
-			"provider": "fallback",
-			"status": "empty_choices",
-			"fallback": fallback
+			"provider": "llm",
+			"status": "empty_choices"
 		})
 		return
 
@@ -202,9 +193,8 @@ func _on_request_completed(_result: int, code: int, _headers: PackedStringArray,
 	content = content.replace("\n", " ")
 	if content == "":
 		utterance_generated.emit(request_id, "", {
-			"provider": "fallback",
-			"status": "empty_content",
-			"fallback": fallback
+			"provider": "llm",
+			"status": "empty_content"
 		})
 		return
 
@@ -348,13 +338,12 @@ func _llm_temperature() -> float:
 	return 0.4
 
 func _help_utterance_system_prompt() -> String:
-	return "Write one short in-game delegation line from robot to player. Keep it natural, concrete. No quotes. No options. The relevant fields are defined below:\nstrategy: one persuasion framing drawn from our six-strategy set, adapted from Cialdini's six principles of persuasion.\nitem: the handoff item; the player is being asked to take it over, not give it to the robot.\nfallback: the base template utterance associated with the assigned strategy. Rewrite it lightly to sound natural, while preserving the same strategy and core intent.\nescalation: the follow-up stage of the same request, represented by escalation.count and escalation.prefix. escalation.count indicates how many times the request has already been followed up, and higher escalation should sound more insistent. escalation.prefix provides the stage-specific wording, may be lightly rewritten, and should be prepended to the utterance as a prefix."
+	return "Write one short in-game delegation line from robot to player. Keep it natural, concrete. No quotes. No options. The relevant fields are defined below:\nstrategy: one persuasion framing drawn from our six-strategy set, adapted from Cialdini's six principles of persuasion.\nitem: the handoff item; the player is being asked to take it over, not give it to the robot.\nescalation: the follow-up stage of the same request, represented by escalation.count and escalation.prefix. escalation.count indicates how many times the request has already been followed up, and higher escalation should sound more insistent. escalation.prefix provides the stage-specific wording, may be lightly rewritten, and should be prepended to the utterance as a prefix."
 
-func _help_utterance_user_prompt(strategy: String, item: String, fallback: String, escalation: Dictionary) -> String:
+func _help_utterance_user_prompt(strategy: String, item: String, escalation: Dictionary) -> String:
 	var lines := [
 		"strategy: %s" % _help_strategy_label(strategy),
-		"item: %s" % item,
-		"fallback: %s" % fallback
+		"item: %s" % item
 	]
 	if not escalation.is_empty():
 		lines.append("escalation.count: %d" % int(escalation.get("count", 0)))

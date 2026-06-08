@@ -300,7 +300,6 @@ async function upsertEpisodeLog(sessionId, participantId, data) {
 }
 
 function buildDialoguePrompts(body) {
-  const fallback = sanitizeText(body.fallback, "Okay.");
   const kind = sanitizeText(body.kind, "directed_utterance");
   const model = sanitizeText(body.model, DEFAULT_MODEL) || DEFAULT_MODEL;
   const temperature = asNumber(body.temperature, DEFAULT_TEMPERATURE);
@@ -312,7 +311,6 @@ function buildDialoguePrompts(body) {
     const lines = [
       `strategy: ${helpStrategyLabel(strategy)}`,
       `item: ${item}`,
-      `fallback: ${fallback}`,
     ];
     if (escalation) {
       lines.push(`escalation.count: ${asNumber(escalation.count, 0)}`);
@@ -322,12 +320,13 @@ function buildDialoguePrompts(body) {
     return {
       model,
       temperature,
-      fallback,
-      systemPrompt: "Write one short in-game delegation line from robot to player. Keep it natural, concrete. No quotes. No options. The relevant fields are defined below:\nstrategy: one persuasion framing drawn from our six-strategy set, adapted from Cialdini's six principles of persuasion.\nitem: the handoff item; the player is being asked to take it over, not give it to the robot.\nfallback: the base template utterance associated with the assigned strategy. Rewrite it lightly to sound natural, while preserving the same strategy and core intent.\nescalation: the follow-up stage of the same request, represented by escalation.count and escalation.prefix. escalation.count indicates how many times the request has already been followed up, and higher escalation should sound more insistent. escalation.prefix provides the stage-specific wording, may be lightly rewritten, and should be prepended to the utterance as a prefix.",
+      fallback: "",
+      systemPrompt: "Write one short in-game delegation line from robot to player. Keep it natural, concrete. No quotes. No options. The relevant fields are defined below:\nstrategy: one persuasion framing drawn from our six-strategy set, adapted from Cialdini's six principles of persuasion.\nitem: the handoff item; the player is being asked to take it over, not give it to the robot.\nescalation: the follow-up stage of the same request, represented by escalation.count and escalation.prefix. escalation.count indicates how many times the request has already been followed up, and higher escalation should sound more insistent. escalation.prefix provides the stage-specific wording, may be lightly rewritten, and should be prepended to the utterance as a prefix.",
       userPrompt: lines.join("\n"),
     };
   }
 
+  const fallback = sanitizeText(body.fallback, "Okay.");
   const sourceRole = sanitizeText(body.source_role, "player");
   const recipientRole = sanitizeText(body.recipient_role, "robot");
   const intentType = sanitizeText(body.intent_type, "directed_reply");
@@ -459,7 +458,7 @@ exports.apiDialogue = onRequest({secrets: [OPENAI_API_KEY]}, async (req, res) =>
 
   const requestId = sanitizeText(body.request_id, "");
   const kind = sanitizeText(body.kind, "directed_utterance");
-  const fallback = sanitizeText(body.fallback, "Okay.");
+  const fallback = kind === "help_utterance" ? "" : sanitizeText(body.fallback, "Okay.");
 
   try {
     const dialogueRequest = buildDialoguePrompts(body);
@@ -479,9 +478,8 @@ exports.apiDialogue = onRequest({secrets: [OPENAI_API_KEY]}, async (req, res) =>
       kind,
       utterance: fallback,
       meta: {
-        provider: "fallback",
+        provider: kind === "help_utterance" ? "llm" : "fallback",
         status: "exception",
-        fallback,
       },
       fallback,
     });
