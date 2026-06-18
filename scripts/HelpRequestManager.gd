@@ -21,39 +21,23 @@ const PersuasionEngineScript = preload("res://scripts/PersuasionEngine.gd")
 var _requests_by_id: Dictionary = {}
 var _order: Array[String] = []
 var _next_id: int = 1
-var _interaction_model := {
-	"total": 0,
-	"accepted": 0,
-	"declined": 0,
-	"later": 0,
-	"avg_latency_ms": 0.0,
-	"acceptance_rate": 0.5
-}
 
 func reset_all() -> void:
 	_requests_by_id.clear()
 	_order.clear()
 	_next_id = 1
 	PersuasionEngineScript.reset_assignment_state()
-	_interaction_model = {
-		"total": 0,
-		"accepted": 0,
-		"declined": 0,
-		"later": 0,
-		"avg_latency_ms": 0.0,
-		"acceptance_rate": 0.5
-	}
 
 func _ready() -> void:
-	var dm = _dialogue_manager()
-	if dm and dm.has_signal("utterance_generated") and not dm.utterance_generated.is_connected(_on_utterance_generated):
-		dm.utterance_generated.connect(_on_utterance_generated)
 	var board = get_node_or_null("/root/TaskBoard")
 	if board:
 		if board.has_signal("task_completed") and not board.task_completed.is_connected(_on_task_completed):
 			board.task_completed.connect(_on_task_completed)
 		if board.has_signal("task_failed") and not board.task_failed.is_connected(_on_task_failed):
 			board.task_failed.connect(_on_task_failed)
+	var logger = _episode_logger()
+	if logger and logger.has_method("log_delegation_templates"):
+		logger.log_delegation_templates(PersuasionEngineScript.get_template_records())
 
 func _process(_dt: float) -> void:
 	var now_ms := Time.get_ticks_msec()
@@ -105,8 +89,8 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"assignment_buckets": {},
 		"system_notice": "",
 		"utterance": "",
-		"utterance_source": "template",
-		"utterance_pending": false,
+		"template_id": "",
+		"utterance_source": "template_library",
 		"last_response": "",
 		"task_completed": false,
 		"task_failed": false,
@@ -214,20 +198,13 @@ func respond(request_id: String, response: String) -> Dictionary:
 				req["status"] = STATUS_COOLDOWN
 				req["cooldown_until_ms"] = now_ms + int(req.get("cooldown_ms", 4000))
 				_refresh_request_surface(req)
-				if _should_request_help_utterance(req):
-					req["utterance_pending"] = true
-				else:
-					req["utterance_pending"] = false
 		_:
 			return _copy(req)
 
 	_requests_by_id[request_id] = req
-	_update_interaction_model(response, prompt_latency_ms)
 	var copied := _copy(req)
 	print("[HelpRequest] Response ", response, " -> ", request_id, " status=", copied.get("status", ""))
 	_log_help_event("responded", req, {"response": response})
-	if response == RESPONSE_LATER and bool(req.get("utterance_pending", false)):
-		_request_utterance_realization(req)
 	request_updated.emit(copied)
 	if str(req.get("status", "")) == STATUS_RESOLVED:
 		_log_help_event("resolved", req)
@@ -247,7 +224,6 @@ func complete_request(request_id: String, resolution_path: String = "cooperative
 	req["resolution_path"] = resolution_path
 	req["updated_at_ms"] = Time.get_ticks_msec()
 	_requests_by_id[request_id] = req
-	_update_interaction_model(RESPONSE_ACCEPT, int(req.get("response_latency_ms", 0)))
 
 	var copied := _copy(req)
 	print("[HelpRequest] Completed ", request_id, " path=", resolution_path)
@@ -388,28 +364,22 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 	_refresh_request_surface(req)
 	req["assignment_pending"] = false
 	req["updated_at_ms"] = Time.get_ticks_msec()
-	if _should_request_help_utterance(req):
-		req["utterance_pending"] = true
-	else:
-		req["utterance_pending"] = false
 	_requests_by_id[request_id] = req
 	print("[HelpRequest] Created ", request_id, " type=", str(req.get("type", "")))
 	_log_help_event("created", req)
-	if bool(req.get("utterance_pending", false)):
-		_request_utterance_realization(req)
 	var copied := _copy(req)
 	request_created.emit(copied)
 
 func _refresh_request_surface(req: Dictionary) -> void:
-	req["utterance"] = PersuasionEngineScript.render_template(
-		str(req.get("type", TYPE_HANDOFF)),
+	var rendered := PersuasionEngineScript.pick_template(
 		str(req.get("strategy", PersuasionEngineScript.STRATEGY_AUTHORITY)),
-		req.get("context_snapshot", {}),
-		int(req.get("escalation_count", 0)),
-		req.get("payload", {})
+		req.get("payload", {}),
+		int(req.get("escalation_count", 0))
 	)
-	req["escalation"] = PersuasionEngineScript.build_escalation(int(req.get("escalation_count", 0)))
-	req["utterance_source"] = "template"
+	req["template_id"] = str(rendered.get("template_id", ""))
+	req["utterance"] = str(rendered.get("utterance", ""))
+	req["escalation"] = rendered.get("escalation", {})
+	req["utterance_source"] = "template_library"
 
 func _should_use_backend_assignment() -> bool:
 	return OS.has_feature("web")
@@ -456,10 +426,6 @@ func _build_context(robot: Node, req: Dictionary, options: Dictionary) -> Dictio
 			"busyness": busyness,
 			"slack_ms": slack_ms,
 			"phase_name": game_mgr.get_period() if game_mgr and game_mgr.has_method("get_period") else "unknown"
-		},
-		"history": {
-			"acceptance_rate": float(_interaction_model.get("acceptance_rate", 0.5)),
-			"avg_latency_ms": float(_interaction_model.get("avg_latency_ms", 0.0))
 		}
 	}
 
@@ -484,29 +450,11 @@ func _sample_personality_profile() -> Dictionary:
 		"question_count": 0
 	}
 
-func _update_interaction_model(response: String, latency_ms: int) -> void:
-	_interaction_model["total"] = int(_interaction_model.get("total", 0)) + 1
-	if response == RESPONSE_ACCEPT:
-		_interaction_model["accepted"] = int(_interaction_model.get("accepted", 0)) + 1
-	elif response == RESPONSE_DECLINE:
-		_interaction_model["declined"] = int(_interaction_model.get("declined", 0)) + 1
-	elif response == RESPONSE_LATER:
-		_interaction_model["later"] = int(_interaction_model.get("later", 0)) + 1
-
-	var total := maxf(float(_interaction_model["total"]), 1.0)
-	_interaction_model["acceptance_rate"] = float(_interaction_model.get("accepted", 0)) / total
-
-	var old_avg := float(_interaction_model.get("avg_latency_ms", 0.0))
-	_interaction_model["avg_latency_ms"] = ((old_avg * (total - 1.0)) + float(latency_ms)) / total
-
 func _episode_logger() -> Node:
 	return get_node_or_null("/root/EpisodeLogger")
 
 func _experiment_config() -> Node:
 	return get_node_or_null("/root/ExperimentConfig")
-
-func _dialogue_manager() -> Node:
-	return get_node_or_null("/root/DialogueManager")
 
 func _log_help_event(event_type: String, req: Dictionary, extra: Dictionary = {}) -> void:
 	var logger = _episode_logger()
@@ -516,51 +464,6 @@ func _log_help_event(event_type: String, req: Dictionary, extra: Dictionary = {}
 	if exp and exp.has_method("is_help_logging_enabled") and not bool(exp.is_help_logging_enabled()):
 		return
 	logger.log_help_request_event(event_type, req, extra)
-
-func _should_request_help_utterance(req: Dictionary) -> bool:
-	if req.is_empty():
-		return false
-	var dm = _dialogue_manager()
-	if dm == null:
-		return false
-	if dm.has_method("_is_llm_enabled") and not bool(dm._is_llm_enabled()):
-		return false
-	if dm.has_method("has_api_key") and not bool(dm.has_api_key()):
-		return false
-	return dm.has_method("realize_help_utterance")
-
-func _request_utterance_realization(req: Dictionary) -> void:
-	if req.is_empty():
-		return
-	var dm = _dialogue_manager()
-	if dm == null or not dm.has_method("realize_help_utterance"):
-		return
-	dm.realize_help_utterance(req)
-
-func _on_utterance_generated(request_id: String, utterance: String, meta: Dictionary) -> void:
-	var req: Dictionary = _requests_by_id.get(request_id, {})
-	if req.is_empty():
-		return
-	if str(req.get("status", "")) == STATUS_RESOLVED:
-		return
-	if int(req.get("last_prompt_ms", 0)) > 0:
-		req["utterance_pending"] = false
-		_requests_by_id[request_id] = req
-		_log_help_event("utterance_ignored_after_prompt", req, meta)
-		return
-	req["utterance_pending"] = false
-	if utterance != "":
-		req["utterance"] = utterance
-		req["utterance_source"] = str(meta.get("provider", "llm"))
-		req["updated_at_ms"] = Time.get_ticks_msec()
-		_requests_by_id[request_id] = req
-		_log_help_event("utterance_realized", req, meta)
-		request_updated.emit(_copy(req))
-		return
-	req["updated_at_ms"] = Time.get_ticks_msec()
-	_requests_by_id[request_id] = req
-	_log_help_event("utterance_realization_failed", req, meta)
-	request_updated.emit(_copy(req))
 
 func _on_task_completed(task: Dictionary) -> void:
 	_attach_task_outcome(task, true)

@@ -2600,8 +2600,6 @@ func _auto_open_help_request(request: Dictionary) -> void:
 		return
 	if not _can_auto_open_request(request):
 		return
-	if _should_wait_for_help_utterance(request):
-		return
 	var rid := str(request.get("id", ""))
 	if rid == "":
 		return
@@ -2619,14 +2617,6 @@ func _auto_open_help_request(request: Dictionary) -> void:
 		request = help_mgr.get_request(rid)
 	show_help_request(request)
 	_auto_open_in_flight.erase(rid)
-
-func _should_wait_for_help_utterance(request: Dictionary) -> bool:
-	if str(request.get("type", "")) != "HANDOFF":
-		return false
-	var payload: Dictionary = request.get("payload", {})
-	if bool(payload.get("trial_force_prompt", false)):
-		return false
-	return bool(request.get("utterance_pending", false))
 
 func _can_auto_open_request(request: Dictionary) -> bool:
 	var req_type := str(request.get("type", ""))
