@@ -250,8 +250,6 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
     player_active_tasks: asNumber(data.player_active_tasks, 0),
     battery_level: asNumber(data.battery_level, 0.0),
     battery_mode: sanitizeText(data.battery_mode, ""),
-    acceptance_rate: asNumber(data.acceptance_rate, 0.0),
-    avg_latency_ms: asNumber(data.avg_latency_ms, 0.0),
     trait_O: asNumber(data.trait_O, 0.0),
     trait_C: asNumber(data.trait_C, 0.0),
     trait_E: asNumber(data.trait_E, 0.0),
@@ -260,6 +258,7 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
     strategy: sanitizeText(data.strategy, ""),
     assignment_method: sanitizeText(data.assignment_method, ""),
     assignment_buckets: sanitizeAssignmentBuckets(data.assignment_buckets),
+    template_id: sanitizeText(data.template_id, ""),
     utterance: sanitizeText(data.utterance, ""),
     utterance_source: sanitizeText(data.utterance_source, ""),
     escalation_count: asNumber(data.escalation_count, 0),
@@ -276,6 +275,25 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
   };
   await requestRef.set(doc, {merge: true});
   return {request_id: requestId};
+}
+
+async function upsertDelegationTemplate(data) {
+  const templateId = sanitizeText(data.template_id, "");
+  if (templateId === "") {
+    throw new Error("missing_template_id");
+  }
+  const templateRef = db.collection("delegation_templates").doc(templateId);
+  const snapshot = await templateRef.get();
+  const doc = {
+    template_id: templateId,
+    strategy: sanitizeText(data.strategy, ""),
+    template_text: sanitizeText(data.template_text, ""),
+  };
+  if (!snapshot.exists) {
+    doc.created_at = FieldValue.serverTimestamp();
+  }
+  await templateRef.set(doc, {merge: true});
+  return {template_id: templateId};
 }
 
 async function upsertEpisodeLog(sessionId, participantId, data) {
@@ -301,32 +319,8 @@ async function upsertEpisodeLog(sessionId, participantId, data) {
 
 function buildDialoguePrompts(body) {
   const fallback = sanitizeText(body.fallback, "Okay.");
-  const kind = sanitizeText(body.kind, "directed_utterance");
   const model = sanitizeText(body.model, DEFAULT_MODEL) || DEFAULT_MODEL;
   const temperature = asNumber(body.temperature, DEFAULT_TEMPERATURE);
-
-  if (kind === "help_utterance") {
-    const strategy = sanitizeText(body.strategy, "");
-    const item = sanitizeText(body.item, "item");
-    const escalation = body.escalation && typeof body.escalation === "object" ? body.escalation : null;
-    const lines = [
-      `strategy: ${helpStrategyLabel(strategy)}`,
-      `item: ${item}`,
-      `fallback: ${fallback}`,
-    ];
-    if (escalation) {
-      lines.push(`escalation.count: ${asNumber(escalation.count, 0)}`);
-      lines.push(`escalation.prefix: ${sanitizeText(escalation.prefix, "")}`);
-    }
-
-    return {
-      model,
-      temperature,
-      fallback,
-      systemPrompt: "Write one short in-game delegation line from robot to player. Keep it natural, concrete. No quotes. No options. The relevant fields are defined below:\nstrategy: one persuasion framing drawn from our six-strategy set, adapted from Cialdini's six principles of persuasion.\nitem: the handoff item; the player is being asked to take it over, not give it to the robot.\nfallback: the base template utterance associated with the assigned strategy. Rewrite it lightly to sound natural, while preserving the same strategy and core intent.\nescalation: the follow-up stage of the same request, represented by escalation.count and escalation.prefix. escalation.count indicates how many times the request has already been followed up, and higher escalation should sound more insistent. escalation.prefix provides the stage-specific wording, may be lightly rewritten, and should be prepended to the utterance as a prefix.",
-      userPrompt: lines.join("\n"),
-    };
-  }
 
   const sourceRole = sanitizeText(body.source_role, "player");
   const recipientRole = sanitizeText(body.recipient_role, "robot");
@@ -348,25 +342,6 @@ function buildDialoguePrompts(body) {
       `fallback=${fallback}`,
     ].join(" "),
   };
-}
-
-function helpStrategyLabel(strategy) {
-  switch (strategy) {
-    case "authority":
-      return "authority — a persuasion framing based on role-based coordination authority, expressed as a direct task-oriented request.";
-    case "reciprocity":
-      return "reciprocity — a persuasion framing based on returning help or favors, expressed by offering support in return for cooperation. For reciprocity, the promised payoff is real: if the player accepts, the robot will handle its next order faster. Reflect this promise naturally in the utterance.";
-    case "liking":
-      return "liking — a persuasion framing based on warmth and positive regard, expressed in an appreciative and friendly tone.";
-    case "commitment":
-      return "commitment — a persuasion framing based on consistency with prior actions, expressed by referring to earlier cooperation.";
-    case "social_proof":
-      return "social_proof — a persuasion framing based on shared group behavior, expressed by emphasizing ongoing team coordination.";
-    case "scarcity":
-      return "scarcity — a persuasion framing based on limited opportunity or time, expressed by emphasizing the risk of missing the service window.";
-    default:
-      return strategy;
-  }
 }
 
 async function requestOpenAI(dialogueRequest) {
@@ -558,6 +533,9 @@ exports.apiLog = onRequest(async (req, res) => {
         break;
       case "episode_upsert":
         result = await upsertEpisodeLog(sessionId, participantId, data);
+        break;
+      case "template_upsert":
+        result = await upsertDelegationTemplate(data);
         break;
       default:
         res.status(400).json({error: "unsupported_log_type"});

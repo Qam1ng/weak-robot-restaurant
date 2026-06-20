@@ -10,7 +10,6 @@ class_name RobotServer
 
 var _moving: bool = false
 var _last_dir: Vector2 = Vector2.DOWN
-var _nav_debug_line: Line2D = null
 
 # ---------- BT ----------
 const Core = preload("res://scripts/bt/bt_core.gd")
@@ -81,8 +80,9 @@ var _last_emergency_approach_notice_ms: int = 0
 var _last_overload_approach_notice_ms: int = 0
 var _pending_player_line_request_id: String = ""
 var _idle_charge_cycle_complete: bool = false
+var _trial_handoff_armed_task_id: String = ""
 var _trial_handoff_pending_task_id: String = ""
-var _trial_handoff_item_name: String = ""
+var _trial_handoff_item_needed: String = ""
 var _trial_stationary_pause: bool = false
 
 func _has_property(obj: Object, prop_name: String) -> bool:
@@ -164,11 +164,6 @@ class ActExecutePlan extends Core.Task:
 			"drop":
 				return Act.ActDropItem.new()
 				
-			"ask_help":
-				var item = params.get("item", "item")
-				bb["item_name"] = item
-				return Act.ActAskHelp.new()
-				
 			_:
 				return null
 
@@ -197,21 +192,10 @@ func _ready() -> void:
 	agent.neighbor_distance = 120.0
 	agent.time_horizon = 1.0
 	agent.debug_enabled = false
-	if _has_property(agent, "debug_use_custom"):
-		agent.set("debug_use_custom", true)
-	if _has_property(agent, "debug_path_custom_color"):
-		agent.set("debug_path_custom_color", Color(1.0, 0.15, 0.15, 1.0))
-	if _has_property(agent, "debug_path_custom_line_width"):
-		agent.set("debug_path_custom_line_width", 3.0)
 	
 	if agent.avoidance_enabled:
 		agent.velocity_computed.connect(_on_agent_velocity_computed)
 	await _wait_for_nav_sync(agent.get_navigation_map(), 120)
-
-	if has_node("NavDebugPath"):
-		_nav_debug_line = get_node("NavDebugPath") as Line2D
-		if _nav_debug_line != null:
-			_nav_debug_line.visible = false
 
 	# Dynamic RayCast creation for BT Avoidance
 	if not has_node("RayCast2D"):
@@ -834,6 +818,15 @@ func _on_active_step_finished() -> void:
 
 	if expected_step == STEP_PICKUP_FROM_KITCHEN:
 		_reserve_inventory_item_for_task(_active_task_id, _current_food_item)
+		if _active_task_id == _trial_handoff_armed_task_id:
+			_active_task_step = STEP_DELIVER_AND_SERVE
+			_trial_handoff_pending_task_id = _active_task_id
+			_trial_handoff_item_needed = _current_food_item.strip_edges().to_lower()
+			_trial_stationary_pause = true
+			bt_runner.bb["planned_actions"] = []
+			velocity = Vector2.ZERO
+			_active_step_started = false
+			return
 	if expected_step == STEP_PICKUP_FROM_KITCHEN and inventory != null and not inventory.is_full():
 		for task in _get_robot_assigned_food_tasks():
 			if _task_step_name(task) == STEP_PICKUP_FROM_KITCHEN:
@@ -867,14 +860,14 @@ func _clear_current_task_runtime() -> void:
 	bt_runner.bb.erase("target_customer")
 	bt_runner.bb["last_plan_failed"] = false
 	bt_runner.bb["planned_actions"] = []
-	set_nav_debug_path(PackedVector2Array())
 	_waiting_for_help = false
 	_help_item_needed = ""
 	_active_help_request_id = ""
 	_active_help_request_type = ""
 	_help_request_suppressed = false
+	_trial_handoff_armed_task_id = ""
 	_trial_handoff_pending_task_id = ""
-	_trial_handoff_item_name = ""
+	_trial_handoff_item_needed = ""
 	if _get_robot_assigned_food_tasks().is_empty():
 		_overload_handoff_declined_task_id = ""
 		_deadline_handoff_declined_task_id = ""
@@ -1220,6 +1213,10 @@ func _tick_trial_item_handoff() -> bool:
 	if help_mgr == null:
 		return false
 
+	var player = _get_primary_player()
+	if player == null:
+		return false
+
 	if _active_help_request_id != "":
 		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
 		if not existing.is_empty():
@@ -1228,6 +1225,35 @@ func _tick_trial_item_handoff() -> bool:
 				bt_runner.bb["planned_actions"] = []
 				_waiting_for_help = false
 				return true
+		_active_help_request_id = ""
+		_active_help_request_type = ""
+
+	var distance_to_player := global_position.distance_to(player.global_position)
+	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
+		_waiting_for_help = false
+		var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
+		if not has_plan:
+			_plan_navigate_to_position(player.global_position, "trial_player")
+		return true
+
+	var handoff_mode := _handoff_mode_for_active_task(_trial_handoff_item_needed)
+
+	var req: Dictionary = help_mgr.create_request(HELP_TYPE_HANDOFF, self, {
+		"handoff_mode": handoff_mode,
+		"task_id": _active_task_id,
+		"item_needed": _trial_handoff_item_needed,
+		"reason": "trial_task_handoff",
+		"trial_accept_only": true,
+		"trial_force_prompt": true
+	}, {
+		"cooldown_ms": 100000,
+		"max_escalation": 99,
+		"urgency": 1.0
+	})
+	if req.is_empty():
+		return false
+	_active_help_request_id = str(req.get("id", ""))
+	_active_help_request_type = HELP_TYPE_HANDOFF
 
 	bt_runner.bb["planned_actions"] = []
 	_waiting_for_help = false
@@ -1309,7 +1335,13 @@ func _handle_pickup_inventory_full(_item_name: String) -> bool:
 	return true
 
 func _handoff_mode_for_active_task(item_name: String) -> String:
-	if _active_task_step == STEP_DELIVER_AND_SERVE and _has_transferable_item_for_task(_active_task_id, item_name):
+	var effective_step := _active_task_step
+	var board := _task_board()
+	if board != null and _active_task_id != "" and board.has_method("get_current_step_name"):
+		var board_step := str(board.get_current_step_name(_active_task_id))
+		if board_step != "":
+			effective_step = board_step
+	if effective_step == STEP_DELIVER_AND_SERVE and _has_transferable_item_for_task(_active_task_id, item_name):
 		return "TAKEOVER_ITEM"
 	return "TAKEOVER_TASK"
 
@@ -1646,20 +1678,6 @@ func _on_help_request_resolved(request: Dictionary) -> void:
 		_active_help_request_id = ""
 		_active_help_request_type = ""
 
-func set_nav_debug_path(world_points: PackedVector2Array) -> void:
-	if _nav_debug_line == null:
-		return
-	if not _nav_debug_line.visible:
-		_nav_debug_line.points = PackedVector2Array()
-		return
-	if world_points.is_empty():
-		_nav_debug_line.points = PackedVector2Array()
-		return
-	var local_points := PackedVector2Array()
-	for p in world_points:
-		local_points.push_back(to_local(p))
-	_nav_debug_line.points = local_points
-
 func _on_agent_velocity_computed(safe_velocity: Vector2) -> void:
 	if _waiting_for_help:
 		_moving = false
@@ -1736,65 +1754,33 @@ func needs_help() -> bool:
 	return _waiting_for_help
 
 func set_waiting_for_help(waiting: bool, item_name: String):
+	# Legacy compatibility shim: stuck/pick-fail no longer creates player-facing
+	# handoff requests. Calls that try to enter this state now collapse to a clear.
 	_waiting_for_help = waiting
 	_help_item_needed = item_name
 	if not waiting:
 		return
 
-	if _help_item_needed.strip_edges() == "":
-		return
+	_waiting_for_help = false
 
-	var handoff_mode := _handoff_mode_for_active_task(_help_item_needed)
-
-	# Hand-off help is created here (e.g. BT ask_help path).
-	_ensure_help_request(HELP_TYPE_HANDOFF, {
-		"handoff_mode": handoff_mode,
-		"task_id": _active_task_id,
-		"item_needed": _help_item_needed,
-		"reason": "robot_stuck_or_pick_fail",
-		"slack_ms": int(_constraint_input.get("slack_ms", 0))
-	}, {
-		"cooldown_ms": 3500,
-		"max_escalation": 2,
-		"urgency": _estimate_help_urgency()
-	})
-
-func start_trial_item_handoff(task_id: String, item_name: String) -> void:
-	_trial_handoff_pending_task_id = task_id
-	_trial_handoff_item_name = item_name
+func start_trial_task_handoff(task_id: String, item_name: String) -> void:
+	_trial_handoff_armed_task_id = task_id
+	if _trial_handoff_pending_task_id == "":
+		_trial_handoff_pending_task_id = task_id
+	if _trial_handoff_item_needed == "":
+		_trial_handoff_item_needed = item_name
 	_trial_stationary_pause = false
 	_waiting_for_help = false
 	bt_runner.bb["planned_actions"] = []
 	_active_step_started = false
-	var help_mgr = _help_manager()
-	if help_mgr == null or _active_help_request_id != "":
-		return
-	var req: Dictionary = help_mgr.create_request(HELP_TYPE_HANDOFF, self, {
-		"handoff_mode": "TAKEOVER_ITEM",
-		"task_id": task_id,
-		"item_needed": item_name,
-		"reason": "trial_item_handoff",
-		"trial_accept_only": true,
-		"trial_force_prompt": true
-	}, {
-		"cooldown_ms": 100000,
-		"max_escalation": 99,
-		"urgency": 1.0
-	})
-	if req.is_empty():
-		return
-	_active_help_request_id = str(req.get("id", ""))
-	_active_help_request_type = HELP_TYPE_HANDOFF
+	_active_help_request_id = ""
+	_active_help_request_type = ""
 
-func receive_player_help():
-	# Deprecated: handoff is now explicit task reassignment to player.
-	return
+func arm_trial_item_handoff(task_id: String) -> void:
+	_trial_handoff_armed_task_id = task_id
 
 func set_trial_stationary_pause(paused: bool) -> void:
 	_trial_stationary_pause = paused
 	if paused:
 		bt_runner.bb["planned_actions"] = []
 		velocity = Vector2.ZERO
-
-func on_player_interact(player: Node) -> void:
-	return

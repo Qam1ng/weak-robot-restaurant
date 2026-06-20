@@ -17,8 +17,53 @@ const STRATEGIES := [
 	STRATEGY_SCARCITY
 ]
 
+const TEMPLATE_LIBRARY := {
+	STRATEGY_AUTHORITY: [
+		{"template_id": "authority_1", "template_text": "As order coordinator, I need you to take over the {item} order."},
+		{"template_id": "authority_2", "template_text": "I'm assigning the {item} order to you now."},
+		{"template_id": "authority_3", "template_text": "Please assume control of the {item} order from here."},
+		{"template_id": "authority_4", "template_text": "I need you to lead the {item} order now."},
+		{"template_id": "authority_5", "template_text": "Please take over the {item} order; it's now assigned to you."}
+	],
+	STRATEGY_RECIPROCITY: [
+		{"template_id": "reciprocity_1", "template_text": "Please take over the {item} order, and I'll move faster on the next one."},
+		{"template_id": "reciprocity_2", "template_text": "If you handle the {item} order, I'll speed up on the next order."},
+		{"template_id": "reciprocity_3", "template_text": "Please handle the {item} order from here, and I'll speed up my next order."},
+		{"template_id": "reciprocity_4", "template_text": "If you manage the {item} order now, I'll move faster on the next one."},
+		{"template_id": "reciprocity_5", "template_text": "If you take over the {item} order, I'll return the help by moving faster next."}
+	],
+	STRATEGY_LIKING: [
+		{"template_id": "liking_1", "template_text": "Would you mind taking over the {item} order? Your help keeps everything running smoothly."},
+		{"template_id": "liking_2", "template_text": "Could you take over the {item} order? I'd be glad to have your help during service."},
+		{"template_id": "liking_3", "template_text": "Would you mind handling the {item} order? It would be a big help having you here."},
+		{"template_id": "liking_4", "template_text": "Could you handle the {item} order from here? Your help makes a real difference."},
+		{"template_id": "liking_5", "template_text": "Would you take over the {item} order? Your helpful attitude makes service easier."}
+	],
+	STRATEGY_COMMITMENT: [
+		{"template_id": "commitment_1", "template_text": "You've done well with these handoffs before; could you take over the {item} order again?"},
+		{"template_id": "commitment_2", "template_text": "You handled the last handoff smoothly; could you take over the {item} order too?"},
+		{"template_id": "commitment_3", "template_text": "Since you've helped with handoffs before, could you take over the {item} order?"},
+		{"template_id": "commitment_4", "template_text": "You've been reliable with previous order handoffs; could you handle the {item} order?"},
+		{"template_id": "commitment_5", "template_text": "You've shown you can handle these handoffs; could you take over the {item} order?"}
+	],
+	STRATEGY_SOCIAL_PROOF: [
+		{"template_id": "social_proof_1", "template_text": "Our guests are counting on us to keep service running smoothly; could you take over the {item} order now?"},
+		{"template_id": "social_proof_2", "template_text": "The customer is relying on us for this order; could you handle the {item} order from here?"},
+		{"template_id": "social_proof_3", "template_text": "Our guests expect smooth service from us; could you take over the {item} order now?"},
+		{"template_id": "social_proof_4", "template_text": "We're keeping service moving together; can you take over the {item} order?"},
+		{"template_id": "social_proof_5", "template_text": "We're coordinating as a team; please take over the {item} order."}
+	],
+	STRATEGY_SCARCITY: [
+		{"template_id": "scarcity_1", "template_text": "Please take over the {item} order before the service window closes."},
+		{"template_id": "scarcity_2", "template_text": "We may miss the service window; could you handle the {item} order now?"},
+		{"template_id": "scarcity_3", "template_text": "The service window is closing; please handle the {item} order."},
+		{"template_id": "scarcity_4", "template_text": "We have a limited service window for the {item} order; could you handle it now?"},
+		{"template_id": "scarcity_5", "template_text": "Please take over the {item} order now, or this order may miss the service window."}
+	]
+}
+
 static var _assignment_counts: Dictionary = {}
-static var _rng := RandomNumberGenerator.new()
+static var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 static var _rng_seeded := false
 
 static func reset_assignment_state() -> void:
@@ -62,30 +107,45 @@ static func build_assignment_buckets(request_type: String, context: Dictionary) 
 		"battery_mode_bucket": battery_mode
 	}
 
-static func _assignment_key_from_buckets(buckets: Dictionary) -> String:
-	return "urgency:%s|busyness:%s|player_active_tasks:%s|battery:%s" % [
-		str(buckets.get("urgency_bucket", "medium")),
-		str(buckets.get("busyness_bucket", "medium")),
-		str(buckets.get("player_active_tasks_bucket", "medium")),
-		str(buckets.get("battery_mode_bucket", "normal"))
-	]
+static func pick_template(strategy: String, payload: Dictionary, escalation_count: int) -> Dictionary:
+	_ensure_rng_seeded()
+	var item := str(payload.get("item_needed", "item")).strip_edges()
+	if item == "":
+		item = "item"
+	var entries: Array = TEMPLATE_LIBRARY.get(strategy, TEMPLATE_LIBRARY.get(STRATEGY_AUTHORITY, []))
+	if entries.is_empty():
+		return {
+			"template_id": "",
+			"template_text": "",
+			"utterance": "Please take over the %s order now." % item,
+			"escalation": build_escalation(escalation_count)
+		}
+	var entry: Dictionary = entries[_rng.randi_range(0, entries.size() - 1)]
+	var base_text := str(entry.get("template_text", "")).replace("{item}", item)
+	var escalation := build_escalation(escalation_count)
+	var utterance := base_text
+	var prefix := str(escalation.get("prefix", "")).strip_edges()
+	if prefix != "":
+		utterance = "%s %s" % [prefix, base_text]
+	return {
+		"template_id": str(entry.get("template_id", "")),
+		"template_text": str(entry.get("template_text", "")),
+		"utterance": utterance,
+		"escalation": escalation
+	}
 
-static func render_template(request_type: String, strategy: String, context: Dictionary, escalation_count: int, payload: Dictionary) -> String:
-	var item: String = str(payload.get("item_needed", "item"))
-
-	match strategy:
-		STRATEGY_AUTHORITY:
-			return "Take over the %s order now; you are needed on this task." % item
-		STRATEGY_SOCIAL_PROOF:
-			return "Please take over the %s order now so we can keep service moving." % item
-		STRATEGY_LIKING:
-			return "Could you please take over the %s order? Your help really keeps things moving." % item
-		STRATEGY_RECIPROCITY:
-			return "Please take over the %s order now, and I'll move faster on the next order." % item
-		STRATEGY_COMMITMENT:
-			return "You have handled these handoffs well before; could you take over the %s order again?" % item
-		_:
-			return "Please take over the %s order now, or this order may miss the service window." % item
+static func get_template_records() -> Array[Dictionary]:
+	var records: Array[Dictionary] = []
+	for strategy in STRATEGIES:
+		var entries: Array = TEMPLATE_LIBRARY.get(strategy, [])
+		for raw_entry in entries:
+			var entry: Dictionary = raw_entry
+			records.append({
+				"template_id": str(entry.get("template_id", "")),
+				"strategy": strategy,
+				"template_text": str(entry.get("template_text", ""))
+			})
+	return records
 
 static func build_escalation(escalation_count: int) -> Dictionary:
 	if escalation_count <= 0:
@@ -99,6 +159,14 @@ static func build_escalation(escalation_count: int) -> Dictionary:
 		"count": escalation_count,
 		"prefix": "Following up on my previous request."
 	}
+
+static func _assignment_key_from_buckets(buckets: Dictionary) -> String:
+	return "urgency:%s|busyness:%s|player_active_tasks:%s|battery:%s" % [
+		str(buckets.get("urgency_bucket", "medium")),
+		str(buckets.get("busyness_bucket", "medium")),
+		str(buckets.get("player_active_tasks_bucket", "medium")),
+		str(buckets.get("battery_mode_bucket", "normal"))
+	]
 
 static func _weighted_choice_from_counts(counts: Dictionary) -> String:
 	_ensure_rng_seeded()

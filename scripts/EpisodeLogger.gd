@@ -8,6 +8,7 @@ var _episode_active: bool = false
 var _episode_start_time: int = 0
 var _episode_counter: int = 0
 var _participant_id: String = ""
+var _delegation_templates_logged := false
 
 # File paths
 const DATA_DIR = "user://data/episodes/"
@@ -157,6 +158,19 @@ func log_participant_profile(profile: Dictionary) -> void:
 	}
 	_post_remote_log("participant_upsert", payload)
 
+func log_delegation_templates(templates: Array[Dictionary]) -> void:
+	if _delegation_templates_logged:
+		return
+	for template in templates:
+		if template.is_empty():
+			continue
+		_post_remote_log("template_upsert", {
+			"template_id": str(template.get("template_id", "")),
+			"strategy": str(template.get("strategy", "")),
+			"template_text": str(template.get("template_text", ""))
+		})
+	_delegation_templates_logged = true
+
 func log_help_request_event(_event_type: String, request: Dictionary, _extra: Dictionary = {}) -> void:
 	if request.is_empty():
 		return
@@ -165,7 +179,6 @@ func log_help_request_event(_event_type: String, request: Dictionary, _extra: Di
 	var robot: Dictionary = context.get("robot", {})
 	var player: Dictionary = context.get("player", {})
 	var env: Dictionary = context.get("environment", {})
-	var history: Dictionary = context.get("history", {})
 	var personality: Dictionary = context.get("personality", {})
 	var scores: Dictionary = personality.get("tipi_scores", {})
 	var record := {
@@ -190,8 +203,6 @@ func log_help_request_event(_event_type: String, request: Dictionary, _extra: Di
 		"player_active_tasks": int(player.get("active_tasks", 0)),
 		"battery_level": float(robot.get("battery_level", 0.0)),
 		"battery_mode": str(robot.get("battery_mode", "")),
-		"acceptance_rate": float(history.get("acceptance_rate", 0.0)),
-		"avg_latency_ms": float(history.get("avg_latency_ms", 0.0)),
 		"trait_O": float(scores.get("O", 0.0)),
 		"trait_C": float(scores.get("C", 0.0)),
 		"trait_E": float(scores.get("E", 0.0)),
@@ -200,6 +211,7 @@ func log_help_request_event(_event_type: String, request: Dictionary, _extra: Di
 		"strategy": str(request.get("strategy", "")),
 		"assignment_method": str(request.get("assignment_method", "")),
 		"assignment_buckets": request.get("assignment_buckets", {}),
+		"template_id": str(request.get("template_id", "")),
 		"utterance": str(request.get("utterance", "")),
 		"utterance_source": str(request.get("utterance_source", "")),
 		"response": str(request.get("last_response", "")),
