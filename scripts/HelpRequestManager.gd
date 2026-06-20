@@ -527,7 +527,5 @@ func _build_system_notice(payload: Dictionary) -> String:
 			return "Battery critical. Delegation requested for %s." % item
 		"robot_over_threshold_post_take_order":
 			return "Task load threshold exceeded. Delegation requested for %s." % item
-		"robot_stuck_or_pick_fail":
-			return "Pickup blocked. Delegation requested for %s." % item
 		_:
 			return ""

@@ -165,11 +165,6 @@ class ActExecutePlan extends Core.Task:
 			"drop":
 				return Act.ActDropItem.new()
 				
-			"ask_help":
-				var item = params.get("item", "item")
-				bb["item_name"] = item
-				return Act.ActAskHelp.new()
-				
 			_:
 				return null
 
@@ -1786,28 +1781,14 @@ func needs_help() -> bool:
 	return _waiting_for_help
 
 func set_waiting_for_help(waiting: bool, item_name: String):
+	# Legacy compatibility shim: stuck/pick-fail no longer creates player-facing
+	# handoff requests. Calls that try to enter this state now collapse to a clear.
 	_waiting_for_help = waiting
 	_help_item_needed = item_name
 	if not waiting:
 		return
 
-	if _help_item_needed.strip_edges() == "":
-		return
-
-	var handoff_mode := _handoff_mode_for_active_task(_help_item_needed)
-
-	# Hand-off help is created here (e.g. BT ask_help path).
-	_ensure_help_request(HELP_TYPE_HANDOFF, {
-		"handoff_mode": handoff_mode,
-		"task_id": _active_task_id,
-		"item_needed": _help_item_needed,
-		"reason": "robot_stuck_or_pick_fail",
-		"slack_ms": int(_constraint_input.get("slack_ms", 0))
-	}, {
-		"cooldown_ms": 3500,
-		"max_escalation": 2,
-		"urgency": _estimate_help_urgency()
-	})
+	_waiting_for_help = false
 
 func start_trial_task_handoff(task_id: String, item_name: String) -> void:
 	_trial_handoff_armed_task_id = task_id
@@ -1825,15 +1806,8 @@ func start_trial_task_handoff(task_id: String, item_name: String) -> void:
 func arm_trial_item_handoff(task_id: String) -> void:
 	_trial_handoff_armed_task_id = task_id
 
-func receive_player_help():
-	# Deprecated: handoff is now explicit task reassignment to player.
-	return
-
 func set_trial_stationary_pause(paused: bool) -> void:
 	_trial_stationary_pause = paused
 	if paused:
 		bt_runner.bb["planned_actions"] = []
 		velocity = Vector2.ZERO
-
-func on_player_interact(player: Node) -> void:
-	return
