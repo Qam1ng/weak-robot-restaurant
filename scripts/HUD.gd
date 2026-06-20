@@ -97,7 +97,7 @@ const DIALOGUE_PANEL_WIDTH := 340.0
 const TUTORIAL_PANEL_WIDTH := 620.0
 const TUTORIAL_PANEL_MIN_HEIGHT := 420.0
 const TUTORIAL_TOGGLE_SIZE := 44.0
-const TUTORIAL_TEXT := "[b]Controls[/b]\nWASD / Arrow Keys: move\nE: interact (take orders, pick up items, deliver items)\nI: inventory / delete items\n\n[b]Goal[/b]\nServe customers' drinks before the deadline\nRespond to robot handoff popups\n\n[b]Robot Handoffs[/b]\nThe robot may hand off tasks when it is overloaded, running out of time, charging, or stuck.\n\n[b]Player Reminders[/b]\nCheck your assigned tasks\nNotice how the robot asks for help"
+const TUTORIAL_TEXT := "[b]Controls[/b]\nWASD / Arrow Keys: move\nE: interact (take orders, pick up items, deliver items)\nI: inventory (delete items)\n\n[b]Goal[/b]\nServe customers' drinks before the deadline\nRespond to robot handoff popups\n\n[b]Robot Handoffs[/b]\nThe robot may hand off tasks when it is overloaded, running out of time, charging, or stuck.\n\n[b]Player Reminders[/b]\nCheck your assigned tasks\nNotice how the robot asks for help"
 var _customer_tab: String = CUSTOMER_TAB_LIVE
 var _score: int = 0
 var _success_count: int = 0
@@ -123,12 +123,10 @@ var _trial_step: String = ""
 var _trial_customer: Node2D = null
 var _trial_food_task_id: String = ""
 var _trial_drink_task_id: String = ""
-var _trial_handoff_customer: Node2D = null
 var _trial_handoff_task_id: String = ""
 var _trial_handoff_request_id: String = ""
-var _trial_handoff_preloading: bool = false
-var _trial_handoff_ready: bool = false
-var _trial_handoff_activate_when_ready: bool = false
+var _trial_delete_item_uid: int = 0
+var _trial_delete_item_name: String = ""
 var _trial_timeout_timer: Timer = null
 var _trial_guide_layer: Control = null
 var _trial_guide_dim: ColorRect = null
@@ -142,8 +140,10 @@ var _trial_guide_arrow_direction: String = "→"
 var _trial_guide_message_panel: PanelContainer = null
 var _trial_guide_message_label: RichTextLabel = null
 var _trial_guide_target: Dictionary = {}
+var _player_inventory_holding_label: Label = null
+var _player_inventory_item_labels_by_name: Dictionary = {}
 const CUSTOMER_HISTORY_PAGE_SIZE := 5
-const TRIAL_SESSION_MAX_SEC := 90.0
+const TRIAL_SESSION_MAX_SEC := 100.0
 const TRIAL_GUIDE_FOCUS_BORDER := Color(1.0, 0.93, 0.62, 1.0)
 const TRIAL_GUIDE_ARROW_TEXTURE := preload("res://assets/icons/orders/right-arrow.png")
 const TRIAL_GUIDE_ARROW_SIZE := Vector2(24.0, 24.0)
@@ -630,15 +630,10 @@ func _on_task_created(task: Dictionary) -> void:
 		if order_kind == "food" and _trial_step == "await_food_order":
 			_trial_food_task_id = str(task.get("id", ""))
 			_trial_step = "await_drink_order"
-			call_deferred("_ensure_trial_drink_request")
 		elif order_kind == "drink":
 			_trial_drink_task_id = str(task.get("id", ""))
 			_show_trial_guide_for_drink_request()
 			_trial_step = "await_take_order"
-	elif _trial_session_active and _trial_handoff_preloading and _is_trial_handoff_customer_task(payload):
-		if str(payload.get("order_kind", "food")) == "food":
-			_trial_handoff_task_id = str(task.get("id", ""))
-			call_deferred("_prepare_trial_handoff_task", _trial_handoff_task_id)
 	if str(payload.get("order_kind", "")) != "drink":
 		return
 	if str(task.get("assigned_to", "")).strip_edges() != "":
@@ -648,6 +643,17 @@ func _on_task_created(task: Dictionary) -> void:
 func _on_task_updated(task: Dictionary) -> void:
 	if not _trial_session_active:
 		return
+	if str(task.get("id", "")) == _trial_food_task_id and _trial_food_task_id != "":
+		var board_food = get_node_or_null("/root/TaskBoard")
+		var step_name_food := ""
+		if board_food and board_food.has_method("get_current_step_name"):
+			step_name_food = str(board_food.get_current_step_name(_trial_food_task_id))
+		var assignee_food := str(task.get("assigned_to", ""))
+		if _trial_handoff_task_id == "" and assignee_food != "" and step_name_food == "PICKUP_FROM_KITCHEN":
+			_trial_handoff_task_id = _trial_food_task_id
+			var robot_food = _trial_robot()
+			if robot_food != null and robot_food.has_method("arm_trial_item_handoff"):
+				robot_food.call("arm_trial_item_handoff", _trial_food_task_id)
 	if _trial_handoff_task_id != "" and str(task.get("id", "")) == _trial_handoff_task_id:
 		var board_handoff = get_node_or_null("/root/TaskBoard")
 		var step_name_handoff := ""
@@ -671,18 +677,12 @@ func _on_task_updated(task: Dictionary) -> void:
 	elif (_trial_step == "await_pickup" or _trial_step == "await_delivery") and step_name == "DELIVER_AND_SERVE":
 		_trial_step = "await_delivery"
 		_show_trial_guide_for_drink_delivery()
-		call_deferred("_ensure_trial_handoff_preload")
 
 func _on_task_completed(task: Dictionary) -> void:
 	if _trial_session_active:
 		var completed_id := str(task.get("id", ""))
-		if completed_id == _trial_food_task_id:
-			var robot = _trial_robot()
-			if robot != null and robot.has_method("set_trial_stationary_pause"):
-				robot.call("set_trial_stationary_pause", true)
-		elif completed_id == _trial_drink_task_id:
-			_trial_step = "await_delegation"
-			call_deferred("_activate_trial_handoff_request")
+		if completed_id == _trial_drink_task_id:
+			call_deferred("_begin_trial_delete_demo")
 		elif _trial_handoff_task_id != "" and completed_id == _trial_handoff_task_id:
 			call_deferred("_finish_trial_session", true)
 		return
@@ -788,11 +788,14 @@ func _on_player_inventory_changed(items: Array) -> void:
 		return
 
 	_clear_dynamic_children(player_items_box)
+	_player_inventory_holding_label = null
+	_player_inventory_item_labels_by_name.clear()
 
 	var holding = Label.new()
 	holding.text = "Holding (%d/%d):" % [items.size(), _get_player_capacity()]
 	holding.add_theme_color_override("font_color", Color(0.80, 0.94, 1.0, 1.0))
 	player_items_box.add_child(holding)
+	_player_inventory_holding_label = holding
 
 	if items.is_empty():
 		_add_blank_row(player_items_box)
@@ -803,7 +806,15 @@ func _on_player_inventory_changed(items: Array) -> void:
 			var n = item.get("name", "Unknown")
 			l.text = "[%d] %s" % [i + 1, n]
 			player_items_box.add_child(l)
+			_player_inventory_item_labels_by_name[str(n).strip_edges().to_lower()] = l
 	_refresh_inventory_portal(items)
+	if _trial_session_active and _trial_step == "await_delete_confirm" and _trial_delete_item_uid > 0 and not _inventory_contains_uid(items, _trial_delete_item_uid):
+		_trial_delete_item_uid = 0
+		_trial_delete_item_name = ""
+		hide_inventory_portal()
+		_hide_trial_guide()
+		_trial_step = "await_delegation"
+		call_deferred("_activate_trial_handoff_request")
 
 func _refresh_inventory_portal(items: Array) -> void:
 	if inventory_portal_list == null:
@@ -845,6 +856,7 @@ func _refresh_inventory_portal(items: Array) -> void:
 		delete_btn.add_theme_stylebox_override("hover", delete_hover)
 		delete_btn.add_theme_stylebox_override("pressed", delete_pressed)
 		delete_btn.add_theme_color_override("font_color", Color(1.0, 0.96, 0.96, 1.0))
+		delete_btn.set_meta("inventory_item_uid", int(item.get("uid", 0)))
 		delete_btn.pressed.connect(_on_inventory_portal_delete_pressed.bind(int(item.get("uid", 0))), CONNECT_DEFERRED)
 		row.add_child(delete_btn)
 		inventory_portal_list.add_child(row)
@@ -877,11 +889,17 @@ func show_inventory_portal() -> void:
 		if inv != null:
 			_refresh_inventory_portal(inv.items)
 	_update_gameplay_panel_layout()
+	if _trial_session_active and _trial_step == "await_delete_open":
+		_trial_step = "await_delete_confirm"
+		call_deferred("_show_trial_guide_for_delete_confirm")
 
 func hide_inventory_portal() -> void:
 	if inventory_portal_panel == null:
 		return
 	inventory_portal_panel.visible = false
+	if _trial_session_active and _trial_step == "await_delete_confirm" and _trial_has_delete_item():
+		_trial_step = "await_delete_open"
+		call_deferred("_show_trial_guide_for_delete_open")
 
 func is_inventory_portal_visible() -> bool:
 	return inventory_portal_panel != null and inventory_portal_panel.visible
@@ -1516,8 +1534,7 @@ func _on_help_request_updated(request: Dictionary) -> void:
 	var status = str(request.get("status", ""))
 	if status == "accepted":
 		if _trial_session_active and rid == _trial_handoff_request_id and _trial_step == "await_handoff_accept":
-			_trial_step = "await_handoff_delivery"
-			call_deferred("_show_trial_guide_for_handoff_delivery")
+			_hide_trial_guide()
 		_remove_help_request_card(rid)
 	elif status == "cooldown":
 		_remove_help_request_card(rid)
@@ -2118,16 +2135,6 @@ func _spawn_trial_customer() -> void:
 		customer.global_position = (spawn_marker as Node2D).global_position
 	_trial_customer = customer as Node2D
 
-func _ensure_trial_drink_request() -> void:
-	if not await _trial_wait(2.5):
-		return
-	if not _trial_session_active or _trial_customer == null or not is_instance_valid(_trial_customer):
-		return
-	if _trial_drink_task_id != "":
-		return
-	if _trial_customer.has_method("on_food_order_taken"):
-		_trial_customer.call("on_food_order_taken")
-
 func _show_trial_guide_for_customer_orders() -> void:
 	_show_trial_guide(
 		"The robot will handle the food order first, and you will handle the drink order.",
@@ -2152,90 +2159,74 @@ func _show_trial_guide_for_drink_pickup() -> void:
 func _show_trial_guide_for_drink_delivery() -> void:
 	_show_trial_guide(
 		"Take the drink back to the customer and deliver it.",
-		{"type": "world_customer", "id": _trial_customer.get_instance_id(), "size": Vector2(104.0, 150.0), "offset": Vector2(0.0, -24.0)},
+		{
+			"type": "world_customer",
+			"id": _trial_customer.get_instance_id(),
+			"size": Vector2(104.0, 150.0),
+			"offset": Vector2(0.0, -24.0),
+			"message_min_width": 220.0
+		},
 		"↓"
 	)
 
-func _ensure_trial_handoff_preload() -> void:
+func _begin_trial_delete_demo() -> void:
 	if not _trial_session_active:
 		return
-	if _trial_handoff_ready or _trial_handoff_preloading:
+	_trial_step = "await_delete_open"
+	hide_inventory_portal()
+	_clear_actor_inventory("player")
+	var inv := _trial_player_inventory()
+	if inv == null:
+		call_deferred("_finish_trial_session", false)
 		return
-	_trial_handoff_preloading = true
-	_spawn_trial_handoff_customer()
+	_trial_delete_item_name = "hotdog"
+	var added := inv.add_item(_trial_delete_item_name, null, Rect2i(), {
+		"item_owner": "trial",
+		"tutorial_cleanup": true
+	})
+	if not added or inv.items.is_empty():
+		call_deferred("_finish_trial_session", false)
+		return
+	var last_item: Dictionary = inv.items.back()
+	_trial_delete_item_uid = int(last_item.get("uid", 0))
+	_show_trial_guide_for_delete_open()
 
-func _spawn_trial_handoff_customer() -> void:
-	if _trial_handoff_customer != null and is_instance_valid(_trial_handoff_customer):
+func _show_trial_guide_for_delete_open() -> void:
+	var inventory_target := _trial_player_inventory_lines_target()
+	var hotdog_target := _trial_player_inventory_item_target(_trial_delete_item_name)
+	if inventory_target.is_empty() or hotdog_target.is_empty():
 		return
-	var customer = TrialCustomerScene.instantiate()
-	customer.preset_food_item = "sandwich"
-	customer.preset_drink_item = ""
-	customer.force_drink_order = false
-	customer.start_delay_sec = 0.2
-	var current_scene = get_tree().current_scene
-	if current_scene == null:
-		_trial_handoff_preloading = false
-		return
-	current_scene.add_child(customer)
-	var spawn_marker = current_scene.find_child("CS1", true, false)
-	if spawn_marker != null and spawn_marker is Node2D:
-		customer.global_position = (spawn_marker as Node2D).global_position
-	_trial_handoff_customer = customer as Node2D
-
-func _prepare_trial_handoff_task(task_id: String) -> void:
-	if not _trial_session_active or task_id == "":
-		return
-	var board = get_node_or_null("/root/TaskBoard")
-	var robot = _trial_robot()
-	if board == null or robot == null:
-		call_deferred("_finish_trial_session", false)
-		return
-	var claimed: Dictionary = board.claim_task(task_id, str(robot.name)) if board.has_method("claim_task") else {}
-	if claimed.is_empty():
-		call_deferred("_finish_trial_session", false)
-		return
-	if not board.complete_current_step(task_id, "TAKE_ORDER"):
-		call_deferred("_finish_trial_session", false)
-		return
-	var task_snapshot: Dictionary = board.get_task(task_id) if board.has_method("get_task") else {}
-	var payload: Dictionary = task_snapshot.get("payload", {})
-	var item_name := str(payload.get("food_item", "sandwich")).strip_edges().to_lower()
-	var visual := _trial_item_visual(item_name)
-	var robot_inventory = robot.get_node_or_null("Inventory")
-	if robot_inventory == null:
-		call_deferred("_finish_trial_session", false)
-		return
-	var added: bool = robot_inventory.add_item(
-		item_name,
-		visual.get("atlas", null),
-		visual.get("region", Rect2i()),
-		{"task_id": task_id, "orphaned_at_ms": 0}
+	_show_trial_guide(
+		"A practice %s was added to your inventory. Press [b]I[/b] to open the inventory portal." % _trial_delete_item_name,
+		{
+			"type": "control_group",
+			"ids": inventory_target.get("ids", []),
+			"message_side": "right",
+			"arrow_target": hotdog_target
+		},
+		"→"
 	)
-	if not added:
-		call_deferred("_finish_trial_session", false)
+
+func _show_trial_guide_for_delete_confirm() -> void:
+	var delete_target := _trial_inventory_delete_button_target()
+	if delete_target.is_empty() or inventory_portal_panel == null:
 		return
-	if not board.complete_current_step(task_id, "PICKUP_FROM_KITCHEN"):
-		call_deferred("_finish_trial_session", false)
-		return
-	var deliver_task: Dictionary = board.get_task(task_id) if board.has_method("get_task") else {}
-	if robot.has_method("_activate_task_context"):
-		robot.call("_activate_task_context", deliver_task)
-	robot.set("_active_task_step", "DELIVER_AND_SERVE")
-	_trial_handoff_preloading = false
-	_trial_handoff_ready = true
-	if _trial_handoff_activate_when_ready:
-		call_deferred("_activate_trial_handoff_request")
+	_show_trial_guide(
+		"Delete the practice %s from your inventory, then continue." % _trial_delete_item_name,
+		{
+			"type": "control",
+			"id": inventory_portal_panel.get_instance_id(),
+			"hide_focus_border": true,
+			"arrow_target": delete_target
+		},
+		"→"
+	)
 
 func _activate_trial_handoff_request() -> void:
 	if not _trial_session_active:
 		return
 	if _trial_handoff_request_id != "":
 		return
-	if not _trial_handoff_ready:
-		_trial_handoff_activate_when_ready = true
-		_ensure_trial_handoff_preload()
-		return
-	_trial_handoff_activate_when_ready = false
 	if _trial_handoff_task_id == "":
 		call_deferred("_finish_trial_session", false)
 		return
@@ -2247,10 +2238,10 @@ func _activate_trial_handoff_request() -> void:
 	var task_snapshot: Dictionary = board.get_task(_trial_handoff_task_id) if board.has_method("get_task") else {}
 	var payload: Dictionary = task_snapshot.get("payload", {})
 	var item_name := str(payload.get("food_item", "sandwich")).strip_edges().to_lower()
-	if not robot.has_method("start_trial_item_handoff"):
+	if not robot.has_method("start_trial_task_handoff"):
 		call_deferred("_finish_trial_session", false)
 		return
-	robot.call("start_trial_item_handoff", _trial_handoff_task_id, item_name)
+	robot.call("start_trial_task_handoff", _trial_handoff_task_id, item_name)
 	_trial_step = "await_handoff_accept"
 
 func _show_trial_guide_for_handoff_accept() -> void:
@@ -2259,17 +2250,24 @@ func _show_trial_guide_for_handoff_accept() -> void:
 	if prompt_target.is_empty() or accept_target.is_empty():
 		return
 	_show_trial_guide(
-		"",
-		{"type": "control", "id": int(prompt_target.get("id", 0)), "arrow_target": accept_target, "hide_focus_border": true},
+		"The robot may sometimes ask for your help. Pay attention to how it asks, and choose based on your own preference.",
+		{
+			"type": "control",
+			"id": int(prompt_target.get("id", 0)),
+			"arrow_target": accept_target,
+			"hide_focus_border": true,
+			"message_min_width": 430.0,
+			"message_offset_y": -20.0
+		},
 		"→"
 	)
 
 func _show_trial_guide_for_handoff_delivery() -> void:
-	if _trial_handoff_customer == null or not is_instance_valid(_trial_handoff_customer):
+	if _trial_customer == null or not is_instance_valid(_trial_customer):
 		return
 	_show_trial_guide(
-		"The dish has also been handed to you, so you can deliver it directly to the customer.",
-		{"type": "world_customer", "id": _trial_handoff_customer.get_instance_id(), "size": Vector2(104.0, 150.0), "offset": Vector2(0.0, -24.0)},
+		"The robot has handed the food to you. Now deliver it to the same customer.",
+		{"type": "world_customer", "id": _trial_customer.get_instance_id(), "size": Vector2(104.0, 150.0), "offset": Vector2(0.0, -24.0)},
 		"↓"
 	)
 
@@ -2328,6 +2326,7 @@ func _begin_formal_session() -> void:
 	_show_pending_day_notice()
 
 func _reset_trial_world_state() -> void:
+	_clear_trial_ui_state()
 	var board = get_node_or_null("/root/TaskBoard")
 	if board and board.has_method("reset_all"):
 		board.reset_all()
@@ -2342,13 +2341,12 @@ func _reset_trial_world_state() -> void:
 	if _trial_customer != null and is_instance_valid(_trial_customer):
 		_trial_customer.queue_free()
 	_trial_customer = null
-	if _trial_handoff_customer != null and is_instance_valid(_trial_handoff_customer):
-		_trial_handoff_customer.queue_free()
-	_trial_handoff_customer = null
 	_trial_food_task_id = ""
 	_trial_drink_task_id = ""
 	_trial_handoff_task_id = ""
 	_trial_handoff_request_id = ""
+	_trial_delete_item_uid = 0
+	_trial_delete_item_name = ""
 	_clear_actor_inventory("player")
 	_clear_actor_inventory("robot")
 	var robot = _trial_robot()
@@ -2374,6 +2372,20 @@ func _reset_trial_world_state() -> void:
 	_update_robot_task_panel()
 	_update_customer_panel()
 
+func _clear_trial_ui_state() -> void:
+	_popup_mode = POPUP_MODE_NONE
+	_kitchen_pick_options.clear()
+	_hide_trial_guide()
+	hide_inventory_portal()
+	_help_prompt_cards.clear()
+	_last_help_bubble_utterance_by_request.clear()
+	_shown_help_system_notice_by_request.clear()
+	_auto_open_in_flight.clear()
+	if help_prompt_stack:
+		_clear_dynamic_children(help_prompt_stack)
+		help_prompt_stack.visible = false
+	_hide_player_dialogue_overlay()
+
 func _clear_actor_inventory(group_name: String) -> void:
 	var actors = get_tree().get_nodes_in_group(group_name)
 	if actors.is_empty():
@@ -2390,11 +2402,6 @@ func _is_trial_customer_task(payload: Dictionary) -> bool:
 	if _trial_customer == null or not is_instance_valid(_trial_customer):
 		return false
 	return int(payload.get("customer_instance_id", 0)) == _trial_customer.get_instance_id()
-
-func _is_trial_handoff_customer_task(payload: Dictionary) -> bool:
-	if _trial_handoff_customer == null or not is_instance_valid(_trial_handoff_customer):
-		return false
-	return int(payload.get("customer_instance_id", 0)) == _trial_handoff_customer.get_instance_id()
 
 func _trial_robot() -> Node:
 	var robots = get_tree().get_nodes_in_group("robot")
@@ -2431,6 +2438,72 @@ func _trial_help_accept_target() -> Dictionary:
 	if accept_btn == null or not is_instance_valid(accept_btn):
 		return {}
 	return {"type": "control", "id": accept_btn.get_instance_id()}
+
+func _trial_inventory_delete_button_target() -> Dictionary:
+	if inventory_portal_list == null or _trial_delete_item_uid <= 0:
+		return {}
+	for row in inventory_portal_list.get_children():
+		if not (row is HBoxContainer):
+			continue
+		for child in row.get_children():
+			if not (child is Button):
+				continue
+			var button := child as Button
+			if int(button.get_meta("inventory_item_uid", 0)) == _trial_delete_item_uid:
+				return {"type": "control", "id": button.get_instance_id()}
+	return {}
+
+func _trial_player_inventory_lines_target() -> Dictionary:
+	if _player_inventory_holding_label == null or not is_instance_valid(_player_inventory_holding_label):
+		return {}
+	var item_target := _trial_player_inventory_item_target(_trial_delete_item_name)
+	if item_target.is_empty():
+		return {}
+	return {
+		"type": "control_group",
+		"ids": [
+			_player_inventory_holding_label.get_instance_id(),
+			int(item_target.get("id", 0))
+		]
+	}
+
+func _trial_player_inventory_item_target(item_name: String) -> Dictionary:
+	var key := item_name.strip_edges().to_lower()
+	if key == "":
+		return {}
+	var label: Label = _player_inventory_item_labels_by_name.get(key, null)
+	if label == null or not is_instance_valid(label):
+		return {}
+	return {"type": "control", "id": label.get_instance_id()}
+
+func _trial_player_inventory() -> Inventory:
+	var players := get_tree().get_nodes_in_group("player")
+	if players.is_empty():
+		return null
+	var player = players[0]
+	var inv = null
+	if "inventory" in player and player.inventory != null:
+		inv = player.inventory
+	else:
+		inv = player.get_node_or_null("Inventory")
+	if inv != null and inv is Inventory:
+		return inv as Inventory
+	return null
+
+func _trial_has_delete_item() -> bool:
+	var inv := _trial_player_inventory()
+	if inv == null:
+		return false
+	return _inventory_contains_uid(inv.items, _trial_delete_item_uid)
+
+func _inventory_contains_uid(items: Array, item_uid: int) -> bool:
+	if item_uid <= 0:
+		return false
+	for raw_item in items:
+		var item: Dictionary = raw_item
+		if int(item.get("uid", 0)) == item_uid:
+			return true
+	return false
 
 func _trial_handoff_prompt_target() -> Dictionary:
 	if _trial_handoff_request_id == "":
@@ -2485,7 +2558,8 @@ func _update_trial_guide_overlay() -> void:
 	var rect := _resolve_trial_guide_target_rect(_trial_guide_target)
 	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 		return
-	var focus_rect := rect.grow(8.0)
+	var hide_focus_border := bool(_trial_guide_target.get("hide_focus_border", false))
+	var focus_rect := rect if hide_focus_border else rect.grow(8.0)
 	var view_size := get_viewport().get_visible_rect().size
 	var clipped_focus := Rect2(
 		Vector2(clampf(focus_rect.position.x, 0.0, view_size.x), clampf(focus_rect.position.y, 0.0, view_size.y)),
@@ -2506,17 +2580,34 @@ func _update_trial_guide_overlay() -> void:
 	if _trial_guide_dim_right:
 		_trial_guide_dim_right.position = Vector2(clipped_focus.end.x, clipped_focus.position.y)
 		_trial_guide_dim_right.size = Vector2(maxf(0.0, view_size.x - clipped_focus.end.x), maxf(0.0, clipped_focus.size.y))
-	_trial_guide_focus.visible = not bool(_trial_guide_target.get("hide_focus_border", false))
+	_trial_guide_focus.visible = not hide_focus_border
 	_trial_guide_focus.position = focus_rect.position
 	_trial_guide_focus.size = focus_rect.size
 	var place_above := false
 	if _trial_guide_message_panel.visible:
+		var message_min_width := float(_trial_guide_target.get("message_min_width", 280.0))
+		_trial_guide_message_label.custom_minimum_size = Vector2(message_min_width, 0.0)
 		var message_size := _trial_guide_message_panel.get_combined_minimum_size()
 		_trial_guide_message_panel.size = message_size
+		var message_side := str(_trial_guide_target.get("message_side", ""))
 		var message_x := clampf(focus_rect.get_center().x - message_size.x * 0.5, 24.0, maxf(24.0, view_size.x - message_size.x - 24.0))
-		var prefer_below := bool(_trial_guide_target.get("prefer_below", false))
-		place_above = focus_rect.position.y >= message_size.y + 70.0 and not prefer_below
-		var message_y := focus_rect.position.y - message_size.y - 48.0 if place_above else focus_rect.position.y + focus_rect.size.y + 56.0
+		var message_y := focus_rect.position.y + focus_rect.size.y + 56.0
+		if message_side == "right":
+			var right_x := focus_rect.end.x + 32.0
+			var fits_right := right_x + message_size.x <= view_size.x - 24.0
+			if fits_right:
+				message_x = right_x
+				message_y = clampf(
+					focus_rect.get_center().y - message_size.y * 0.5,
+					24.0,
+					maxf(24.0, view_size.y - message_size.y - 24.0)
+				)
+			else:
+				message_y = focus_rect.position.y + focus_rect.size.y + 56.0
+		else:
+			var prefer_below := bool(_trial_guide_target.get("prefer_below", false))
+			place_above = focus_rect.position.y >= message_size.y + 70.0 and not prefer_below
+			message_y = focus_rect.position.y - message_size.y - 48.0 if place_above else focus_rect.position.y + focus_rect.size.y + 56.0
 		message_y += float(_trial_guide_target.get("message_offset_y", 0.0))
 		_trial_guide_message_panel.position = Vector2(message_x, message_y)
 	var arrow_rect := focus_rect
@@ -2560,6 +2651,22 @@ func _resolve_trial_guide_target_rect(target: Dictionary = _trial_guide_target) 
 			var control = instance_from_id(int(target.get("id", 0)))
 			if control != null and control is Control:
 				return (control as Control).get_global_rect()
+		"control_group":
+			var ids: Array = target.get("ids", [])
+			var union_rect := Rect2()
+			var found := false
+			for raw_id in ids:
+				var control_obj = instance_from_id(int(raw_id))
+				if control_obj == null or not (control_obj is Control):
+					continue
+				var control_rect := (control_obj as Control).get_global_rect()
+				if not found:
+					union_rect = control_rect
+					found = true
+				else:
+					union_rect = union_rect.merge(control_rect)
+			if found:
+				return union_rect
 		"world_customer":
 			var node = instance_from_id(int(target.get("id", 0)))
 			if node != null and node is Node2D:
