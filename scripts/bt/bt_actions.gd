@@ -90,8 +90,6 @@ class ActNavigate extends Core.Task:
 		var start_nav_now: Vector2 = NavigationServer2D.map_get_closest_point(nav_map, actor.global_position)
 		var target_nav_now: Vector2 = NavigationServer2D.map_get_closest_point(nav_map, _final_target)
 		var server_path: PackedVector2Array = NavigationServer2D.map_get_path(nav_map, start_nav_now, target_nav_now, true, 1)
-		if actor.has_method("set_nav_debug_path"):
-			actor.call("set_nav_debug_path", server_path)
 
 		var now_ms: int = Time.get_ticks_msec()
 		if now_ms - _last_pos_time >= 200:

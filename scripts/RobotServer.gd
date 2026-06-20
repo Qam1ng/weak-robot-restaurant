@@ -10,7 +10,6 @@ class_name RobotServer
 
 var _moving: bool = false
 var _last_dir: Vector2 = Vector2.DOWN
-var _nav_debug_line: Line2D = null
 
 # ---------- BT ----------
 const Core = preload("res://scripts/bt/bt_core.gd")
@@ -193,21 +192,10 @@ func _ready() -> void:
 	agent.neighbor_distance = 120.0
 	agent.time_horizon = 1.0
 	agent.debug_enabled = false
-	if _has_property(agent, "debug_use_custom"):
-		agent.set("debug_use_custom", true)
-	if _has_property(agent, "debug_path_custom_color"):
-		agent.set("debug_path_custom_color", Color(1.0, 0.15, 0.15, 1.0))
-	if _has_property(agent, "debug_path_custom_line_width"):
-		agent.set("debug_path_custom_line_width", 3.0)
 	
 	if agent.avoidance_enabled:
 		agent.velocity_computed.connect(_on_agent_velocity_computed)
 	await _wait_for_nav_sync(agent.get_navigation_map(), 120)
-
-	if has_node("NavDebugPath"):
-		_nav_debug_line = get_node("NavDebugPath") as Line2D
-		if _nav_debug_line != null:
-			_nav_debug_line.visible = false
 
 	# Dynamic RayCast creation for BT Avoidance
 	if not has_node("RayCast2D"):
@@ -872,7 +860,6 @@ func _clear_current_task_runtime() -> void:
 	bt_runner.bb.erase("target_customer")
 	bt_runner.bb["last_plan_failed"] = false
 	bt_runner.bb["planned_actions"] = []
-	set_nav_debug_path(PackedVector2Array())
 	_waiting_for_help = false
 	_help_item_needed = ""
 	_active_help_request_id = ""
@@ -1690,20 +1677,6 @@ func _on_help_request_resolved(request: Dictionary) -> void:
 	if _active_help_request_id == req_id:
 		_active_help_request_id = ""
 		_active_help_request_type = ""
-
-func set_nav_debug_path(world_points: PackedVector2Array) -> void:
-	if _nav_debug_line == null:
-		return
-	if not _nav_debug_line.visible:
-		_nav_debug_line.points = PackedVector2Array()
-		return
-	if world_points.is_empty():
-		_nav_debug_line.points = PackedVector2Array()
-		return
-	var local_points := PackedVector2Array()
-	for p in world_points:
-		local_points.push_back(to_local(p))
-	_nav_debug_line.points = local_points
 
 func _on_agent_velocity_computed(safe_velocity: Vector2) -> void:
 	if _waiting_for_help:
