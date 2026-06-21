@@ -187,6 +187,8 @@ func log_help_request_event(_event_type: String, request: Dictionary, _extra: Di
 		"episode_id": get_current_episode_id(),
 		"request_id": str(request.get("id", "")),
 		"request_type": str(request.get("type", "")),
+		"delegation_scenario": str(request.get("delegation_scenario", "")),
+		"request_index_in_session": int(request.get("request_index_in_session", 0)),
 		"status": str(request.get("status", "")),
 		"created_at_ms": int(request.get("created_at_ms", 0)),
 		"updated_at_ms": int(request.get("updated_at_ms", 0)),

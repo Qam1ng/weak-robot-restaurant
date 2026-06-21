@@ -234,6 +234,8 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
     episode_id: sanitizeText(data.episode_id, ""),
     request_id: requestId,
     request_type: sanitizeText(data.request_type, ""),
+    delegation_scenario: sanitizeText(data.delegation_scenario, ""),
+    request_index_in_session: asNumber(data.request_index_in_session, 0),
     status: sanitizeText(data.status, ""),
     created_at_ms: asNumber(data.created_at_ms, 0),
     updated_at_ms: asNumber(data.updated_at_ms, 0),

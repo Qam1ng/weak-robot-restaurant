@@ -38,6 +38,10 @@ const TASK_STATE_IN_PROGRESS := "in_progress"
 const TASK_STATE_COMPLETED := "completed"
 const TASK_STATE_FAILED := "failed"
 const HELP_TYPE_HANDOFF := "HANDOFF"
+const DELEGATION_SCENARIO_BATTERY_PRESSURE := "battery_pressure"
+const DELEGATION_SCENARIO_WORKLOAD_OVERLOAD := "workload_overload"
+const DELEGATION_SCENARIO_DEADLINE_PRESSURE := "deadline_pressure"
+const DELEGATION_SCENARIO_TRIAL_TUTORIAL := "trial_tutorial"
 const CHARGING_MARKER := "RS1"
 const IDLE_WAIT_MARKER := "RG4"
 const EMERGENCY_RECHARGE_RESUME_LEVEL := 55.0
@@ -1136,7 +1140,8 @@ func _tick_emergency_delegation() -> bool:
 		"task_id": _active_task_id,
 		"item_needed": item_needed,
 		"reason": reason,
-		"slack_ms": slack_ms
+		"slack_ms": slack_ms,
+		"delegation_scenario": DELEGATION_SCENARIO_BATTERY_PRESSURE
 		}, {
 			"cooldown_ms": 2500,
 			"max_escalation": 1,
@@ -1195,7 +1200,8 @@ func _tick_overload_handoff_delegation() -> bool:
 		"task_id": _active_task_id,
 		"item_needed": item_needed,
 		"reason": "robot_over_threshold_post_take_order",
-		"slack_ms": slack_ms
+		"slack_ms": slack_ms,
+		"delegation_scenario": DELEGATION_SCENARIO_WORKLOAD_OVERLOAD
 	}, {
 		"cooldown_ms": 4000,
 		"max_escalation": 2,
@@ -1243,6 +1249,7 @@ func _tick_trial_item_handoff() -> bool:
 		"task_id": _active_task_id,
 		"item_needed": _trial_handoff_item_needed,
 		"reason": "trial_task_handoff",
+		"delegation_scenario": DELEGATION_SCENARIO_TRIAL_TUTORIAL,
 		"trial_accept_only": true,
 		"trial_force_prompt": true
 	}, {
@@ -1310,7 +1317,8 @@ func _tick_deadline_handoff_delegation() -> bool:
 		"task_id": task_id,
 		"item_needed": item_needed,
 		"reason": "deadline_critical",
-		"slack_ms": slack_ms
+		"slack_ms": slack_ms,
+		"delegation_scenario": DELEGATION_SCENARIO_DEADLINE_PRESSURE
 	}, {
 		"cooldown_ms": 2500,
 		"max_escalation": 1,

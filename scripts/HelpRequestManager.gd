@@ -21,11 +21,13 @@ const PersuasionEngineScript = preload("res://scripts/PersuasionEngine.gd")
 var _requests_by_id: Dictionary = {}
 var _order: Array[String] = []
 var _next_id: int = 1
+var _request_index_in_session: int = 0
 
 func reset_all() -> void:
 	_requests_by_id.clear()
 	_order.clear()
 	_next_id = 1
+	_request_index_in_session = 0
 	PersuasionEngineScript.reset_assignment_state()
 
 func _ready() -> void:
@@ -61,17 +63,20 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 	var now_ms := Time.get_ticks_msec()
 	var request_id := "help_%06d" % _next_id
 	_next_id += 1
+	_request_index_in_session += 1
 
 	var max_escalation := int(options.get("max_escalation", 2))
 	var cooldown_ms := int(options.get("cooldown_ms", 4000))
 	var urgency := float(options.get("urgency", 0.5))
+	var copied_payload := payload.duplicate(true)
+	var delegation_scenario := str(copied_payload.get("delegation_scenario", "")).strip_edges()
 
 	var req := {
 		"id": request_id,
 		"type": request_type,
 		"status": STATUS_PENDING,
 		"robot_instance_id": robot.get_instance_id(),
-		"payload": payload.duplicate(true),
+		"payload": copied_payload,
 		"created_at_ms": now_ms,
 		"updated_at_ms": now_ms,
 		"last_prompt_ms": 0,
@@ -97,6 +102,8 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"delivery_actor": "",
 		"customer_timed_out": false,
 		"score_delta": 0,
+		"delegation_scenario": delegation_scenario,
+		"request_index_in_session": _request_index_in_session,
 		"experiment": {},
 		"assignment_pending": true
 	}
