@@ -16,11 +16,11 @@ const CustomerScene = preload("res://scenes/Customer.tscn")
 
 
 const PERIOD_CONFIG = {
-	"morning": {"max": 4, "interval_min": 22.0, "interval_max": 38.0, "batch_min": 1, "batch_max": 2},
-	"lunch": {"max": 6, "interval_min": 10.0, "interval_max": 18.0, "batch_min": 2, "batch_max": 2},
-	"afternoon": {"max": 4, "interval_min": 24.0, "interval_max": 42.0, "batch_min": 1, "batch_max": 2},
-	"dinner": {"max": 6, "interval_min": 9.0, "interval_max": 16.0, "batch_min": 2, "batch_max": 2},
-	"night": {"max": 3, "interval_min": 36.0, "interval_max": 60.0, "batch_min": 1, "batch_max": 1}
+	"morning": {"max": 4, "interval_min": 20.0, "interval_max": 30.0, "batch_min": 1, "batch_max": 2},
+	"lunch": {"max": 6, "interval_min": 10.0, "interval_max": 20.0, "batch_min": 2, "batch_max": 2},
+	"afternoon": {"max": 4, "interval_min": 20.0, "interval_max": 30.0, "batch_min": 1, "batch_max": 2},
+	"dinner": {"max": 6, "interval_min": 10.0, "interval_max": 20.0, "batch_min": 2, "batch_max": 2},
+	"night": {"max": 4, "interval_min": 30.0, "interval_max": 40.0, "batch_min": 1, "batch_max": 1}
 }
 
 
@@ -266,6 +266,13 @@ func disable() -> void:
 func get_customer_count() -> int:
 	_cleanup_inactive_customers()
 	return active_customers.size()
+
+func get_current_max_customers() -> int:
+	return _current_max_customers
+
+func get_spawn_interval_midpoint() -> float:
+	var config = _get_current_config()
+	return (float(config.get("interval_min", 30.0)) + float(config.get("interval_max", 30.0))) * 0.5
 
 func reset_first_spawn_drink_guarantee() -> void:
 	_force_first_spawned_customer_drink = true

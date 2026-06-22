@@ -194,9 +194,9 @@ static func _urgency_bucket(urgency: float) -> String:
 	return "medium"
 
 static func _busyness_bucket(busyness: float) -> String:
-	if busyness >= 1.5:
+	if busyness >= 0.75:
 		return "high"
-	if busyness <= 1.05:
+	if busyness < 0.35:
 		return "low"
 	return "medium"
 
