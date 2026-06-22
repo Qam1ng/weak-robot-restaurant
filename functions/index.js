@@ -197,7 +197,6 @@ async function assignStrategyGlobally(data) {
   return {
     request_id: requestId,
     strategy: chosen,
-    assignment_method: "global_db_stratified_weighted_random",
     assignment_buckets: buckets,
   };
 }
@@ -254,11 +253,9 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
     trait_A: asNumber(data.trait_A, 0.0),
     trait_N: asNumber(data.trait_N, 0.0),
     strategy: sanitizeText(data.strategy, ""),
-    assignment_method: sanitizeText(data.assignment_method, ""),
     assignment_buckets: sanitizeAssignmentBuckets(data.assignment_buckets),
     template_id: sanitizeText(data.template_id, ""),
     utterance: sanitizeText(data.utterance, ""),
-    utterance_source: sanitizeText(data.utterance_source, ""),
     escalation_count: asNumber(data.escalation_count, 0),
     response: sanitizeText(data.response, ""),
     response_latency_ms: asNumber(data.response_latency_ms, -1),

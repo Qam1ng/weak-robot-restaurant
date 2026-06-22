@@ -84,7 +84,6 @@ static func assign_strategy_locally(context: Dictionary) -> Dictionary:
 
 	return {
 		"strategy": chosen,
-		"method": "session_local_stratified_weighted_random",
 		"buckets": buckets
 	}
 

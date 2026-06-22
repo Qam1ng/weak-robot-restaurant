@@ -90,12 +90,10 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 		"resolution_path": "",
 		"context_snapshot": {},
 		"strategy": "",
-		"assignment_method": "",
 		"assignment_buckets": {},
 		"system_notice": "",
 		"utterance": "",
 		"template_id": "",
-		"utterance_source": "template_library",
 		"last_response": "",
 		"task_completed": false,
 		"task_failed": false,
@@ -338,7 +336,6 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 		return
 	var assignment: Dictionary = {
 		"strategy": str(top.get("strategy", "")),
-		"method": str(top.get("assignment_method", "")),
 		"buckets": top.get("assignment_buckets", {})
 	}
 	_finalize_strategy_assignment(request_id, assignment)
@@ -352,14 +349,10 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 	var strategy := str(assignment.get("strategy", "")).strip_edges()
 	if strategy == "":
 		strategy = PersuasionEngineScript.STRATEGY_AUTHORITY
-	var method := str(assignment.get("method", "")).strip_edges()
-	if method == "":
-		method = "session_local_stratified_weighted_random"
 	var buckets: Dictionary = assignment.get("buckets", {})
 	if buckets.is_empty():
 		buckets = PersuasionEngineScript.build_assignment_buckets(req.get("context_snapshot", {}))
 	req["strategy"] = strategy
-	req["assignment_method"] = method
 	req["assignment_buckets"] = buckets
 	_refresh_request_surface(req)
 	req["assignment_pending"] = false
@@ -378,7 +371,6 @@ func _refresh_request_surface(req: Dictionary) -> void:
 	req["template_id"] = str(rendered.get("template_id", ""))
 	req["utterance"] = str(rendered.get("utterance", ""))
 	req["escalation"] = rendered.get("escalation", {})
-	req["utterance_source"] = "template_library"
 
 func _should_use_backend_assignment() -> bool:
 	return OS.has_feature("web")
