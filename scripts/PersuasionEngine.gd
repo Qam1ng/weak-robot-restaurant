@@ -69,9 +69,9 @@ static var _rng_seeded := false
 static func reset_assignment_state() -> void:
 	_assignment_counts.clear()
 
-static func assign_strategy_locally(request_type: String, context: Dictionary) -> Dictionary:
+static func assign_strategy_locally(context: Dictionary) -> Dictionary:
 	_ensure_rng_seeded()
-	var buckets := build_assignment_buckets(request_type, context)
+	var buckets := build_assignment_buckets(context)
 	var assignment_key := _assignment_key_from_buckets(buckets)
 	var counts: Dictionary = _assignment_counts.get(assignment_key, {})
 	if counts.is_empty():
@@ -88,7 +88,7 @@ static func assign_strategy_locally(request_type: String, context: Dictionary) -
 		"buckets": buckets
 	}
 
-static func build_assignment_buckets(request_type: String, context: Dictionary) -> Dictionary:
+static func build_assignment_buckets(context: Dictionary) -> Dictionary:
 	var robot: Dictionary = context.get("robot", {})
 	var player: Dictionary = context.get("player", {})
 	var env: Dictionary = context.get("environment", {})

@@ -122,7 +122,7 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 		exp_snapshot = exp.get_snapshot()
 	req["experiment"] = exp_snapshot
 
-	req["assignment_buckets"] = PersuasionEngineScript.build_assignment_buckets(TYPE_HANDOFF, context)
+	req["assignment_buckets"] = PersuasionEngineScript.build_assignment_buckets(context)
 	req["system_notice"] = _build_system_notice(payload)
 
 	_requests_by_id[request_id] = req
@@ -298,7 +298,7 @@ func _begin_strategy_assignment(request_id: String) -> void:
 		_request_remote_strategy_assignment(req)
 		return
 	var context: Dictionary = req.get("context_snapshot", {})
-	var assignment: Dictionary = PersuasionEngineScript.assign_strategy_locally(TYPE_HANDOFF, context)
+	var assignment: Dictionary = PersuasionEngineScript.assign_strategy_locally(context)
 	_finalize_strategy_assignment(request_id, assignment)
 
 func _request_remote_strategy_assignment(req: Dictionary) -> void:
@@ -318,10 +318,7 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 	if err != OK:
 		if is_instance_valid(http):
 			http.queue_free()
-		var fallback: Dictionary = PersuasionEngineScript.assign_strategy_locally(
-			TYPE_HANDOFF,
-			req.get("context_snapshot", {})
-		)
+		var fallback: Dictionary = PersuasionEngineScript.assign_strategy_locally(req.get("context_snapshot", {}))
 		_finalize_strategy_assignment(request_id, fallback)
 
 func _on_strategy_assignment_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, request_id: String) -> void:
@@ -331,18 +328,12 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 	if req.is_empty():
 		return
 	if code < 200 or code >= 300:
-		var fallback: Dictionary = PersuasionEngineScript.assign_strategy_locally(
-			TYPE_HANDOFF,
-			req.get("context_snapshot", {})
-		)
+		var fallback: Dictionary = PersuasionEngineScript.assign_strategy_locally(req.get("context_snapshot", {}))
 		_finalize_strategy_assignment(request_id, fallback)
 		return
 	var top: Variant = JSON.parse_string(body.get_string_from_utf8())
 	if not (top is Dictionary):
-		var fallback_parse: Dictionary = PersuasionEngineScript.assign_strategy_locally(
-			TYPE_HANDOFF,
-			req.get("context_snapshot", {})
-		)
+		var fallback_parse: Dictionary = PersuasionEngineScript.assign_strategy_locally(req.get("context_snapshot", {}))
 		_finalize_strategy_assignment(request_id, fallback_parse)
 		return
 	var assignment: Dictionary = {
@@ -366,10 +357,7 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 		method = "session_local_stratified_weighted_random"
 	var buckets: Dictionary = assignment.get("buckets", {})
 	if buckets.is_empty():
-		buckets = PersuasionEngineScript.build_assignment_buckets(
-			TYPE_HANDOFF,
-			req.get("context_snapshot", {})
-		)
+		buckets = PersuasionEngineScript.build_assignment_buckets(req.get("context_snapshot", {}))
 	req["strategy"] = strategy
 	req["assignment_method"] = method
 	req["assignment_buckets"] = buckets
