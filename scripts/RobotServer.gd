@@ -45,7 +45,7 @@ const CHARGING_MARKER := "RS1"
 const IDLE_WAIT_MARKER := "RG4"
 const EMERGENCY_RECHARGE_RESUME_LEVEL := 55.0
 const EMERGENCY_HANDOFF_APPROACH_DISTANCE := 120.0
-const DEADLINE_HANDOFF_TRIGGER_MS := 45_000
+const DEADLINE_HANDOFF_TRIGGER_MS := 55_000
 const ORPHAN_FOOD_ITEM_TTL_MS := 45_000
 const PLAYER_ITEM_TTL_MS := 120_000
 const RECIPROCITY_FULFILLMENT_MULTIPLIER := 1.15
@@ -506,7 +506,7 @@ func _start_claimed_task(task: Dictionary) -> void:
 	_plan_current_task_step()
 
 func _robot_handoff_threshold_tasks() -> int:
-	return 5
+	return 4
 
 func _activate_task_context(task: Dictionary) -> bool:
 	_active_task_id = str(task.get("id", ""))
