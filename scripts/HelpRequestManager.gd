@@ -19,12 +19,14 @@ const STATUS_RESOLVED := "resolved"
 const PersuasionEngineScript = preload("res://scripts/PersuasionEngine.gd")
 
 var _requests_by_id: Dictionary = {}
+var _request_runtime_by_id: Dictionary = {}
 var _order: Array[String] = []
 var _next_id: int = 1
 var _request_index_in_session: int = 0
 
 func reset_all() -> void:
 	_requests_by_id.clear()
+	_request_runtime_by_id.clear()
 	_order.clear()
 	_next_id = 1
 	_request_index_in_session = 0
@@ -49,14 +51,17 @@ func _process(_dt: float) -> void:
 			continue
 		if str(req.get("status", "")) != STATUS_COOLDOWN:
 			continue
-		if now_ms < int(req.get("cooldown_until_ms", 0)):
+		var runtime := _runtime_for(request_id)
+		if now_ms < int(runtime.get("cooldown_until_ms", 0)):
 			continue
 		req["status"] = STATUS_PENDING
-		req["updated_at_ms"] = now_ms
+		runtime["cooldown_until_ms"] = 0
+		_request_runtime_by_id[request_id] = runtime
 		_requests_by_id[request_id] = req
 		_log_help_event("cooldown_expired", req)
 		request_updated.emit(_copy(req))
-func create_request(request_type: String, robot: Node, payload: Dictionary = {}, options: Dictionary = {}) -> Dictionary:
+
+func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary = {}) -> Dictionary:
 	if robot == null or not is_instance_valid(robot):
 		return {}
 
@@ -73,17 +78,12 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 
 	var req := {
 		"id": request_id,
-		"type": request_type,
 		"status": STATUS_PENDING,
 		"robot_instance_id": robot.get_instance_id(),
 		"payload": copied_payload,
 		"created_at_ms": now_ms,
-		"updated_at_ms": now_ms,
 		"last_prompt_ms": 0,
-		"cooldown_until_ms": 0,
-		"cooldown_ms": cooldown_ms,
 		"escalation_count": 0,
-		"max_escalation": max_escalation,
 		"escalation": {},
 		"urgency": urgency,
 		"final_response": "",
@@ -108,6 +108,12 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		"assignment_pending": true
 	}
 
+	_request_runtime_by_id[request_id] = {
+		"cooldown_ms": cooldown_ms,
+		"cooldown_until_ms": 0,
+		"max_escalation": max_escalation
+	}
+
 	var context = _build_context(robot, req, options)
 	req["context_snapshot"] = context
 	var exp = _experiment_config()
@@ -116,7 +122,7 @@ func create_request(request_type: String, robot: Node, payload: Dictionary = {},
 		exp_snapshot = exp.get_snapshot()
 	req["experiment"] = exp_snapshot
 
-	req["assignment_buckets"] = PersuasionEngineScript.build_assignment_buckets(request_type, context)
+	req["assignment_buckets"] = PersuasionEngineScript.build_assignment_buckets(TYPE_HANDOFF, context)
 	req["system_notice"] = _build_system_notice(payload)
 
 	_requests_by_id[request_id] = req
@@ -146,7 +152,7 @@ func get_promptable_request_for_robot(robot: Node) -> Dictionary:
 			continue
 		if bool(req.get("assignment_pending", false)):
 			continue
-		if now_ms < int(req.get("cooldown_until_ms", 0)):
+		if now_ms < int(_runtime_for(request_id).get("cooldown_until_ms", 0)):
 			continue
 
 		var escalation := int(req.get("escalation_count", 0))
@@ -165,7 +171,6 @@ func mark_prompted(request_id: String) -> void:
 	if req.is_empty():
 		return
 	req["last_prompt_ms"] = Time.get_ticks_msec()
-	req["updated_at_ms"] = req["last_prompt_ms"]
 	_requests_by_id[request_id] = req
 	_log_help_event("prompted", req)
 	request_updated.emit(_copy(req))
@@ -187,23 +192,24 @@ func respond(request_id: String, response: String) -> Dictionary:
 		RESPONSE_ACCEPT:
 			req["status"] = STATUS_ACCEPTED
 			req["final_response"] = RESPONSE_ACCEPT
-			req["updated_at_ms"] = now_ms
 		RESPONSE_DECLINE:
 			req["status"] = STATUS_RESOLVED
 			req["final_response"] = RESPONSE_DECLINE
 			req["resolution_path"] = "declined"
-			req["updated_at_ms"] = now_ms
+			_request_runtime_by_id.erase(request_id)
 		RESPONSE_LATER:
+			var runtime := _runtime_for(request_id)
 			var escalation := int(req.get("escalation_count", 0)) + 1
 			req["escalation_count"] = escalation
-			req["updated_at_ms"] = now_ms
-			if escalation >= int(req.get("max_escalation", 2)):
+			if escalation >= int(runtime.get("max_escalation", 2)):
 				req["status"] = STATUS_RESOLVED
 				req["final_response"] = RESPONSE_DECLINE
 				req["resolution_path"] = "later_threshold_decline"
+				_request_runtime_by_id.erase(request_id)
 			else:
 				req["status"] = STATUS_COOLDOWN
-				req["cooldown_until_ms"] = now_ms + int(req.get("cooldown_ms", 4000))
+				runtime["cooldown_until_ms"] = now_ms + int(runtime.get("cooldown_ms", 4000))
+				_request_runtime_by_id[request_id] = runtime
 				_refresh_request_surface(req)
 		_:
 			return _copy(req)
@@ -229,8 +235,8 @@ func complete_request(request_id: String, resolution_path: String = "cooperative
 	if str(req.get("final_response", "")) == "":
 		req["final_response"] = RESPONSE_ACCEPT
 	req["resolution_path"] = resolution_path
-	req["updated_at_ms"] = Time.get_ticks_msec()
 	_requests_by_id[request_id] = req
+	_request_runtime_by_id.erase(request_id)
 
 	var copied := _copy(req)
 	print("[HelpRequest] Completed ", request_id, " path=", resolution_path)
@@ -248,8 +254,8 @@ func cancel_request(request_id: String, resolution_path: String = "invalidated")
 		return _copy(req)
 	req["status"] = STATUS_RESOLVED
 	req["resolution_path"] = resolution_path
-	req["updated_at_ms"] = Time.get_ticks_msec()
 	_requests_by_id[request_id] = req
+	_request_runtime_by_id.erase(request_id)
 	var copied := _copy(req)
 	_log_help_event("canceled", req)
 	_log_help_event("resolved", req)
@@ -265,8 +271,9 @@ func requeue_request(request_id: String, cooldown_ms: int = 1500, resolution_not
 		return _copy(req)
 	var now_ms := Time.get_ticks_msec()
 	req["status"] = STATUS_COOLDOWN
-	req["updated_at_ms"] = now_ms
-	req["cooldown_until_ms"] = now_ms + maxi(cooldown_ms, 0)
+	var runtime := _runtime_for(request_id)
+	runtime["cooldown_until_ms"] = now_ms + maxi(cooldown_ms, 0)
+	_request_runtime_by_id[request_id] = runtime
 	req["resolution_path"] = resolution_note
 	req["final_response"] = ""
 	req["last_response"] = ""
@@ -290,9 +297,8 @@ func _begin_strategy_assignment(request_id: String) -> void:
 	if _should_use_backend_assignment():
 		_request_remote_strategy_assignment(req)
 		return
-	var request_type := str(req.get("type", TYPE_HANDOFF))
 	var context: Dictionary = req.get("context_snapshot", {})
-	var assignment: Dictionary = PersuasionEngineScript.assign_strategy_locally(request_type, context)
+	var assignment: Dictionary = PersuasionEngineScript.assign_strategy_locally(TYPE_HANDOFF, context)
 	_finalize_strategy_assignment(request_id, assignment)
 
 func _request_remote_strategy_assignment(req: Dictionary) -> void:
@@ -301,7 +307,6 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 		return
 	var body := {
 		"request_id": request_id,
-		"request_type": str(req.get("type", TYPE_HANDOFF)),
 		"assignment_buckets": req.get("assignment_buckets", {})
 	}
 	var http := HTTPRequest.new()
@@ -314,7 +319,7 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 		if is_instance_valid(http):
 			http.queue_free()
 		var fallback: Dictionary = PersuasionEngineScript.assign_strategy_locally(
-			str(req.get("type", TYPE_HANDOFF)),
+			TYPE_HANDOFF,
 			req.get("context_snapshot", {})
 		)
 		_finalize_strategy_assignment(request_id, fallback)
@@ -327,7 +332,7 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 		return
 	if code < 200 or code >= 300:
 		var fallback: Dictionary = PersuasionEngineScript.assign_strategy_locally(
-			str(req.get("type", TYPE_HANDOFF)),
+			TYPE_HANDOFF,
 			req.get("context_snapshot", {})
 		)
 		_finalize_strategy_assignment(request_id, fallback)
@@ -335,7 +340,7 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 	var top: Variant = JSON.parse_string(body.get_string_from_utf8())
 	if not (top is Dictionary):
 		var fallback_parse: Dictionary = PersuasionEngineScript.assign_strategy_locally(
-			str(req.get("type", TYPE_HANDOFF)),
+			TYPE_HANDOFF,
 			req.get("context_snapshot", {})
 		)
 		_finalize_strategy_assignment(request_id, fallback_parse)
@@ -362,7 +367,7 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 	var buckets: Dictionary = assignment.get("buckets", {})
 	if buckets.is_empty():
 		buckets = PersuasionEngineScript.build_assignment_buckets(
-			str(req.get("type", TYPE_HANDOFF)),
+			TYPE_HANDOFF,
 			req.get("context_snapshot", {})
 		)
 	req["strategy"] = strategy
@@ -370,9 +375,8 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 	req["assignment_buckets"] = buckets
 	_refresh_request_surface(req)
 	req["assignment_pending"] = false
-	req["updated_at_ms"] = Time.get_ticks_msec()
 	_requests_by_id[request_id] = req
-	print("[HelpRequest] Created ", request_id, " type=", str(req.get("type", "")))
+	print("[HelpRequest] Created ", request_id)
 	_log_help_event("created", req)
 	var copied := _copy(req)
 	request_created.emit(copied)
@@ -498,7 +502,6 @@ func _attach_task_outcome(task: Dictionary, completed: bool) -> void:
 	req["delivery_actor"] = str(task.get("assigned_to", ""))
 	req["customer_timed_out"] = (not completed) and (failure_reason == "task_deadline_expired" or failure_reason == "customer_drink_timeout")
 	req["score_delta"] = _score_delta_for_outcome(order_kind, completed)
-	req["updated_at_ms"] = Time.get_ticks_msec()
 	_requests_by_id[request_id] = req
 	_log_help_event("task_outcome_attached", req, {
 		"task_id": task_id,
@@ -521,6 +524,13 @@ func _score_delta_for_outcome(order_kind: String, completed: bool) -> int:
 	if completed:
 		return 1 if order_kind == "drink" else 2
 	return -3 if order_kind == "drink" else -6
+
+func _runtime_for(request_id: String) -> Dictionary:
+	return _request_runtime_by_id.get(request_id, {
+		"cooldown_ms": 4000,
+		"cooldown_until_ms": 0,
+		"max_escalation": 2
+	}).duplicate(true)
 
 func _build_system_notice(payload: Dictionary) -> String:
 	var reason := str(payload.get("reason", "")).strip_edges()

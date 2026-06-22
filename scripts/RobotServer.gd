@@ -37,7 +37,6 @@ const STEP_DELIVER_AND_SERVE := "DELIVER_AND_SERVE"
 const TASK_STATE_IN_PROGRESS := "in_progress"
 const TASK_STATE_COMPLETED := "completed"
 const TASK_STATE_FAILED := "failed"
-const HELP_TYPE_HANDOFF := "HANDOFF"
 const DELEGATION_SCENARIO_BATTERY_PRESSURE := "battery_pressure"
 const DELEGATION_SCENARIO_WORKLOAD_OVERLOAD := "workload_overload"
 const DELEGATION_SCENARIO_DEADLINE_PRESSURE := "deadline_pressure"
@@ -73,7 +72,6 @@ const BATTERY_MODE_EMERGENCY := "emergency"
 var _battery_mode: String = BATTERY_MODE_NORMAL
 var _constraint_input: Dictionary = {}
 var _active_help_request_id: String = ""
-var _active_help_request_type: String = ""
 var _help_request_suppressed: bool = false
 var _overload_handoff_declined_task_id: String = ""
 var _deadline_handoff_declined_task_id: String = ""
@@ -867,7 +865,6 @@ func _clear_current_task_runtime() -> void:
 	_waiting_for_help = false
 	_help_item_needed = ""
 	_active_help_request_id = ""
-	_active_help_request_type = ""
 	_help_request_suppressed = false
 	_trial_handoff_armed_task_id = ""
 	_trial_handoff_pending_task_id = ""
@@ -1135,7 +1132,7 @@ func _tick_emergency_delegation() -> bool:
 		item_needed = str(payload.get("food_item", "item"))
 	var handoff_mode := _handoff_mode_for_active_task(item_needed)
 
-	_ensure_help_request(HELP_TYPE_HANDOFF, {
+	_ensure_help_request({
 		"handoff_mode": handoff_mode,
 		"task_id": _active_task_id,
 		"item_needed": item_needed,
@@ -1195,7 +1192,7 @@ func _tick_overload_handoff_delegation() -> bool:
 		var payload: Dictionary = task.get("payload", {})
 		item_needed = str(payload.get("food_item", "item"))
 
-	_ensure_help_request(HELP_TYPE_HANDOFF, {
+	_ensure_help_request({
 		"handoff_mode": "TAKEOVER_TASK",
 		"task_id": _active_task_id,
 		"item_needed": item_needed,
@@ -1232,7 +1229,6 @@ func _tick_trial_item_handoff() -> bool:
 				_waiting_for_help = false
 				return true
 		_active_help_request_id = ""
-		_active_help_request_type = ""
 
 	var distance_to_player := global_position.distance_to(player.global_position)
 	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
@@ -1244,7 +1240,7 @@ func _tick_trial_item_handoff() -> bool:
 
 	var handoff_mode := _handoff_mode_for_active_task(_trial_handoff_item_needed)
 
-	var req: Dictionary = help_mgr.create_request(HELP_TYPE_HANDOFF, self, {
+	var req: Dictionary = help_mgr.create_request(self, {
 		"handoff_mode": handoff_mode,
 		"task_id": _active_task_id,
 		"item_needed": _trial_handoff_item_needed,
@@ -1260,7 +1256,6 @@ func _tick_trial_item_handoff() -> bool:
 	if req.is_empty():
 		return false
 	_active_help_request_id = str(req.get("id", ""))
-	_active_help_request_type = HELP_TYPE_HANDOFF
 
 	bt_runner.bb["planned_actions"] = []
 	_waiting_for_help = false
@@ -1312,7 +1307,7 @@ func _tick_deadline_handoff_delegation() -> bool:
 	if step_name == STEP_DELIVER_AND_SERVE and _inventory_has_item_for_task(task):
 		handoff_mode = "TAKEOVER_ITEM"
 
-	_ensure_help_request(HELP_TYPE_HANDOFF, {
+	_ensure_help_request({
 		"handoff_mode": handoff_mode,
 		"task_id": task_id,
 		"item_needed": item_needed,
@@ -1491,7 +1486,7 @@ func _try_speak_recharge_notice(text: String) -> void:
 	_last_recharge_notice_ms = now_ms
 	speak(text)
 
-func _ensure_help_request(request_type: String, payload: Dictionary = {}, options: Dictionary = {}) -> void:
+func _ensure_help_request(payload: Dictionary = {}, options: Dictionary = {}) -> void:
 	var help_mgr = _help_manager()
 	if not help_mgr:
 		return
@@ -1503,12 +1498,11 @@ func _ensure_help_request(request_type: String, payload: Dictionary = {}, option
 			if status != "resolved":
 				return
 
-	var req = help_mgr.create_request(request_type, self, payload, options)
+	var req = help_mgr.create_request(self, payload, options)
 	if req.is_empty():
 		return
 
 	_active_help_request_id = str(req.get("id", ""))
-	_active_help_request_type = request_type
 	_waiting_for_help = true
 
 func _on_help_request_updated(request: Dictionary) -> void:
@@ -1524,7 +1518,6 @@ func _on_help_request_updated(request: Dictionary) -> void:
 	var reason := str(payload.get("reason", ""))
 	var task_id := str(payload.get("task_id", ""))
 	_active_help_request_id = req_id
-	_active_help_request_type = str(request.get("type", ""))
 
 	if status == "accepted":
 		_help_request_suppressed = false
@@ -1564,7 +1557,6 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 				help_mgr_retry.requeue_request(_active_help_request_id, 1800, "player_inventory_full")
 			set_waiting_for_help(false, "")
 			_active_help_request_id = ""
-			_active_help_request_type = ""
 			speak("Your inventory is full. I still have this item.")
 			return
 		elif transfer_result != "ok":
@@ -1626,7 +1618,6 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 	if help_mgr and _active_help_request_id != "":
 		help_mgr.complete_request(_active_help_request_id, "cooperative_handoff_task_transfer")
 	_active_help_request_id = ""
-	_active_help_request_type = ""
 
 func _transfer_item_to_player_for_handoff(payload: Dictionary) -> String:
 	if inventory == null or inventory.items.is_empty():
@@ -1684,7 +1675,6 @@ func _on_help_request_resolved(request: Dictionary) -> void:
 	var req_id = str(request.get("id", ""))
 	if _active_help_request_id == req_id:
 		_active_help_request_id = ""
-		_active_help_request_type = ""
 
 func _on_agent_velocity_computed(safe_velocity: Vector2) -> void:
 	if _waiting_for_help:
@@ -1782,7 +1772,6 @@ func start_trial_task_handoff(task_id: String, item_name: String) -> void:
 	bt_runner.bb["planned_actions"] = []
 	_active_step_started = false
 	_active_help_request_id = ""
-	_active_help_request_type = ""
 
 func arm_trial_item_handoff(task_id: String) -> void:
 	_trial_handoff_armed_task_id = task_id
