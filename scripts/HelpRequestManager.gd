@@ -96,7 +96,6 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 		"template_id": "",
 		"last_response": "",
 		"task_completed": false,
-		"task_failed": false,
 		"delivery_actor": "",
 		"customer_timed_out": false,
 		"score_delta": 0,
@@ -478,7 +477,6 @@ func _attach_task_outcome(task: Dictionary, completed: bool) -> void:
 	var order_kind := str(payload.get("order_kind", "food"))
 	var failure_reason := str(task.get("failure_reason", ""))
 	req["task_completed"] = completed
-	req["task_failed"] = not completed
 	req["delivery_actor"] = str(task.get("assigned_to", ""))
 	req["customer_timed_out"] = (not completed) and (failure_reason == "task_deadline_expired" or failure_reason == "customer_drink_timeout")
 	req["score_delta"] = _score_delta_for_outcome(order_kind, completed)

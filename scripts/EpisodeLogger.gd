@@ -215,7 +215,6 @@ func log_help_request_event(_event_type: String, request: Dictionary, _extra: Di
 		"final_response": str(request.get("final_response", "")),
 		"resolution_path": str(request.get("resolution_path", "")),
 		"task_completed": bool(request.get("task_completed", false)),
-		"task_failed": bool(request.get("task_failed", false)),
 		"delivery_actor": str(request.get("delivery_actor", "")),
 		"customer_timed_out": bool(request.get("customer_timed_out", false)),
 		"score_delta": int(request.get("score_delta", 0))

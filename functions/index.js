@@ -261,7 +261,6 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
     final_response: sanitizeText(data.final_response, ""),
     resolution_path: sanitizeText(data.resolution_path, ""),
     task_completed: asBoolean(data.task_completed, false),
-    task_failed: asBoolean(data.task_failed, false),
     delivery_actor: sanitizeText(data.delivery_actor, ""),
     customer_timed_out: asBoolean(data.customer_timed_out, false),
     score_delta: asNumber(data.score_delta, 0),
