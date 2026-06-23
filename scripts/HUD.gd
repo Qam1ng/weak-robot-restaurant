@@ -2358,7 +2358,6 @@ func _reset_trial_world_state() -> void:
 		robot.set("_waiting_for_help", false)
 		robot.set("_help_item_needed", "")
 		robot.set("_active_help_request_id", "")
-		robot.set("_active_help_request_type", "")
 	_score = 0
 	_success_count = 0
 	_failed_count = 0
@@ -2726,9 +2725,6 @@ func _auto_open_help_request(request: Dictionary) -> void:
 	_auto_open_in_flight.erase(rid)
 
 func _can_auto_open_request(request: Dictionary) -> bool:
-	var req_type := str(request.get("type", ""))
-	if req_type != "HANDOFF":
-		return true
 	var payload: Dictionary = request.get("payload", {})
 	if bool(payload.get("trial_force_prompt", false)):
 		return true

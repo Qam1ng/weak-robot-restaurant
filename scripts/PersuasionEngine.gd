@@ -69,9 +69,9 @@ static var _rng_seeded := false
 static func reset_assignment_state() -> void:
 	_assignment_counts.clear()
 
-static func assign_strategy_locally(request_type: String, context: Dictionary) -> Dictionary:
+static func assign_strategy_locally(context: Dictionary) -> Dictionary:
 	_ensure_rng_seeded()
-	var buckets := build_assignment_buckets(request_type, context)
+	var buckets := build_assignment_buckets(context)
 	var assignment_key := _assignment_key_from_buckets(buckets)
 	var counts: Dictionary = _assignment_counts.get(assignment_key, {})
 	if counts.is_empty():
@@ -84,11 +84,10 @@ static func assign_strategy_locally(request_type: String, context: Dictionary) -
 
 	return {
 		"strategy": chosen,
-		"method": "session_local_stratified_weighted_random",
 		"buckets": buckets
 	}
 
-static func build_assignment_buckets(request_type: String, context: Dictionary) -> Dictionary:
+static func build_assignment_buckets(context: Dictionary) -> Dictionary:
 	var robot: Dictionary = context.get("robot", {})
 	var player: Dictionary = context.get("player", {})
 	var env: Dictionary = context.get("environment", {})
@@ -96,15 +95,18 @@ static func build_assignment_buckets(request_type: String, context: Dictionary) 
 	var urgency_bucket: String = _urgency_bucket(float(env.get("urgency", 0.5)))
 	var busyness_bucket: String = _busyness_bucket(float(env.get("busyness", 1.0)))
 	var player_active_tasks_bucket: String = _player_active_tasks_bucket(int(player.get("active_tasks", 0)))
-	var battery_mode: String = str(robot.get("battery_mode", "normal")).strip_edges().to_lower()
-	if battery_mode == "":
-		battery_mode = "normal"
+	var battery_level := float(robot.get("battery_level", 100.0))
+	var battery_mode_bucket := "normal"
+	if battery_level <= 20.0:
+		battery_mode_bucket = "emergency"
+	elif battery_level <= 50.0:
+		battery_mode_bucket = "conserve"
 
 	return {
 		"urgency_bucket": urgency_bucket,
 		"busyness_bucket": busyness_bucket,
 		"player_active_tasks_bucket": player_active_tasks_bucket,
-		"battery_mode_bucket": battery_mode
+		"battery_mode_bucket": battery_mode_bucket
 	}
 
 static func pick_template(strategy: String, payload: Dictionary, escalation_count: int) -> Dictionary:
@@ -195,9 +197,9 @@ static func _urgency_bucket(urgency: float) -> String:
 	return "medium"
 
 static func _busyness_bucket(busyness: float) -> String:
-	if busyness >= 1.5:
+	if busyness >= 0.75:
 		return "high"
-	if busyness <= 1.05:
+	if busyness < 0.35:
 		return "low"
 	return "medium"
 

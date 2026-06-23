@@ -195,11 +195,23 @@ func skip_to_next_period() -> void:
 
 
 func get_busyness() -> float:
-	match current_period:
-		Period.DINNER, Period.LUNCH:
-			return 1.6
-		Period.MORNING, Period.AFTERNOON:
-			return 1.3
-		Period.NIGHT:
-			return 1.0
-	return 1.0
+	var game_manager = get_node_or_null("/root/GameManager")
+	if game_manager == null:
+		return 0.0
+	var active_customers := 0.0
+	if game_manager.has_method("get_active_customer_count"):
+		active_customers = float(game_manager.get_active_customer_count())
+	var customer_spawner = null
+	if game_manager.has_method("get_customer_spawner"):
+		customer_spawner = game_manager.get_customer_spawner()
+	if customer_spawner == null:
+		return 0.0
+	var period_capacity := 1.0
+	if customer_spawner.has_method("get_current_max_customers"):
+		period_capacity = maxf(float(customer_spawner.get_current_max_customers()), 1.0)
+	var spawn_interval_midpoint := 30.0
+	if customer_spawner.has_method("get_spawn_interval_midpoint"):
+		spawn_interval_midpoint = maxf(float(customer_spawner.get_spawn_interval_midpoint()), 1.0)
+	var occupancy := active_customers / period_capacity
+	var spawn_factor := 30.0 / spawn_interval_midpoint
+	return clampf(occupancy * spawn_factor, 0.0, 1.0)
