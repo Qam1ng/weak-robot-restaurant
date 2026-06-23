@@ -246,7 +246,6 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
     urgency: asNumber(data.urgency, 0.0),
     player_active_tasks: asNumber(data.player_active_tasks, 0),
     battery_level: asNumber(data.battery_level, 0.0),
-    battery_mode: sanitizeText(data.battery_mode, ""),
     trait_O: asNumber(data.trait_O, 0.0),
     trait_C: asNumber(data.trait_C, 0.0),
     trait_E: asNumber(data.trait_E, 0.0),

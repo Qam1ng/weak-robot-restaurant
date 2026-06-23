@@ -200,7 +200,6 @@ func log_help_request_event(_event_type: String, request: Dictionary, _extra: Di
 		"urgency": float(env.get("urgency", 0.0)),
 		"player_active_tasks": int(player.get("active_tasks", 0)),
 		"battery_level": float(robot.get("battery_level", 0.0)),
-		"battery_mode": str(robot.get("battery_mode", "")),
 		"trait_O": float(scores.get("O", 0.0)),
 		"trait_C": float(scores.get("C", 0.0)),
 		"trait_E": float(scores.get("E", 0.0)),

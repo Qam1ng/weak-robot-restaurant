@@ -95,15 +95,18 @@ static func build_assignment_buckets(context: Dictionary) -> Dictionary:
 	var urgency_bucket: String = _urgency_bucket(float(env.get("urgency", 0.5)))
 	var busyness_bucket: String = _busyness_bucket(float(env.get("busyness", 1.0)))
 	var player_active_tasks_bucket: String = _player_active_tasks_bucket(int(player.get("active_tasks", 0)))
-	var battery_mode: String = str(robot.get("battery_mode", "normal")).strip_edges().to_lower()
-	if battery_mode == "":
-		battery_mode = "normal"
+	var battery_level := float(robot.get("battery_level", 100.0))
+	var battery_mode_bucket := "normal"
+	if battery_level <= 20.0:
+		battery_mode_bucket = "emergency"
+	elif battery_level <= 50.0:
+		battery_mode_bucket = "conserve"
 
 	return {
 		"urgency_bucket": urgency_bucket,
 		"busyness_bucket": busyness_bucket,
 		"player_active_tasks_bucket": player_active_tasks_bucket,
-		"battery_mode_bucket": battery_mode
+		"battery_mode_bucket": battery_mode_bucket
 	}
 
 static func pick_template(strategy: String, payload: Dictionary, escalation_count: int) -> Dictionary:
