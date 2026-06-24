@@ -630,14 +630,10 @@ func on_player_interact(player: Node) -> void:
 		var order_kind := str(payload.get("order_kind", "food"))
 		var wanted_item := _task_payload_item_name(payload)
 		var step_name := str(task_board.get_current_step_name(task_id))
-		if step_name == "PICKUP_FROM_KITCHEN" and p_inv != null and p_inv.find_item(wanted_item) != -1:
-			task_board.complete_current_step(task_id, "PICKUP_FROM_KITCHEN")
-			task = task_board.get_task(task_id)
-			step_name = str(task_board.get_current_step_name(task_id))
-		if step_name == "DELIVER_AND_SERVE" and p_inv != null:
-			if p_inv.find_item(wanted_item) != -1:
-				if prioritized_delivery.is_empty() or order_kind == "food":
-					prioritized_delivery = task
+		var held_match: bool = p_inv != null and p_inv.find_item(wanted_item) != -1
+		if held_match and (step_name == "DELIVER_AND_SERVE" or step_name == "PICKUP_FROM_KITCHEN"):
+			if prioritized_delivery.is_empty() or order_kind == "food":
+				prioritized_delivery = task
 		elif step_name == "TAKE_ORDER":
 			if prioritized_take_order.is_empty() or order_kind == "drink":
 				prioritized_take_order = task
@@ -713,6 +709,15 @@ func _deliver_player_task_item(player: Node2D, player_inventory: Node, task: Dic
 	if inv == null:
 		return
 	var task_id := str(task.get("id", ""))
+	var step_name := str(task_board.get_current_step_name(task_id))
+	if step_name == "PICKUP_FROM_KITCHEN":
+		if not task_board.complete_current_step(task_id, "PICKUP_FROM_KITCHEN"):
+			_notify_player("Nothing to do here yet.")
+			return
+		step_name = str(task_board.get_current_step_name(task_id))
+	if step_name != "DELIVER_AND_SERVE":
+		_notify_player("Nothing to do here yet.")
+		return
 	var payload: Dictionary = task.get("payload", {})
 	var item_name := _task_payload_item_name(payload)
 	var item: Dictionary = inv.remove_matching(item_name)
