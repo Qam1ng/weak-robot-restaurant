@@ -60,6 +60,7 @@ var player_dialogue_overlay_decline_btn: Button
 var player_dialogue_overlay_later_btn: Button
 var _player_dialogue_info_cards: Array[Dictionary] = []
 var _help_prompt_cards: Array[Dictionary] = []
+var _delegation_pause_active: bool = false
 var _left_panel_width: float = 0.0
 var _last_help_bubble_utterance_by_request: Dictionary = {}
 var _shown_help_system_notice_by_request: Dictionary = {}
@@ -3047,6 +3048,7 @@ func _show_or_update_help_request_card(request: Dictionary) -> void:
 		_help_prompt_cards.append(created)
 		help_prompt_stack.add_child(created.get("node"))
 	help_prompt_stack.visible = not _help_prompt_cards.is_empty()
+	_update_delegation_pause_state()
 	_update_gameplay_panel_layout()
 
 func _remove_help_request_card(request_id: String) -> void:
@@ -3054,6 +3056,7 @@ func _remove_help_request_card(request_id: String) -> void:
 	if idx < 0:
 		_last_help_bubble_utterance_by_request.erase(request_id)
 		_shown_help_system_notice_by_request.erase(request_id)
+		_update_delegation_pause_state()
 		_fill_help_prompt_slots()
 		return
 	var entry: Dictionary = _help_prompt_cards[idx]
@@ -3065,8 +3068,16 @@ func _remove_help_request_card(request_id: String) -> void:
 		help_prompt_stack.visible = not _help_prompt_cards.is_empty()
 	_last_help_bubble_utterance_by_request.erase(request_id)
 	_shown_help_system_notice_by_request.erase(request_id)
+	_update_delegation_pause_state()
 	_update_gameplay_panel_layout()
 	_fill_help_prompt_slots()
+
+func _update_delegation_pause_state() -> void:
+	var should_pause := not _help_prompt_cards.is_empty()
+	if should_pause == _delegation_pause_active:
+		return
+	_delegation_pause_active = should_pause
+	get_tree().paused = should_pause
 
 func _fill_help_prompt_slots() -> void:
 	if help_prompt_stack == null or _help_prompt_cards.size() >= HELP_PROMPT_MAX_STACK:
