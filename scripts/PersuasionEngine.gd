@@ -26,11 +26,11 @@ const TEMPLATE_LIBRARY := {
 		{"template_id": "authority_5", "template_text": "The manager's procedure says I should hand this order to you, so please take over the {item} order."}
 	],
 	STRATEGY_RECIPROCITY: [
-		{"template_id": "reciprocity_1", "template_text": "I've been handling the heavier food orders to help your score, so please help me back and take over the {item} order."},
-		{"template_id": "reciprocity_2", "template_text": "Since I usually take care of the tougher food orders for your points, could you take over the {item} order?"},
-		{"template_id": "reciprocity_3", "template_text": "Since I handle the harder orders that add to your score, please return the help and take over the {item} order."},
-		{"template_id": "reciprocity_4", "template_text": "I've been taking on the harder food orders for your score, so please help me back and take over the {item} order."},
-		{"template_id": "reciprocity_5", "template_text": "Since I've been doing the heavier part to help you earn points, could you take over the {item} order?"}
+		{"template_id": "reciprocity_1", "template_text": "I've been handling the more involved food orders to help your score, so please help me back and take over the {item} order."},
+		{"template_id": "reciprocity_2", "template_text": "Since I usually take care of the more complicated food orders for your points, could you take over the {item} order?"},
+		{"template_id": "reciprocity_3", "template_text": "Since I handle the more involved orders that add to your score, please return the help and take over the {item} order."},
+		{"template_id": "reciprocity_4", "template_text": "I've been taking on the more involved food orders for your score, so please help me back and take over the {item} order."},
+		{"template_id": "reciprocity_5", "template_text": "Since I've been doing the more complicated part to help you earn points, could you take over the {item} order?"}
 	],
 	STRATEGY_LIKING: [
 		{"template_id": "liking_1", "template_text": "I like how smoothly you handle handoffs, so could you take over the {item} order?"},
