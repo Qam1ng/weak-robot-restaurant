@@ -28,6 +28,18 @@ func has_nickname() -> bool:
 func set_nickname(value: String) -> void:
 	nickname = value.strip_edges()
 
+func reset_profile() -> void:
+	nickname = ""
+	question_count = 0
+	tipi_responses.clear()
+	tipi_scores = {
+		TRAIT_O: 4.0,
+		TRAIT_C: 4.0,
+		TRAIT_E: 4.0,
+		TRAIT_A: 4.0,
+		TRAIT_N: 4.0,
+	}
+
 func set_tipi(responses: Dictionary = {}, total_questions: int = TIPI_ITEM_COUNT) -> void:
 	question_count = total_questions
 	tipi_responses.clear()

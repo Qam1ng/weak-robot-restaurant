@@ -122,6 +122,7 @@ const SURVEY_MODE_NICKNAME := "nickname"
 const SURVEY_MODE_TIPI := "tipi"
 const SURVEY_MODE_RESULT := "result"
 var _score_game_over: bool = false
+var _run_end_active: bool = false
 var _tutorial_started: bool = false
 var _customer_history_page: int = 0
 var _pending_day_notice: int = 0
@@ -627,6 +628,12 @@ func _on_day_changed_notice(day: int) -> void:
 	if not _formal_session_started:
 		_pending_day_notice = day
 		return
+	if day > 1:
+		_show_run_end_prompt(
+			"Shift Complete",
+			"Day 1 is complete.\nYou kept the score above %d and finished the shift." % SCORE_FAIL_THRESHOLD
+		)
+		return
 	_initial_day_notice_shown = true
 	var message := "You have entered Day %d." % day
 	if day == 1:
@@ -742,17 +749,32 @@ func _check_score_game_over() -> void:
 	if _score > SCORE_FAIL_THRESHOLD:
 		return
 	_score_game_over = true
+	_show_run_end_prompt(
+		"Game Over",
+		"Score reached %d (threshold %d).\nShift failed." % [_score, SCORE_FAIL_THRESHOLD]
+	)
+
+func _show_run_end_prompt(title: String, body: String) -> void:
+	if _run_end_active:
+		return
+	_run_end_active = true
 	get_tree().paused = true
 	_popup_mode = POPUP_MODE_GAME_OVER
-	_show_player_dialogue_prompt(
-		"Game Over",
-		"Score reached %d (threshold %d).\nShift failed." % [_score, SCORE_FAIL_THRESHOLD],
-		["Retry", "Quit"],
-		false
-	)
+	_show_player_dialogue_prompt(title, body, ["Retry", "Quit"], false)
 
 func _on_game_over_retry() -> void:
 	get_tree().paused = false
+	_run_end_active = false
+	_score_game_over = false
+	_popup_mode = POPUP_MODE_NONE
+	var logger = get_node_or_null("/root/EpisodeLogger")
+	if logger and logger.has_method("reset_session"):
+		logger.reset_session()
+		if logger.has_method("log_delegation_templates"):
+			logger.log_delegation_templates(PersuasionEngine.get_template_records())
+	var profile = get_node_or_null("/root/PlayerProfile")
+	if profile and profile.has_method("reset_profile"):
+		profile.reset_profile()
 	var board = get_node_or_null("/root/TaskBoard")
 	if board and board.has_method("reset_all"):
 		board.reset_all()
@@ -2431,6 +2453,8 @@ func _begin_formal_session() -> void:
 	_formal_session_started = true
 	_initial_day_notice_shown = false
 	_pending_day_notice = 1
+	_run_end_active = false
+	_score_game_over = false
 	var robot = _trial_robot()
 	if robot != null and robot.has_method("set_trial_stationary_pause"):
 		robot.call("set_trial_stationary_pause", false)
@@ -2489,6 +2513,7 @@ func _reset_trial_world_state() -> void:
 	_success_count = 0
 	_failed_count = 0
 	_score_game_over = false
+	_run_end_active = false
 	_customer_history_page = 0
 	_last_player_live_task_ids.clear()
 	_refresh_score_label()

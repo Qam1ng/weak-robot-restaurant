@@ -315,6 +315,15 @@ func _append_jsonl(file_path: String, record: Dictionary) -> void:
 func get_session_id() -> String:
 	return _session_id
 
+func reset_session() -> void:
+	_episode_active = false
+	_current_episode = {}
+	_episode_start_time = 0
+	_episode_counter = 0
+	_session_id = _generate_session_id()
+	_participant_id = _session_id
+	_delegation_templates_logged = false
+
 func _generate_session_id() -> String:
 	var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace("T", "").replace(" ", "")
 	var rng := RandomNumberGenerator.new()
