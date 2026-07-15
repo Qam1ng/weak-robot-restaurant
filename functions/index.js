@@ -253,6 +253,8 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
     trait_N: asNumber(data.trait_N, 0.0),
     strategy: sanitizeText(data.strategy, ""),
     assignment_buckets: sanitizeAssignmentBuckets(data.assignment_buckets),
+    opener_template_id: sanitizeText(data.opener_template_id, ""),
+    bridge_template_id: sanitizeText(data.bridge_template_id, ""),
     template_id: sanitizeText(data.template_id, ""),
     utterance: sanitizeText(data.utterance, ""),
     escalation_count: asNumber(data.escalation_count, 0),
@@ -278,6 +280,7 @@ async function upsertDelegationTemplate(data) {
   const snapshot = await templateRef.get();
   const doc = {
     template_id: templateId,
+    template_group: sanitizeText(data.template_group, ""),
     strategy: sanitizeText(data.strategy, ""),
     template_text: sanitizeText(data.template_text, ""),
   };

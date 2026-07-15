@@ -166,6 +166,7 @@ func log_delegation_templates(templates: Array[Dictionary]) -> void:
 			continue
 		_post_remote_log("template_upsert", {
 			"template_id": str(template.get("template_id", "")),
+			"template_group": str(template.get("template_group", "")),
 			"strategy": str(template.get("strategy", "")),
 			"template_text": str(template.get("template_text", ""))
 		})
@@ -207,6 +208,8 @@ func log_help_request_event(_event_type: String, request: Dictionary, _extra: Di
 		"trait_N": float(scores.get("N", 0.0)),
 		"strategy": str(request.get("strategy", "")),
 		"assignment_buckets": request.get("assignment_buckets", {}),
+		"opener_template_id": str(request.get("opener_template_id", "")),
+		"bridge_template_id": str(request.get("bridge_template_id", "")),
 		"template_id": str(request.get("template_id", "")),
 		"utterance": str(request.get("utterance", "")),
 		"response": str(request.get("last_response", "")),

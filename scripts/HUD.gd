@@ -94,6 +94,9 @@ const PLAYER_DIALOGUE_OVERLAY_WIDTH := 520.0
 const PLAYER_DIALOGUE_OVERLAY_SHOW_SEC := 3.0
 const PLAYER_DIALOGUE_STACK_GAP := 10.0
 const HELP_PROMPT_MAX_STACK := 2
+const HELP_DIALOGUE_STAGE_OPENER := 0
+const HELP_DIALOGUE_STAGE_BRIDGE := 1
+const HELP_DIALOGUE_STAGE_DELEGATION := 2
 const DIALOGUE_PANEL_WIDTH := 340.0
 const TUTORIAL_PANEL_WIDTH := 620.0
 const TUTORIAL_PANEL_MIN_HEIGHT := 420.0
@@ -1305,6 +1308,8 @@ func shutdown_immediately() -> void:
 		_clear_dynamic_children(survey_options)
 	if help_prompt_stack:
 		_clear_dynamic_children(help_prompt_stack)
+		help_prompt_stack.visible = false
+	_update_delegation_pause_state()
 	if player_dialogue_info_stack:
 		_clear_dynamic_children(player_dialogue_info_stack)
 	if dialogue_log:
@@ -1488,11 +1493,29 @@ func show_help_request(request: Dictionary) -> void:
 	_show_or_update_help_request_card(request)
 	_maybe_show_help_bubble(request)
 
-func _build_help_text(request: Dictionary) -> String:
-	var utterance = str(request.get("utterance", ""))
+func _build_help_text(request: Dictionary, dialogue_stage: int = HELP_DIALOGUE_STAGE_DELEGATION) -> String:
+	match dialogue_stage:
+		HELP_DIALOGUE_STAGE_OPENER:
+			var opener := str(request.get("opener_text", "")).strip_edges()
+			if opener != "":
+				return opener
+		HELP_DIALOGUE_STAGE_BRIDGE:
+			var bridge := str(request.get("bridge_text", "")).strip_edges()
+			if bridge != "":
+				return bridge
+	var utterance := str(request.get("utterance", "")).strip_edges()
 	if utterance == "":
 		utterance = "Can you help now?"
 	return utterance
+
+func _help_stage_reply_text(request: Dictionary, dialogue_stage: int) -> String:
+	match dialogue_stage:
+		HELP_DIALOGUE_STAGE_OPENER:
+			return str(request.get("opener_reply_text", "Sure, what do you need?"))
+		HELP_DIALOGUE_STAGE_BRIDGE:
+			return str(request.get("bridge_reply_text", "Alright, tell me what it is."))
+		_:
+			return "Accept"
 
 func _respond(response: String) -> void:
 	if _popup_mode == POPUP_MODE_KITCHEN_PICK:
@@ -2384,6 +2407,7 @@ func _clear_trial_ui_state() -> void:
 	if help_prompt_stack:
 		_clear_dynamic_children(help_prompt_stack)
 		help_prompt_stack.visible = false
+	_update_delegation_pause_state()
 	_hide_player_dialogue_overlay()
 
 func _clear_actor_inventory(group_name: String) -> void:
@@ -2434,6 +2458,8 @@ func _trial_help_accept_target() -> Dictionary:
 	if idx < 0:
 		return {}
 	var entry: Dictionary = _help_prompt_cards[idx]
+	if int(entry.get("dialogue_stage", HELP_DIALOGUE_STAGE_OPENER)) < HELP_DIALOGUE_STAGE_DELEGATION:
+		return {}
 	var accept_btn: Button = entry.get("accept_btn", null)
 	if accept_btn == null or not is_instance_valid(accept_btn):
 		return {}
@@ -2966,54 +2992,44 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 	label.selection_enabled = false
 	label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, 0.0)
 	vbox.add_child(label)
-	label.push_color(Color(0.58, 0.88, 1.0, 1.0))
-	label.add_text("Robot Request")
-	label.pop()
-	label.add_text("\n\n" + _build_help_text(request))
 
 	var buttons := HBoxContainer.new()
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	vbox.add_child(buttons)
 
-	var accept_btn := Button.new()
-	accept_btn.text = "Accept"
-	accept_btn.pressed.connect(func():
-		var help_mgr = get_node_or_null("/root/HelpRequestManager")
-		if help_mgr:
-			help_mgr.respond(rid, "accept")
+	var primary_btn := Button.new()
+	primary_btn.pressed.connect(func():
+		_on_help_request_primary_pressed(rid)
 	)
-	buttons.add_child(accept_btn)
+	buttons.add_child(primary_btn)
 
 	var decline_btn := Button.new()
 	decline_btn.text = "Decline"
-	if trial_accept_only:
-		decline_btn.disabled = true
-	else:
-		decline_btn.pressed.connect(func():
-			var help_mgr = get_node_or_null("/root/HelpRequestManager")
-			if help_mgr:
-				help_mgr.respond(rid, "decline")
-		)
+	decline_btn.pressed.connect(func():
+		_submit_help_request_response(rid, "decline")
+	)
 	buttons.add_child(decline_btn)
 
 	var later_btn := Button.new()
 	later_btn.text = "Later"
-	if trial_accept_only:
-		later_btn.disabled = true
-	else:
-		later_btn.pressed.connect(func():
-			var help_mgr = get_node_or_null("/root/HelpRequestManager")
-			if help_mgr:
-				help_mgr.respond(rid, "later")
-		)
+	later_btn.pressed.connect(func():
+		_submit_help_request_response(rid, "later")
+	)
 	buttons.add_child(later_btn)
 
-	return {
+	var entry := {
 		"request_id": rid,
+		"request": request.duplicate(true),
 		"node": card,
 		"label": label,
-		"accept_btn": accept_btn
+		"accept_btn": primary_btn,
+		"decline_btn": decline_btn,
+		"later_btn": later_btn,
+		"dialogue_stage": HELP_DIALOGUE_STAGE_OPENER,
+		"trial_accept_only": trial_accept_only
 	}
+	_apply_help_request_card_state(entry, request)
+	return entry
 
 func _find_help_request_card_index(request_id: String) -> int:
 	for i in range(_help_prompt_cards.size()):
@@ -3033,13 +3049,8 @@ func _show_or_update_help_request_card(request: Dictionary) -> void:
 	var idx := _find_help_request_card_index(rid)
 	if idx >= 0:
 		var entry: Dictionary = _help_prompt_cards[idx]
-		var label: RichTextLabel = entry.get("label", null)
-		if label != null:
-			label.clear()
-			label.push_color(Color(1.0, 0.84, 0.36, 1.0))
-			label.add_text("Robot Request")
-			label.pop()
-			label.add_text("\n\n" + _build_help_text(request))
+		entry["request"] = request.duplicate(true)
+		_apply_help_request_card_state(entry, request)
 		_help_prompt_cards[idx] = entry
 	else:
 		if _help_prompt_cards.size() >= HELP_PROMPT_MAX_STACK:
@@ -3050,6 +3061,58 @@ func _show_or_update_help_request_card(request: Dictionary) -> void:
 	help_prompt_stack.visible = not _help_prompt_cards.is_empty()
 	_update_delegation_pause_state()
 	_update_gameplay_panel_layout()
+
+func _apply_help_request_card_state(entry: Dictionary, request: Dictionary) -> void:
+	var stage := int(entry.get("dialogue_stage", HELP_DIALOGUE_STAGE_OPENER))
+	var label: RichTextLabel = entry.get("label", null)
+	if label != null:
+		label.clear()
+		label.push_color(Color(1.0, 0.84, 0.36, 1.0))
+		label.add_text("Robot Request")
+		label.pop()
+		label.add_text("\n\n" + _build_help_text(request, stage))
+	var primary_btn: Button = entry.get("accept_btn", null)
+	var decline_btn: Button = entry.get("decline_btn", null)
+	var later_btn: Button = entry.get("later_btn", null)
+	var trial_accept_only := bool(entry.get("trial_accept_only", false))
+	if primary_btn != null:
+		primary_btn.visible = true
+		primary_btn.text = _help_stage_reply_text(request, stage)
+		primary_btn.disabled = false
+	if decline_btn != null:
+		decline_btn.visible = stage == HELP_DIALOGUE_STAGE_DELEGATION
+		decline_btn.disabled = trial_accept_only
+	if later_btn != null:
+		later_btn.visible = stage == HELP_DIALOGUE_STAGE_DELEGATION
+		later_btn.disabled = trial_accept_only
+
+func _on_help_request_primary_pressed(request_id: String) -> void:
+	var idx := _find_help_request_card_index(request_id)
+	if idx < 0:
+		return
+	var entry: Dictionary = _help_prompt_cards[idx]
+	var stage := int(entry.get("dialogue_stage", HELP_DIALOGUE_STAGE_OPENER))
+	if stage >= HELP_DIALOGUE_STAGE_DELEGATION:
+		_submit_help_request_response(request_id, "accept")
+		return
+	stage += 1
+	entry["dialogue_stage"] = stage
+	var request: Dictionary = entry.get("request", {})
+	var help_mgr = get_node_or_null("/root/HelpRequestManager")
+	if help_mgr != null and help_mgr.has_method("get_request"):
+		var refreshed: Dictionary = help_mgr.get_request(request_id)
+		if not refreshed.is_empty():
+			request = refreshed
+			entry["request"] = refreshed.duplicate(true)
+	_apply_help_request_card_state(entry, request)
+	_help_prompt_cards[idx] = entry
+	if _trial_session_active and request_id == _trial_handoff_request_id and _trial_step == "await_handoff_accept" and stage >= HELP_DIALOGUE_STAGE_DELEGATION:
+		call_deferred("_show_trial_guide_for_handoff_accept")
+
+func _submit_help_request_response(request_id: String, response: String) -> void:
+	var help_mgr = get_node_or_null("/root/HelpRequestManager")
+	if help_mgr and help_mgr.has_method("respond"):
+		help_mgr.respond(request_id, response)
 
 func _remove_help_request_card(request_id: String) -> void:
 	var idx := _find_help_request_card_index(request_id)

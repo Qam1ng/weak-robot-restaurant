@@ -17,6 +17,21 @@ const STRATEGIES := [
 	STRATEGY_SCARCITY
 ]
 
+const OPENER_REPLY_TEXT := "Sure, what do you need?"
+const BRIDGE_REPLY_TEXT := "Alright, tell me what it is."
+
+const OPENER_LIBRARY := [
+	{"template_id": "opener_1", "template_text": "Do you have a moment?"},
+	{"template_id": "opener_2", "template_text": "Do you have a second?"},
+	{"template_id": "opener_3", "template_text": "Can I ask you something?"}
+]
+
+const BRIDGE_LIBRARY := [
+	{"template_id": "bridge_1", "template_text": "I need some help with an order."},
+	{"template_id": "bridge_2", "template_text": "I need your help with a service request."},
+	{"template_id": "bridge_3", "template_text": "There's an order I need help with."}
+]
+
 const TEMPLATE_LIBRARY := {
 	STRATEGY_AUTHORITY: [
 		{"template_id": "authority_1", "template_text": "The approved handoff procedure says I should pass this order to the player, so please take over the {item} order."},
@@ -109,6 +124,24 @@ static func build_assignment_buckets(context: Dictionary) -> Dictionary:
 		"battery_mode_bucket": battery_mode_bucket
 	}
 
+static func render_request_dialogue(strategy: String, payload: Dictionary, escalation_count: int) -> Dictionary:
+	_ensure_rng_seeded()
+	var opener_entry := _random_template_entry(OPENER_LIBRARY)
+	var bridge_entry := _random_template_entry(BRIDGE_LIBRARY)
+	var delegation_render := pick_template(strategy, payload, escalation_count)
+	return {
+		"opener_template_id": str(opener_entry.get("template_id", "")),
+		"opener_text": str(opener_entry.get("template_text", "")),
+		"opener_reply_text": OPENER_REPLY_TEXT,
+		"bridge_template_id": str(bridge_entry.get("template_id", "")),
+		"bridge_text": str(bridge_entry.get("template_text", "")),
+		"bridge_reply_text": BRIDGE_REPLY_TEXT,
+		"template_id": str(delegation_render.get("template_id", "")),
+		"template_text": str(delegation_render.get("template_text", "")),
+		"utterance": str(delegation_render.get("utterance", "")),
+		"escalation": delegation_render.get("escalation", {})
+	}
+
 static func pick_template(strategy: String, payload: Dictionary, escalation_count: int) -> Dictionary:
 	_ensure_rng_seeded()
 	var item := str(payload.get("item_needed", "item")).strip_edges()
@@ -122,7 +155,7 @@ static func pick_template(strategy: String, payload: Dictionary, escalation_coun
 			"utterance": "Please take over the %s order now." % item,
 			"escalation": build_escalation(escalation_count)
 		}
-	var entry: Dictionary = entries[_rng.randi_range(0, entries.size() - 1)]
+	var entry: Dictionary = _random_template_entry(entries)
 	var base_text := str(entry.get("template_text", "")).replace("{item}", item)
 	var escalation := build_escalation(escalation_count)
 	var utterance := base_text
@@ -138,12 +171,29 @@ static func pick_template(strategy: String, payload: Dictionary, escalation_coun
 
 static func get_template_records() -> Array[Dictionary]:
 	var records: Array[Dictionary] = []
+	for raw_entry in OPENER_LIBRARY:
+		var opener_entry: Dictionary = raw_entry
+		records.append({
+			"template_id": str(opener_entry.get("template_id", "")),
+			"template_group": "opener",
+			"strategy": "",
+			"template_text": str(opener_entry.get("template_text", ""))
+		})
+	for raw_entry in BRIDGE_LIBRARY:
+		var bridge_entry: Dictionary = raw_entry
+		records.append({
+			"template_id": str(bridge_entry.get("template_id", "")),
+			"template_group": "bridge",
+			"strategy": "",
+			"template_text": str(bridge_entry.get("template_text", ""))
+		})
 	for strategy in STRATEGIES:
 		var entries: Array = TEMPLATE_LIBRARY.get(strategy, [])
 		for raw_entry in entries:
 			var entry: Dictionary = raw_entry
 			records.append({
 				"template_id": str(entry.get("template_id", "")),
+				"template_group": "delegation",
 				"strategy": strategy,
 				"template_text": str(entry.get("template_text", ""))
 			})
@@ -188,6 +238,11 @@ static func _weighted_choice_from_counts(counts: Dictionary) -> String:
 		if draw <= cumulative:
 			return strategy
 	return STRATEGIES.back()
+
+static func _random_template_entry(entries: Array) -> Dictionary:
+	if entries.is_empty():
+		return {}
+	return entries[_rng.randi_range(0, entries.size() - 1)]
 
 static func _urgency_bucket(urgency: float) -> String:
 	if urgency >= 0.75:

@@ -92,6 +92,12 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 		"strategy": "",
 		"assignment_buckets": {},
 		"system_notice": "",
+		"opener_template_id": "",
+		"opener_text": "",
+		"opener_reply_text": "",
+		"bridge_template_id": "",
+		"bridge_text": "",
+		"bridge_reply_text": "",
 		"utterance": "",
 		"template_id": "",
 		"last_response": "",
@@ -362,11 +368,17 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 	request_created.emit(copied)
 
 func _refresh_request_surface(req: Dictionary) -> void:
-	var rendered := PersuasionEngineScript.pick_template(
+	var rendered := PersuasionEngineScript.render_request_dialogue(
 		str(req.get("strategy", PersuasionEngineScript.STRATEGY_AUTHORITY)),
 		req.get("payload", {}),
 		int(req.get("escalation_count", 0))
 	)
+	req["opener_template_id"] = str(rendered.get("opener_template_id", ""))
+	req["opener_text"] = str(rendered.get("opener_text", ""))
+	req["opener_reply_text"] = str(rendered.get("opener_reply_text", ""))
+	req["bridge_template_id"] = str(rendered.get("bridge_template_id", ""))
+	req["bridge_text"] = str(rendered.get("bridge_text", ""))
+	req["bridge_reply_text"] = str(rendered.get("bridge_reply_text", ""))
 	req["template_id"] = str(rendered.get("template_id", ""))
 	req["utterance"] = str(rendered.get("utterance", ""))
 	req["escalation"] = rendered.get("escalation", {})
