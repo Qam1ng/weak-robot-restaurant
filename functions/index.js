@@ -208,6 +208,7 @@ async function upsertParticipantLog(sessionId, platform, buildVersion, data) {
   const doc = {
     participant_id: participantId,
     session_id: sanitizeText(data.session_id, sessionId),
+    nickname: sanitizeText(data.nickname, ""),
     platform,
     build_version: buildVersion,
     question_count: asNumber(data.question_count, 0),
@@ -230,6 +231,7 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
   const doc = {
     participant_id: sanitizeText(data.participant_id, participantId),
     session_id: sanitizeText(data.session_id, sessionId),
+    nickname: sanitizeText(data.nickname, ""),
     episode_id: sanitizeText(data.episode_id, ""),
     request_id: requestId,
     delegation_scenario: sanitizeText(data.delegation_scenario, ""),

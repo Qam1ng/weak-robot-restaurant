@@ -70,6 +70,8 @@ var _kitchen_pick_options: Array[String] = []
 var _tipi_questions: Array[Dictionary] = []
 var _tipi_index: int = 0
 var _tipi_responses := {}
+var _survey_nickname_input: LineEdit
+var _survey_mode: String = "nickname"
 var _survey_scale_buttons: Array[Button] = []
 var _player_task_notice_player: AudioStreamPlayer
 var _last_player_live_task_ids: Dictionary = {}
@@ -116,6 +118,9 @@ const SURVEY_PANEL_MARGIN := 24.0
 const SURVEY_PANEL_OFFSET_X := 20.0
 const SURVEY_QUESTION_Y_OFFSET := -34.0
 const SURVEY_RESULT_Y_OFFSET := -20.0
+const SURVEY_MODE_NICKNAME := "nickname"
+const SURVEY_MODE_TIPI := "tipi"
+const SURVEY_MODE_RESULT := "result"
 var _score_game_over: bool = false
 var _tutorial_started: bool = false
 var _customer_history_page: int = 0
@@ -168,6 +173,7 @@ func _ready() -> void:
 	_setup_customer_orders_ui()
 	_setup_player_dialogue_overlay_ui()
 	_setup_tutorial_ui()
+	_setup_survey_input_ui()
 	_setup_trial_guide_ui()
 	_setup_player_task_notice_audio()
 	_set_gameplay_panels_visible(false)
@@ -1700,6 +1706,20 @@ func _setup_survey_scale_buttons() -> void:
 		survey_options.add_child(button)
 		_survey_scale_buttons.append(button)
 
+func _setup_survey_input_ui() -> void:
+	if survey_options == null:
+		return
+	_survey_nickname_input = LineEdit.new()
+	_survey_nickname_input.placeholder_text = "Enter a nickname"
+	_survey_nickname_input.max_length = 20
+	_survey_nickname_input.custom_minimum_size = Vector2(320, 44)
+	_survey_nickname_input.visible = false
+	_survey_nickname_input.text_submitted.connect(func(_text: String) -> void:
+		if survey_confirm and survey_confirm.visible:
+			_finish_survey_and_start()
+	)
+	survey_options.add_child(_survey_nickname_input)
+
 func _on_tipi_scale_pressed(response_value: int) -> void:
 	_choose_tipi(response_value)
 
@@ -1718,18 +1738,63 @@ func _setup_tipi_survey() -> void:
 	]
 
 	var profile = get_node_or_null("/root/PlayerProfile")
-	if profile and profile.has_method("has_tipi") and bool(profile.has_tipi()):
+	if profile and profile.has_method("has_tipi") and bool(profile.has_tipi()) and profile.has_method("has_nickname") and bool(profile.has_nickname()):
 		_show_tutorial_before_game()
 		return
 
 	await _stabilize_player_camera_before_survey()
 
-	_tipi_index = 0
-	_tipi_responses.clear()
-
 	get_tree().paused = true
 	_recenter_survey_panel()
 	survey_panel.show()
+	_show_nickname_prompt()
+
+func _show_nickname_prompt() -> void:
+	_survey_mode = SURVEY_MODE_NICKNAME
+	var profile = get_node_or_null("/root/PlayerProfile")
+	var current_nickname := ""
+	if profile and profile.has_method("get_profile"):
+		current_nickname = str(profile.get_profile().get("nickname", ""))
+	if survey_result_group_spacer:
+		survey_result_group_spacer.hide()
+	if survey_result_group:
+		survey_result_group.hide()
+	if survey_result_spacer:
+		survey_result_spacer.hide()
+	survey_confirm.hide()
+	if survey_question_title:
+		survey_question_title.show()
+	if survey_scale_title:
+		survey_scale_title.hide()
+	if survey_scale_spacer:
+		survey_scale_spacer.hide()
+	if survey_scale_hint:
+		survey_scale_hint.hide()
+	for button in _survey_scale_buttons:
+		button.hide()
+	if _survey_nickname_input:
+		_survey_nickname_input.text = current_nickname
+		_survey_nickname_input.show()
+		_survey_nickname_input.editable = true
+		_survey_nickname_input.call_deferred("grab_focus")
+	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 36)
+	survey_question.text = "Please enter a nickname for this session."
+	if survey_question_title:
+		survey_question_title.text = "[b]Session Setup[/b]"
+	if survey_scale_title:
+		survey_scale_title.text = ""
+	if survey_scale_hint:
+		survey_scale_hint.text = ""
+	survey_confirm.text = "Continue"
+	survey_confirm.show()
+	_recenter_survey_panel()
+
+func _begin_tipi_questions() -> void:
+	_survey_mode = SURVEY_MODE_TIPI
+	if _survey_nickname_input:
+		_survey_nickname_input.hide()
+	_tipi_index = 0
+	_tipi_responses.clear()
 	if survey_result_group_spacer:
 		survey_result_group_spacer.hide()
 	if survey_result_group:
@@ -1793,6 +1858,8 @@ func _refresh_tipi_question() -> void:
 		survey_result_group.hide()
 
 func _choose_tipi(response_value: int) -> void:
+	if _survey_mode != SURVEY_MODE_TIPI:
+		return
 	if _tipi_index < 0 or _tipi_index >= _tipi_questions.size():
 		return
 	var q: Dictionary = _tipi_questions[_tipi_index]
@@ -1807,12 +1874,15 @@ func _choose_tipi(response_value: int) -> void:
 		_refresh_tipi_question()
 
 func _show_tipi_result() -> void:
+	_survey_mode = SURVEY_MODE_RESULT
 	var profile = get_node_or_null("/root/PlayerProfile")
 	if profile and profile.has_method("set_tipi"):
 		profile.set_tipi(_tipi_responses.duplicate(true), _tipi_questions.size())
 		var logger = get_node_or_null("/root/EpisodeLogger")
 		if logger and logger.has_method("log_participant_profile") and profile.has_method("get_profile"):
 			logger.log_participant_profile(profile.get_profile())
+	if _survey_nickname_input:
+		_survey_nickname_input.hide()
 
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 24)
 	survey_question.text = "Your responses have been recorded."
@@ -1838,8 +1908,41 @@ func _show_tipi_result() -> void:
 	_recenter_survey_panel()
 
 func _finish_survey_and_start() -> void:
+	if _survey_mode == SURVEY_MODE_NICKNAME:
+		var nickname := _normalized_nickname(_survey_nickname_input.text if _survey_nickname_input else "")
+		if nickname == "":
+			if survey_question:
+				survey_question.text = "Please enter a nickname using letters, numbers, hyphens, or underscores."
+			if _survey_nickname_input:
+				_survey_nickname_input.grab_focus()
+			return
+		if _survey_nickname_input:
+			_survey_nickname_input.text = nickname
+		var profile = get_node_or_null("/root/PlayerProfile")
+		if profile and profile.has_method("set_nickname"):
+			profile.set_nickname(nickname)
+			var logger = get_node_or_null("/root/EpisodeLogger")
+			if logger and logger.has_method("log_participant_profile") and profile.has_method("get_profile"):
+				logger.log_participant_profile(profile.get_profile())
+		_begin_tipi_questions()
+		return
 	survey_panel.hide()
 	_start_game_from_tutorial()
+
+func _normalized_nickname(raw_value: String) -> String:
+	var trimmed := raw_value.strip_edges()
+	if trimmed == "":
+		return ""
+	var result := ""
+	for i in range(trimmed.length()):
+		var ch := trimmed.substr(i, 1)
+		var code := ch.unicode_at(0)
+		var is_upper := code >= 65 and code <= 90
+		var is_lower := code >= 97 and code <= 122
+		var is_digit := code >= 48 and code <= 57
+		if is_upper or is_lower or is_digit or ch == "_" or ch == "-":
+			result += ch
+	return result.left(20)
 
 func _setup_tutorial_ui() -> void:
 	tutorial_panel = PanelContainer.new()

@@ -8,6 +8,7 @@ const TRAIT_N := "N"
 
 const TIPI_ITEM_COUNT := 10
 
+var nickname: String = ""
 var tipi_responses := {}
 var tipi_scores := {
 	TRAIT_O: 4.0,
@@ -21,6 +22,12 @@ var question_count: int = 0
 func has_tipi() -> bool:
 	return question_count >= TIPI_ITEM_COUNT
 
+func has_nickname() -> bool:
+	return nickname.strip_edges() != ""
+
+func set_nickname(value: String) -> void:
+	nickname = value.strip_edges()
+
 func set_tipi(responses: Dictionary = {}, total_questions: int = TIPI_ITEM_COUNT) -> void:
 	question_count = total_questions
 	tipi_responses.clear()
@@ -31,6 +38,7 @@ func set_tipi(responses: Dictionary = {}, total_questions: int = TIPI_ITEM_COUNT
 
 func get_profile() -> Dictionary:
 	return {
+		"nickname": nickname,
 		"tipi_responses": tipi_responses.duplicate(true),
 		"tipi_scores": tipi_scores.duplicate(true),
 		"question_count": question_count,

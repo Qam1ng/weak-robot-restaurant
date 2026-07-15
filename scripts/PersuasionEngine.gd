@@ -124,14 +124,15 @@ static func build_assignment_buckets(context: Dictionary) -> Dictionary:
 		"battery_mode_bucket": battery_mode_bucket
 	}
 
-static func render_request_dialogue(strategy: String, payload: Dictionary, escalation_count: int) -> Dictionary:
+static func render_request_dialogue(strategy: String, payload: Dictionary, escalation_count: int, nickname: String = "") -> Dictionary:
 	_ensure_rng_seeded()
 	var opener_entry := _random_template_entry(OPENER_LIBRARY)
 	var bridge_entry := _random_template_entry(BRIDGE_LIBRARY)
 	var delegation_render := pick_template(strategy, payload, escalation_count)
+	var opener_text := _format_opener_with_nickname(str(opener_entry.get("template_text", "")), nickname)
 	return {
 		"opener_template_id": str(opener_entry.get("template_id", "")),
-		"opener_text": str(opener_entry.get("template_text", "")),
+		"opener_text": opener_text,
 		"opener_reply_text": OPENER_REPLY_TEXT,
 		"bridge_template_id": str(bridge_entry.get("template_id", "")),
 		"bridge_text": str(bridge_entry.get("template_text", "")),
@@ -243,6 +244,12 @@ static func _random_template_entry(entries: Array) -> Dictionary:
 	if entries.is_empty():
 		return {}
 	return entries[_rng.randi_range(0, entries.size() - 1)]
+
+static func _format_opener_with_nickname(base_text: String, nickname: String) -> String:
+	var clean_name := nickname.strip_edges()
+	if clean_name == "":
+		return base_text
+	return "%s, %s" % [clean_name, base_text]
 
 static func _urgency_bucket(urgency: float) -> String:
 	if urgency >= 0.75:

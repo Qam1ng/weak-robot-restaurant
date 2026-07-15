@@ -152,6 +152,7 @@ func log_participant_profile(profile: Dictionary) -> void:
 	var payload := {
 		"participant_id": _participant_id,
 		"session_id": _session_id,
+		"nickname": str(profile.get("nickname", "")),
 		"tipi_responses": profile.get("tipi_responses", {}),
 		"tipi_scores": profile.get("tipi_scores", {}),
 		"question_count": int(profile.get("question_count", 0))
@@ -185,6 +186,7 @@ func log_help_request_event(_event_type: String, request: Dictionary, _extra: Di
 	var record := {
 		"participant_id": _participant_id,
 		"session_id": _session_id,
+		"nickname": str(request.get("nickname", "")),
 		"episode_id": get_current_episode_id(),
 		"request_id": str(request.get("id", "")),
 		"delegation_scenario": str(request.get("delegation_scenario", "")),

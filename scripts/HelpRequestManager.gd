@@ -92,6 +92,7 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 		"strategy": "",
 		"assignment_buckets": {},
 		"system_notice": "",
+		"nickname": "",
 		"opener_template_id": "",
 		"opener_text": "",
 		"opener_reply_text": "",
@@ -119,6 +120,7 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 
 	var context = _build_context(robot, req, options)
 	req["context_snapshot"] = context
+	req["nickname"] = str(context.get("personality", {}).get("nickname", "")).strip_edges()
 	var exp = _experiment_config()
 	var exp_snapshot := {}
 	if exp and exp.has_method("get_snapshot"):
@@ -371,7 +373,8 @@ func _refresh_request_surface(req: Dictionary) -> void:
 	var rendered := PersuasionEngineScript.render_request_dialogue(
 		str(req.get("strategy", PersuasionEngineScript.STRATEGY_AUTHORITY)),
 		req.get("payload", {}),
-		int(req.get("escalation_count", 0))
+		int(req.get("escalation_count", 0)),
+		str(req.get("nickname", ""))
 	)
 	req["opener_template_id"] = str(rendered.get("opener_template_id", ""))
 	req["opener_text"] = str(rendered.get("opener_text", ""))
