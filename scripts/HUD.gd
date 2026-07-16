@@ -114,6 +114,7 @@ const SCORE_PER_DRINK_SUCCESS := 1
 const SCORE_PER_DRINK_FAILURE := -3
 const SCORE_FAIL_THRESHOLD := -30
 const SURVEY_PANEL_BASE_SIZE := Vector2(580.0, 300.0)
+const SURVEY_PANEL_RESULT_HEIGHT := 220.0
 const SURVEY_PANEL_MARGIN := 24.0
 const SURVEY_PANEL_OFFSET_X := 20.0
 const SURVEY_QUESTION_Y_OFFSET := -34.0
@@ -209,7 +210,10 @@ func _recenter_survey_panel() -> void:
 	if view_size.x <= 0.0 or view_size.y <= 0.0:
 		return
 	var target_w := clampf(SURVEY_PANEL_BASE_SIZE.x, 360.0, maxf(360.0, view_size.x - SURVEY_PANEL_MARGIN * 2.0))
-	var target_h := clampf(SURVEY_PANEL_BASE_SIZE.y, 260.0, maxf(260.0, view_size.y - SURVEY_PANEL_MARGIN * 2.0))
+	var panel_base_h := SURVEY_PANEL_BASE_SIZE.y
+	if _survey_mode == SURVEY_MODE_RESULT:
+		panel_base_h = SURVEY_PANEL_RESULT_HEIGHT
+	var target_h := clampf(panel_base_h, 220.0, maxf(220.0, view_size.y - SURVEY_PANEL_MARGIN * 2.0))
 	survey_panel.custom_minimum_size = Vector2(target_w, target_h)
 	survey_panel.size = Vector2(target_w, target_h)
 	var survey_y_offset := SURVEY_QUESTION_Y_OFFSET
@@ -1732,9 +1736,10 @@ func _setup_survey_input_ui() -> void:
 	if survey_options == null:
 		return
 	_survey_nickname_input = LineEdit.new()
-	_survey_nickname_input.placeholder_text = "Enter a nickname"
+	_survey_nickname_input.placeholder_text = "Enter your name"
 	_survey_nickname_input.max_length = 20
-	_survey_nickname_input.custom_minimum_size = Vector2(320, 44)
+	_survey_nickname_input.custom_minimum_size = Vector2(0, 44)
+	_survey_nickname_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_survey_nickname_input.visible = false
 	_survey_nickname_input.text_submitted.connect(func(_text: String) -> void:
 		if survey_confirm and survey_confirm.visible:
@@ -1800,11 +1805,13 @@ func _show_nickname_prompt() -> void:
 		_survey_nickname_input.editable = true
 		_survey_nickname_input.call_deferred("grab_focus")
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 36)
-	survey_question.text = "Please enter a nickname for this session."
+	survey_question.text = "What should we call you in the restaurant?"
 	if survey_question_title:
-		survey_question_title.text = "[b]Session Setup[/b]"
+		survey_question_title.text = "[b]Nickname[/b]"
 	if survey_scale_title:
-		survey_scale_title.text = ""
+		survey_scale_title.hide()
+	if survey_scale_spacer:
+		survey_scale_spacer.hide()
 	if survey_scale_hint:
 		survey_scale_hint.text = ""
 	survey_confirm.text = "Continue"
