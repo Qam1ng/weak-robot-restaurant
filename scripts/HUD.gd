@@ -784,7 +784,9 @@ func _on_game_over_retry() -> void:
 	if logger and logger.has_method("reset_session"):
 		logger.reset_session()
 		if logger.has_method("log_delegation_templates"):
-			logger.log_delegation_templates(PersuasionEngine.get_template_records())
+			var engine = load("res://scripts/PersuasionEngine.gd")
+			if engine and engine.has_method("get_template_records"):
+				logger.log_delegation_templates(engine.get_template_records())
 	var profile = get_node_or_null("/root/PlayerProfile")
 	if profile and profile.has_method("reset_profile"):
 		profile.reset_profile()
