@@ -2,6 +2,14 @@
 extends Resource
 class_name BT_Actions
 
+static func _gameplay_now_ms(actor: Node) -> int:
+	var game_mgr = null
+	if actor != null:
+		game_mgr = actor.get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
+		return int(game_mgr.get_gameplay_time_ms())
+	return Time.get_ticks_msec()
+
 const Core = preload("res://scripts/bt/bt_core.gd")
 
 class ActNavigate extends Core.Task:
@@ -61,7 +69,7 @@ class ActNavigate extends Core.Task:
 			_set_agent_target(agent, actor, _final_target)
 			_target_set = true
 			_last_pos = actor.global_position
-			_last_pos_time = Time.get_ticks_msec()
+			_last_pos_time = BT_Actions._gameplay_now_ms(actor)
 			var start_nav := NavigationServer2D.map_get_closest_point(nav_map, actor.global_position)
 			if actor.global_position.distance_to(start_nav) > 6.0:
 				actor.global_position = start_nav
@@ -80,10 +88,10 @@ class ActNavigate extends Core.Task:
 
 		if dist_to_target <= arrival_threshold:
 			if _arrival_time == 0:
-				_arrival_time = Time.get_ticks_msec()
+				_arrival_time = BT_Actions._gameplay_now_ms(actor)
 				actor.velocity = Vector2.ZERO
 				actor.move_and_slide()
-			if Time.get_ticks_msec() - _arrival_time >= _arrival_wait:
+			if BT_Actions._gameplay_now_ms(actor) - _arrival_time >= _arrival_wait:
 				return Core.Status.SUCCESS
 			return Core.Status.RUNNING
 
@@ -91,7 +99,7 @@ class ActNavigate extends Core.Task:
 		var target_nav_now: Vector2 = NavigationServer2D.map_get_closest_point(nav_map, _final_target)
 		var server_path: PackedVector2Array = NavigationServer2D.map_get_path(nav_map, start_nav_now, target_nav_now, true, 1)
 
-		var now_ms: int = Time.get_ticks_msec()
+		var now_ms: int = BT_Actions._gameplay_now_ms(actor)
 		if now_ms - _last_pos_time >= 200:
 			var moved_dist: float = actor.global_position.distance_to(_last_pos)
 			_last_pos = actor.global_position
@@ -171,14 +179,14 @@ class ActPickItem extends Core.Task:
 
 	func tick(bb: Dictionary, actor: Node) -> int:
 		if _start_time == 0:
-			_start_time = Time.get_ticks_msec()
+			_start_time = BT_Actions._gameplay_now_ms(actor)
 			actor.speak("Picking up...")
 			var agent = actor.get_node_or_null("NavigationAgent2D")
 			if agent:
 				agent.set_velocity(Vector2.ZERO)
 			return Core.Status.RUNNING
 
-		if Time.get_ticks_msec() - _start_time < _duration:
+		if BT_Actions._gameplay_now_ms(actor) - _start_time < _duration:
 			return Core.Status.RUNNING
 
 		var item_name: String = str(bb.get("item_name", "Unknown Item"))
@@ -240,14 +248,14 @@ class ActDropItem extends Core.Task:
 
 	func tick(bb: Dictionary, actor: Node) -> int:
 		if _start_time == 0:
-			_start_time = Time.get_ticks_msec()
+			_start_time = BT_Actions._gameplay_now_ms(actor)
 			actor.speak("Delivering order...")
 			var agent = actor.get_node_or_null("NavigationAgent2D")
 			if agent:
 				agent.set_velocity(Vector2.ZERO)
 			return Core.Status.RUNNING
 
-		if Time.get_ticks_msec() - _start_time < _duration:
+		if BT_Actions._gameplay_now_ms(actor) - _start_time < _duration:
 			return Core.Status.RUNNING
 
 		var inventory = actor.get_node_or_null("Inventory")

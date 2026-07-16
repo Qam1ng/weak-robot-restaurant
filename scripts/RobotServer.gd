@@ -326,7 +326,7 @@ func _check_episode_completion() -> void:
 
 	# Step cannot start yet, keep waiting and re-check constraints.
 	if not _active_step_started:
-		var now_ms := Time.get_ticks_msec()
+		var now_ms := _gameplay_now_ms()
 		if now_ms - _last_replan_ms >= 300:
 			_last_replan_ms = now_ms
 			_plan_current_task_step()
@@ -396,6 +396,12 @@ func _task_board() -> Node:
 func _help_manager() -> Node:
 	return get_node_or_null("/root/HelpRequestManager")
 
+func _gameplay_now_ms() -> int:
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
+		return int(game_mgr.get_gameplay_time_ms())
+	return Time.get_ticks_msec()
+
 func _try_acquire_or_activate_robot_work() -> void:
 	if _active_task_id != "":
 		return
@@ -462,7 +468,7 @@ func _try_claim_next_task() -> void:
 	# Pending work exists: in conserve/normal we should still serve orders.
 	_idle_charge_cycle_complete = false
 	if _battery_mode == BATTERY_MODE_EMERGENCY:
-		var task_slack_ms = int(task.get("deadline_ms", Time.get_ticks_msec()) - Time.get_ticks_msec())
+		var task_slack_ms = int(task.get("deadline_ms", _gameplay_now_ms()) - _gameplay_now_ms())
 		if task_slack_ms > 20_000:
 			return
 
@@ -584,7 +590,7 @@ func _task_step_name(task: Dictionary) -> String:
 	return str(board.get_current_step_name(str(task.get("id", ""))))
 
 func _task_slack_ms(task: Dictionary) -> int:
-	return int(task.get("deadline_ms", 0)) - Time.get_ticks_msec()
+	return int(task.get("deadline_ms", 0)) - _gameplay_now_ms()
 
 func _deadline_handoff_candidate() -> Dictionary:
 	var tasks := _get_robot_assigned_food_tasks()
@@ -929,7 +935,7 @@ func _take_inventory_item_for_active_task() -> Dictionary:
 func _release_robot_food_for_task(task_id: String, _reason: String) -> void:
 	if inventory == null or task_id == "":
 		return
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var changed := false
 	for i in range(inventory.items.size()):
 		var entry: Dictionary = inventory.items[i]
@@ -945,7 +951,7 @@ func _release_robot_food_for_task(task_id: String, _reason: String) -> void:
 func _expire_orphaned_food_inventory() -> void:
 	if inventory == null or inventory.items.is_empty():
 		return
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var kept: Array = []
 	var changed := false
 	for raw_entry in inventory.items:
@@ -1011,7 +1017,7 @@ func _set_step_plan(actions: Array) -> void:
 	bt_runner.bb["last_plan_failed"] = false
 
 func _collect_constraint_input() -> Dictionary:
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var deadline_ms := 0
 	var slack_ms := 0
 	var board = _task_board()
@@ -1074,7 +1080,7 @@ func _tick_emergency_delegation() -> bool:
 		var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
 		if not has_plan:
 			_plan_navigate_to_position(player.global_position, "emergency_player")
-		var now_ms := Time.get_ticks_msec()
+		var now_ms := _gameplay_now_ms()
 		if now_ms - _last_emergency_approach_notice_ms > 1800:
 			_last_emergency_approach_notice_ms = now_ms
 			speak("Battery critical. Coming to you for urgent handoff.")
@@ -1147,7 +1153,7 @@ func _tick_overload_handoff_delegation() -> bool:
 		var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
 		if not has_plan:
 			_plan_navigate_to_position(player.global_position, "overload_player")
-		var now_ms := Time.get_ticks_msec()
+		var now_ms := _gameplay_now_ms()
 		if now_ms - _last_overload_approach_notice_ms > 1800:
 			_last_overload_approach_notice_ms = now_ms
 			speak("Task load is high. Coming to you for handoff.")
@@ -1261,7 +1267,7 @@ func _tick_deadline_handoff_delegation() -> bool:
 		var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
 		if not has_plan:
 			_plan_navigate_to_position(player.global_position, "deadline_player")
-		var now_ms := Time.get_ticks_msec()
+		var now_ms := _gameplay_now_ms()
 		if now_ms - _last_overload_approach_notice_ms > 1800:
 			_last_overload_approach_notice_ms = now_ms
 			speak("This order is close to timing out. Coming to you for urgent handoff.")
@@ -1445,7 +1451,7 @@ func _tick_recharge_override(has_plan: bool) -> bool:
 func _try_speak_recharge_notice(text: String) -> void:
 	if text.strip_edges() == "":
 		return
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	if now_ms - _last_recharge_notice_ms < 1800:
 		return
 	_last_recharge_notice_ms = now_ms
@@ -1608,8 +1614,8 @@ func _transfer_item_to_player_for_handoff(payload: Dictionary) -> String:
 		item.get("region", Rect2i()),
 		{
 			"item_owner": "player",
-			"picked_up_at_ms": Time.get_ticks_msec(),
-			"expires_at_ms": Time.get_ticks_msec() + PLAYER_ITEM_TTL_MS
+			"picked_up_at_ms": _gameplay_now_ms(),
+			"expires_at_ms": _gameplay_now_ms() + PLAYER_ITEM_TTL_MS
 		}
 	)
 	if not accepted:

@@ -1,5 +1,4 @@
-extends RefCounted
-class_name PersuasionEngine
+extends Object
 
 const STRATEGY_RECIPROCITY := "reciprocity"
 const STRATEGY_AUTHORITY := "authority"
@@ -78,7 +77,6 @@ const TEMPLATE_LIBRARY := {
 }
 
 static var _assignment_counts: Dictionary = {}
-static var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 static var _rng_seeded := false
 
 static func reset_assignment_state() -> void:
@@ -232,7 +230,7 @@ static func _weighted_choice_from_counts(counts: Dictionary) -> String:
 		total_weight += weight
 	if total_weight <= 0.0:
 		return STRATEGY_AUTHORITY
-	var draw: float = _rng.randf() * total_weight
+	var draw: float = randf() * total_weight
 	var cumulative := 0.0
 	for strategy in STRATEGIES:
 		cumulative += float(weights.get(strategy, 0.0))
@@ -243,7 +241,7 @@ static func _weighted_choice_from_counts(counts: Dictionary) -> String:
 static func _random_template_entry(entries: Array) -> Dictionary:
 	if entries.is_empty():
 		return {}
-	return entries[_rng.randi_range(0, entries.size() - 1)]
+	return entries[randi_range(0, entries.size() - 1)]
 
 static func _format_opener_with_nickname(base_text: String, nickname: String) -> String:
 	var clean_name := nickname.strip_edges()
@@ -275,5 +273,5 @@ static func _player_active_tasks_bucket(active_tasks: int) -> String:
 static func _ensure_rng_seeded() -> void:
 	if _rng_seeded:
 		return
-	_rng.randomize()
+	randomize()
 	_rng_seeded = true

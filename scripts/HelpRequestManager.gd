@@ -16,7 +16,7 @@ const STATUS_COOLDOWN := "cooldown"
 const STATUS_ACCEPTED := "accepted"
 const STATUS_RESOLVED := "resolved"
 
-const PersuasionEngineScript = preload("res://scripts/PersuasionEngine.gd")
+const PERSUASION_ENGINE_PATH := "res://scripts/PersuasionEngine.gd"
 
 var _requests_by_id: Dictionary = {}
 var _request_runtime_by_id: Dictionary = {}
@@ -24,13 +24,24 @@ var _order: Array[String] = []
 var _next_id: int = 1
 var _request_index_in_session: int = 0
 
+func _gameplay_now_ms() -> int:
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
+		return int(game_mgr.get_gameplay_time_ms())
+	return Time.get_ticks_msec()
+
+func _persuasion_engine():
+	return load(PERSUASION_ENGINE_PATH)
+
 func reset_all() -> void:
 	_requests_by_id.clear()
 	_request_runtime_by_id.clear()
 	_order.clear()
 	_next_id = 1
 	_request_index_in_session = 0
-	PersuasionEngineScript.reset_assignment_state()
+	var engine = _persuasion_engine()
+	if engine and engine.has_method("reset_assignment_state"):
+		engine.reset_assignment_state()
 
 func _ready() -> void:
 	var board = get_node_or_null("/root/TaskBoard")
@@ -41,10 +52,12 @@ func _ready() -> void:
 			board.task_failed.connect(_on_task_failed)
 	var logger = _episode_logger()
 	if logger and logger.has_method("log_delegation_templates"):
-		logger.log_delegation_templates(PersuasionEngineScript.get_template_records())
+		var engine = _persuasion_engine()
+		if engine and engine.has_method("get_template_records"):
+			logger.log_delegation_templates(engine.get_template_records())
 
 func _process(_dt: float) -> void:
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	for request_id in _order:
 		var req: Dictionary = _requests_by_id.get(request_id, {})
 		if req.is_empty():
@@ -127,7 +140,11 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 		exp_snapshot = exp.get_snapshot()
 	req["experiment"] = exp_snapshot
 
-	req["assignment_buckets"] = PersuasionEngineScript.build_assignment_buckets(context)
+	var engine = _persuasion_engine()
+	if engine and engine.has_method("build_assignment_buckets"):
+		req["assignment_buckets"] = engine.build_assignment_buckets(context)
+	else:
+		req["assignment_buckets"] = {}
 	req["system_notice"] = _build_system_notice(payload)
 
 	_requests_by_id[request_id] = req
@@ -142,7 +159,7 @@ func get_promptable_request_for_robot(robot: Node) -> Dictionary:
 	if robot == null:
 		return {}
 	var robot_iid := robot.get_instance_id()
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var best: Dictionary = {}
 	var best_score := -INF
 
@@ -213,7 +230,7 @@ func respond(request_id: String, response: String) -> Dictionary:
 				_request_runtime_by_id.erase(request_id)
 			else:
 				req["status"] = STATUS_COOLDOWN
-				runtime["cooldown_until_ms"] = now_ms + int(runtime.get("cooldown_ms", 4000))
+				runtime["cooldown_until_ms"] = _gameplay_now_ms() + int(runtime.get("cooldown_ms", 4000))
 				_request_runtime_by_id[request_id] = runtime
 				_refresh_request_surface(req)
 		_:
@@ -274,7 +291,7 @@ func requeue_request(request_id: String, cooldown_ms: int = 1500, resolution_not
 		return {}
 	if str(req.get("status", "")) == STATUS_RESOLVED:
 		return _copy(req)
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	req["status"] = STATUS_COOLDOWN
 	var runtime := _runtime_for(request_id)
 	runtime["cooldown_until_ms"] = now_ms + maxi(cooldown_ms, 0)
@@ -303,7 +320,10 @@ func _begin_strategy_assignment(request_id: String) -> void:
 		_request_remote_strategy_assignment(req)
 		return
 	var context: Dictionary = req.get("context_snapshot", {})
-	var assignment: Dictionary = PersuasionEngineScript.assign_strategy_locally(context)
+	var engine = _persuasion_engine()
+	var assignment: Dictionary = {}
+	if engine and engine.has_method("assign_strategy_locally"):
+		assignment = engine.assign_strategy_locally(context)
 	_finalize_strategy_assignment(request_id, assignment)
 
 func _request_remote_strategy_assignment(req: Dictionary) -> void:
@@ -323,7 +343,10 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 	if err != OK:
 		if is_instance_valid(http):
 			http.queue_free()
-		var fallback: Dictionary = PersuasionEngineScript.assign_strategy_locally(req.get("context_snapshot", {}))
+		var engine = _persuasion_engine()
+		var fallback: Dictionary = {}
+		if engine and engine.has_method("assign_strategy_locally"):
+			fallback = engine.assign_strategy_locally(req.get("context_snapshot", {}))
 		_finalize_strategy_assignment(request_id, fallback)
 
 func _on_strategy_assignment_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, request_id: String) -> void:
@@ -333,12 +356,18 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 	if req.is_empty():
 		return
 	if code < 200 or code >= 300:
-		var fallback: Dictionary = PersuasionEngineScript.assign_strategy_locally(req.get("context_snapshot", {}))
+		var engine = _persuasion_engine()
+		var fallback: Dictionary = {}
+		if engine and engine.has_method("assign_strategy_locally"):
+			fallback = engine.assign_strategy_locally(req.get("context_snapshot", {}))
 		_finalize_strategy_assignment(request_id, fallback)
 		return
 	var top: Variant = JSON.parse_string(body.get_string_from_utf8())
 	if not (top is Dictionary):
-		var fallback_parse: Dictionary = PersuasionEngineScript.assign_strategy_locally(req.get("context_snapshot", {}))
+		var engine = _persuasion_engine()
+		var fallback_parse: Dictionary = {}
+		if engine and engine.has_method("assign_strategy_locally"):
+			fallback_parse = engine.assign_strategy_locally(req.get("context_snapshot", {}))
 		_finalize_strategy_assignment(request_id, fallback_parse)
 		return
 	var assignment: Dictionary = {
@@ -354,11 +383,13 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 	if str(req.get("status", "")) == STATUS_RESOLVED:
 		return
 	var strategy := str(assignment.get("strategy", "")).strip_edges()
+	var engine = _persuasion_engine()
 	if strategy == "":
-		strategy = PersuasionEngineScript.STRATEGY_AUTHORITY
+		strategy = str(engine.get("STRATEGY_AUTHORITY")) if engine else "authority"
 	var buckets: Dictionary = assignment.get("buckets", {})
 	if buckets.is_empty():
-		buckets = PersuasionEngineScript.build_assignment_buckets(req.get("context_snapshot", {}))
+		if engine and engine.has_method("build_assignment_buckets"):
+			buckets = engine.build_assignment_buckets(req.get("context_snapshot", {}))
 	req["strategy"] = strategy
 	req["assignment_buckets"] = buckets
 	_refresh_request_surface(req)
@@ -370,12 +401,16 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 	request_created.emit(copied)
 
 func _refresh_request_surface(req: Dictionary) -> void:
-	var rendered := PersuasionEngineScript.render_request_dialogue(
-		str(req.get("strategy", PersuasionEngineScript.STRATEGY_AUTHORITY)),
-		req.get("payload", {}),
-		int(req.get("escalation_count", 0)),
-		str(req.get("nickname", ""))
-	)
+	var engine = _persuasion_engine()
+	var authority_strategy := str(engine.get("STRATEGY_AUTHORITY")) if engine else "authority"
+	var rendered := {}
+	if engine and engine.has_method("render_request_dialogue"):
+		rendered = engine.render_request_dialogue(
+			str(req.get("strategy", authority_strategy)),
+			req.get("payload", {}),
+			int(req.get("escalation_count", 0)),
+			str(req.get("nickname", ""))
+		)
 	req["opener_template_id"] = str(rendered.get("opener_template_id", ""))
 	req["opener_text"] = str(rendered.get("opener_text", ""))
 	req["opener_reply_text"] = str(rendered.get("opener_reply_text", ""))

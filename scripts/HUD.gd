@@ -771,12 +771,12 @@ func _show_run_end_prompt(title: String, body: String) -> void:
 	if _run_end_active:
 		return
 	_run_end_active = true
-	get_tree().paused = true
+	_set_global_pause(true)
 	_popup_mode = POPUP_MODE_GAME_OVER
 	_show_player_dialogue_prompt(title, body, ["Retry", "Quit"], false)
 
 func _on_game_over_retry() -> void:
-	get_tree().paused = false
+	_set_global_pause(false)
 	_run_end_active = false
 	_score_game_over = false
 	_popup_mode = POPUP_MODE_NONE
@@ -957,6 +957,18 @@ func _process(_dt: float) -> void:
 	_update_gameplay_panel_layout()
 	_update_trial_guide_overlay()
 
+func _get_ui_now_ms() -> int:
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
+		return int(game_mgr.get_gameplay_time_ms())
+	return Time.get_ticks_msec()
+
+func _set_global_pause(paused: bool) -> void:
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("set_gameplay_paused"):
+		game_mgr.set_gameplay_paused(paused)
+	get_tree().paused = paused
+
 func _update_gameplay_panel_layout() -> void:
 	if inventory_panel == null or dialogue_panel == null or customer_panel == null:
 		return
@@ -1084,7 +1096,7 @@ func _update_robot_task_panel() -> void:
 		var eta := "Waiting"
 		var deadline_ms := int(task.get("deadline_ms", 0))
 		if deadline_ms > 0:
-			var remain_sec := int(ceili(float(deadline_ms - Time.get_ticks_msec()) / 1000.0))
+			var remain_sec := int(ceili(float(deadline_ms - _get_ui_now_ms()) / 1000.0))
 			eta = str(maxi(remain_sec, 0)) + "s"
 		var line := Label.new()
 		line.text = "%s | %s | %s | %s" % [seat, item_label, step, eta]
@@ -1133,7 +1145,7 @@ func _update_customer_panel() -> void:
 		return
 
 	var board = get_node_or_null("/root/TaskBoard")
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _get_ui_now_ms()
 	var customer_lines: Array[Label] = []
 	for n in customers:
 		if not (n is Node):
@@ -1302,7 +1314,7 @@ func _update_player_task_panel() -> void:
 		var eta := "Waiting"
 		var deadline_ms := int(task.get("deadline_ms", 0))
 		if deadline_ms > 0:
-			var remain_sec := int(ceili(float(deadline_ms - Time.get_ticks_msec()) / 1000.0))
+			var remain_sec := int(ceili(float(deadline_ms - _get_ui_now_ms()) / 1000.0))
 			eta = str(maxi(remain_sec, 0)) + "s"
 		var line := Label.new()
 		line.text = "%s | %s | %s | %s" % [seat, item_label, step, eta]
@@ -1785,7 +1797,7 @@ func _setup_tipi_survey() -> void:
 
 	await _stabilize_player_camera_before_survey()
 
-	get_tree().paused = true
+	_set_global_pause(true)
 	_recenter_survey_panel()
 	survey_panel.show()
 	_show_nickname_prompt()
@@ -2078,12 +2090,11 @@ func _setup_tutorial_ui() -> void:
 	add_child(tutorial_toggle_button)
 
 func _show_tutorial_before_game() -> void:
-	get_tree().paused = true
+	_set_global_pause(true)
 	_set_gameplay_panels_visible(false)
 	if tutorial_panel:
 		tutorial_panel.show()
 	if tutorial_start_button:
-		tutorial_start_button.text = "Start Trial Session"
 		tutorial_start_button.show()
 	if tutorial_close_button:
 		tutorial_close_button.hide()
@@ -2095,7 +2106,7 @@ func _start_game_from_tutorial() -> void:
 	_tutorial_started = true
 	await _dismiss_tutorial_overlay(true)
 	_clear_player_input_state()
-	get_tree().paused = false
+	_set_global_pause(false)
 	_set_gameplay_panels_visible(true)
 	_start_trial_session()
 
@@ -2109,7 +2120,7 @@ func _show_pending_day_notice() -> void:
 func _open_tutorial_overlay() -> void:
 	if not _tutorial_started:
 		return
-	get_tree().paused = true
+	_set_global_pause(true)
 	if tutorial_panel:
 		tutorial_panel.show()
 	if tutorial_start_button:
@@ -2124,7 +2135,7 @@ func _open_tutorial_overlay() -> void:
 func _close_tutorial_overlay() -> void:
 	await _dismiss_tutorial_overlay(false)
 	_clear_player_input_state()
-	get_tree().paused = false
+	_set_global_pause(false)
 
 func _dismiss_tutorial_overlay(start_trial: bool) -> void:
 	if tutorial_start_button:
@@ -3386,7 +3397,7 @@ func _update_delegation_pause_state() -> void:
 	if should_pause == _delegation_pause_active:
 		return
 	_delegation_pause_active = should_pause
-	get_tree().paused = should_pause
+	_set_global_pause(should_pause)
 
 func _fill_help_prompt_slots() -> void:
 	if help_prompt_stack == null or _help_prompt_cards.size() >= HELP_PROMPT_MAX_STACK:

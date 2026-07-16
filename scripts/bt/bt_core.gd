@@ -1,6 +1,14 @@
 extends Resource
 class_name BT
 
+static func gameplay_now_seconds(actor: Node) -> float:
+	var game_mgr = null
+	if actor != null:
+		game_mgr = actor.get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
+		return float(game_mgr.get_gameplay_time_ms()) / 1000.0
+	return float(Time.get_ticks_msec()) / 1000.0
+
 enum Status { SUCCESS, FAILURE, RUNNING }
 
 class Task:
@@ -50,10 +58,10 @@ class Timeout extends Decorator:
 
 	func tick(bb: Dictionary, actor: Node) -> int:
 		if _start < 0.0:
-			_start = Time.get_ticks_msec() / 1000.0
+			_start = BT.gameplay_now_seconds(actor)
 
 		var s: int = child.tick(bb, actor)
-		var now: float = Time.get_ticks_msec() / 1000.0
+		var now: float = BT.gameplay_now_seconds(actor)
 
 		if now - _start > seconds:
 			_start = -1.0
