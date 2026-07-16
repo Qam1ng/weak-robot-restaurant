@@ -76,6 +76,7 @@ var _survey_scale_buttons: Array[Button] = []
 var _player_task_notice_player: AudioStreamPlayer
 var _last_player_live_task_ids: Dictionary = {}
 var _player_task_notice_initialized: bool = false
+var _tutorial_toggle_flash_tween: Tween = null
 const FEED_COLOR_DIALOGUE := Color(0.84, 0.95, 1.0, 1.0)
 const HANDOFF_PROMPT_DISTANCE := 120.0
 const POPUP_MODE_NONE := "none"
@@ -1945,7 +1946,7 @@ func _show_tipi_result() -> void:
 		survey_result_spacer.hide()
 	for button in _survey_scale_buttons:
 		button.hide()
-	survey_confirm.text = "Start Tutorial"
+	survey_confirm.text = "Open Tutorial"
 	survey_confirm.show()
 	_recenter_survey_panel()
 
@@ -1969,7 +1970,7 @@ func _finish_survey_and_start() -> void:
 		_begin_tipi_questions()
 		return
 	survey_panel.hide()
-	_start_game_from_tutorial()
+	_show_tutorial_before_game()
 
 func _normalized_nickname(raw_value: String) -> String:
 	var trimmed := raw_value.strip_edges()
@@ -2032,7 +2033,7 @@ func _setup_tutorial_ui() -> void:
 	vbox.add_child(button_row)
 
 	tutorial_start_button = Button.new()
-	tutorial_start_button.text = "Start Game"
+	tutorial_start_button.text = "Start Trial Session"
 	tutorial_start_button.custom_minimum_size = Vector2(0, 52)
 	tutorial_start_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tutorial_start_button.pressed.connect(_start_game_from_tutorial)
@@ -2082,6 +2083,7 @@ func _show_tutorial_before_game() -> void:
 	if tutorial_panel:
 		tutorial_panel.show()
 	if tutorial_start_button:
+		tutorial_start_button.text = "Start Trial Session"
 		tutorial_start_button.show()
 	if tutorial_close_button:
 		tutorial_close_button.hide()
@@ -2091,10 +2093,8 @@ func _show_tutorial_before_game() -> void:
 
 func _start_game_from_tutorial() -> void:
 	_tutorial_started = true
-	if tutorial_panel:
-		tutorial_panel.hide()
-	if tutorial_toggle_button and _formal_session_started:
-		tutorial_toggle_button.show()
+	await _dismiss_tutorial_overlay(true)
+	_clear_player_input_state()
 	get_tree().paused = false
 	_set_gameplay_panels_visible(true)
 	_start_trial_session()
@@ -2115,19 +2115,92 @@ func _open_tutorial_overlay() -> void:
 	if tutorial_start_button:
 		tutorial_start_button.hide()
 	if tutorial_close_button:
+		tutorial_close_button.text = "Close"
 		tutorial_close_button.show()
 	if tutorial_toggle_button:
 		tutorial_toggle_button.hide()
 	_update_gameplay_panel_layout()
 
 func _close_tutorial_overlay() -> void:
-	if tutorial_panel:
-		tutorial_panel.hide()
+	await _dismiss_tutorial_overlay(false)
+	_clear_player_input_state()
+	get_tree().paused = false
+
+func _dismiss_tutorial_overlay(start_trial: bool) -> void:
+	if tutorial_start_button:
+		tutorial_start_button.disabled = true
+	if tutorial_close_button:
+		tutorial_close_button.disabled = true
 	if tutorial_close_button:
 		tutorial_close_button.hide()
 	if tutorial_toggle_button:
 		tutorial_toggle_button.show()
-	get_tree().paused = false
+	var tween: Tween = null
+	if tutorial_panel:
+		tutorial_panel.modulate = Color(1.0, 1.0, 1.0, 1.0)
+		tutorial_panel.scale = Vector2.ONE
+		tween = create_tween()
+		tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+		tween.set_trans(Tween.TRANS_SINE)
+		tween.set_ease(Tween.EASE_IN_OUT)
+		tween.tween_property(tutorial_panel, "modulate:a", 0.0, 0.32)
+	if tween:
+		await tween.finished
+	if tutorial_panel:
+		tutorial_panel.hide()
+		tutorial_panel.modulate = Color(1.0, 1.0, 1.0, 1.0)
+		tutorial_panel.scale = Vector2.ONE
+	if start_trial:
+		await _spotlight_tutorial_toggle()
+	if tutorial_start_button:
+		tutorial_start_button.disabled = false
+		tutorial_start_button.text = "Start Trial Session"
+		tutorial_start_button.visible = start_trial
+	if tutorial_close_button:
+		tutorial_close_button.disabled = false
+		tutorial_close_button.visible = false
+
+func _flash_tutorial_toggle() -> void:
+	if tutorial_toggle_button == null:
+		return
+	if _tutorial_toggle_flash_tween:
+		_tutorial_toggle_flash_tween.kill()
+	tutorial_toggle_button.scale = Vector2.ONE
+	tutorial_toggle_button.modulate = Color(1.0, 1.0, 1.0, 1.0)
+	_tutorial_toggle_flash_tween = create_tween()
+	_tutorial_toggle_flash_tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	_tutorial_toggle_flash_tween.set_trans(Tween.TRANS_SINE)
+	_tutorial_toggle_flash_tween.set_ease(Tween.EASE_OUT)
+	_tutorial_toggle_flash_tween.tween_property(tutorial_toggle_button, "scale", Vector2(1.24, 1.24), 0.28)
+	_tutorial_toggle_flash_tween.parallel().tween_property(tutorial_toggle_button, "modulate", Color(1.2, 1.16, 0.86, 1.0), 0.28)
+	_tutorial_toggle_flash_tween.set_ease(Tween.EASE_IN_OUT)
+	_tutorial_toggle_flash_tween.tween_property(tutorial_toggle_button, "scale", Vector2.ONE, 0.42)
+	_tutorial_toggle_flash_tween.parallel().tween_property(tutorial_toggle_button, "modulate", Color(1.0, 1.0, 1.0, 1.0), 0.42)
+	_tutorial_toggle_flash_tween.finished.connect(func() -> void:
+		_tutorial_toggle_flash_tween = null
+	)
+
+func _clear_player_input_state() -> void:
+	for action in ["move_up", "move_down", "move_left", "move_right", "interact", "ui_cancel"]:
+		if InputMap.has_action(action):
+			Input.action_release(action)
+	Input.flush_buffered_events()
+
+func _spotlight_tutorial_toggle() -> void:
+	if tutorial_toggle_button == null or not tutorial_toggle_button.visible:
+		return
+	_show_trial_guide(
+		"",
+		{
+			"type": "control",
+			"id": tutorial_toggle_button.get_instance_id()
+		},
+		""
+	)
+	_flash_tutorial_toggle()
+	var timer := get_tree().create_timer(0.72, true, false, true)
+	await timer.timeout
+	_hide_trial_guide()
 
 func _set_gameplay_panels_visible(visible: bool) -> void:
 	if inventory_panel:
@@ -2267,8 +2340,6 @@ func _start_trial_session() -> void:
 		var spawner = game_mgr.get_customer_spawner()
 		if spawner and spawner.has_method("disable"):
 			spawner.disable()
-	if tutorial_toggle_button:
-		tutorial_toggle_button.hide()
 	if _trial_timeout_timer:
 		_trial_timeout_timer.start(TRIAL_SESSION_MAX_SEC)
 	call_deferred("_run_trial_intro")
@@ -2703,7 +2774,10 @@ func _show_trial_guide(text: String, target: Dictionary, arrow: String = "↓") 
 	else:
 		_trial_guide_message_panel.visible = true
 		_trial_guide_message_label.append_text(text)
-	_set_trial_guide_arrow_direction(arrow)
+	if _trial_guide_arrow:
+		_trial_guide_arrow.visible = arrow.strip_edges() != ""
+	if arrow.strip_edges() != "":
+		_set_trial_guide_arrow_direction(arrow)
 	_update_trial_guide_overlay()
 
 func _set_trial_guide_arrow_direction(arrow: String) -> void:
@@ -2734,7 +2808,11 @@ func _update_trial_guide_overlay() -> void:
 	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 		return
 	var hide_focus_border := bool(_trial_guide_target.get("hide_focus_border", false))
+	rect.position = rect.position.round()
+	rect.size = rect.size.round()
 	var focus_rect := rect if hide_focus_border else rect.grow(8.0)
+	focus_rect.position = focus_rect.position.round()
+	focus_rect.size = focus_rect.size.round()
 	var view_size := get_viewport().get_visible_rect().size
 	var clipped_focus := Rect2(
 		Vector2(clampf(focus_rect.position.x, 0.0, view_size.x), clampf(focus_rect.position.y, 0.0, view_size.y)),
@@ -2743,6 +2821,8 @@ func _update_trial_guide_overlay() -> void:
 			clampf(focus_rect.end.y, 0.0, view_size.y) - clampf(focus_rect.position.y, 0.0, view_size.y)
 		)
 	)
+	clipped_focus.position = clipped_focus.position.round()
+	clipped_focus.size = clipped_focus.size.round()
 	if _trial_guide_dim_top:
 		_trial_guide_dim_top.position = Vector2.ZERO
 		_trial_guide_dim_top.size = Vector2(view_size.x, maxf(0.0, clipped_focus.position.y))
