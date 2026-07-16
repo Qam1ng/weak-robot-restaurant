@@ -96,6 +96,14 @@ const PLAYER_DIALOGUE_OVERLAY_WIDTH := 520.0
 const PLAYER_DIALOGUE_OVERLAY_SHOW_SEC := 3.0
 const PLAYER_DIALOGUE_STACK_GAP := 10.0
 const HELP_PROMPT_MAX_STACK := 2
+const HELP_PROMPT_WIDTH_RATIO := 0.95
+const HELP_PROMPT_X_OFFSET := 24.0
+const HELP_PROMPT_BODY_FONT_SIZE := 24
+const HELP_PROMPT_TITLE_FONT_SIZE := 32
+const HELP_PROMPT_BUTTON_FONT_SIZE := 22
+const HELP_PROMPT_BUTTON_HEIGHT := 60.0
+const TRIAL_GUIDE_BODY_FONT_SIZE := 20
+const TRIAL_GUIDE_MESSAGE_MIN_WIDTH := 320.0
 const HELP_DIALOGUE_STAGE_OPENER := 0
 const HELP_DIALOGUE_STAGE_BRIDGE := 1
 const HELP_DIALOGUE_STAGE_DELEGATION := 2
@@ -994,11 +1002,16 @@ func _update_gameplay_panel_layout() -> void:
 	var stack_origin_y: float = gameplay_top_y + PLAYER_DIALOGUE_OVERLAY_Y_OFFSET
 	var stack_y: float = stack_origin_y
 	if help_prompt_stack:
-		help_prompt_stack.position = Vector2(centered_x, stack_origin_y)
-		help_prompt_stack.custom_minimum_size.x = PLAYER_DIALOGUE_OVERLAY_WIDTH
+		var help_prompt_width := GAMEPLAY_BAND_WIDTH * HELP_PROMPT_WIDTH_RATIO
+		help_prompt_stack.custom_minimum_size.x = help_prompt_width
 		if help_prompt_stack.visible:
 			var help_h := maxf(help_prompt_stack.size.y, help_prompt_stack.get_combined_minimum_size().y)
+			var help_x := center_x - help_prompt_width * 0.5 + HELP_PROMPT_X_OFFSET
+			var help_y := maxf(72.0, (view_size.y - help_h) * 0.44)
+			help_prompt_stack.position = Vector2(help_x, help_y)
 			stack_y += help_h + PLAYER_DIALOGUE_STACK_GAP
+		else:
+			help_prompt_stack.position = Vector2(center_x - help_prompt_width * 0.5 + HELP_PROMPT_X_OFFSET, stack_origin_y)
 	if player_dialogue_overlay:
 		var overlay_w := player_dialogue_overlay.custom_minimum_size.x
 		player_dialogue_overlay.position = Vector2((view_size.x - overlay_w) * 0.5, stack_y)
@@ -2209,10 +2222,10 @@ func _setup_trial_guide_ui() -> void:
 	message_style.corner_radius_top_right = 12
 	message_style.corner_radius_bottom_left = 12
 	message_style.corner_radius_bottom_right = 12
-	message_style.content_margin_left = 14
-	message_style.content_margin_right = 14
-	message_style.content_margin_top = 10
-	message_style.content_margin_bottom = 10
+	message_style.content_margin_left = 18
+	message_style.content_margin_right = 18
+	message_style.content_margin_top = 12
+	message_style.content_margin_bottom = 12
 	_trial_guide_message_panel.add_theme_stylebox_override("panel", message_style)
 	_trial_guide_layer.add_child(_trial_guide_message_panel)
 
@@ -2221,7 +2234,8 @@ func _setup_trial_guide_ui() -> void:
 	_trial_guide_message_label.fit_content = true
 	_trial_guide_message_label.scroll_active = false
 	_trial_guide_message_label.selection_enabled = false
-	_trial_guide_message_label.custom_minimum_size = Vector2(280.0, 0.0)
+	_trial_guide_message_label.add_theme_font_size_override("normal_font_size", TRIAL_GUIDE_BODY_FONT_SIZE)
+	_trial_guide_message_label.custom_minimum_size = Vector2(TRIAL_GUIDE_MESSAGE_MIN_WIDTH, 0.0)
 	_trial_guide_message_panel.add_child(_trial_guide_message_label)
 
 func _trial_wait(seconds: float) -> bool:
@@ -2406,13 +2420,13 @@ func _show_trial_guide_for_handoff_accept() -> void:
 	if prompt_target.is_empty() or accept_target.is_empty():
 		return
 	_show_trial_guide(
-		"The robot may sometimes ask for your help. Pay attention to how it asks, and choose based on your own preference.",
+		"",
 		{
 			"type": "control",
 			"id": int(prompt_target.get("id", 0)),
 			"arrow_target": accept_target,
 			"hide_focus_border": true,
-			"message_min_width": 430.0,
+			"message_min_width": 500.0,
 			"message_offset_y": -20.0
 		},
 		"→"
@@ -2746,7 +2760,7 @@ func _update_trial_guide_overlay() -> void:
 	_trial_guide_focus.size = focus_rect.size
 	var place_above := false
 	if _trial_guide_message_panel.visible:
-		var message_min_width := float(_trial_guide_target.get("message_min_width", 280.0))
+		var message_min_width := float(_trial_guide_target.get("message_min_width", TRIAL_GUIDE_MESSAGE_MIN_WIDTH))
 		_trial_guide_message_label.custom_minimum_size = Vector2(message_min_width, 0.0)
 		var message_size := _trial_guide_message_panel.get_combined_minimum_size()
 		_trial_guide_message_panel.size = message_size
@@ -3097,42 +3111,54 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 	var payload: Dictionary = request.get("payload", {})
 	var trial_accept_only := bool(payload.get("trial_accept_only", false))
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, 0.0)
+	card.custom_minimum_size = Vector2(GAMEPLAY_BAND_WIDTH * HELP_PROMPT_WIDTH_RATIO, 0.0)
 
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.08, 0.11, 0.16, 0.92)
-	style.border_width_left = 2
-	style.border_width_top = 2
-	style.border_width_right = 2
-	style.border_width_bottom = 2
+	style.border_width_left = 3
+	style.border_width_top = 3
+	style.border_width_right = 3
+	style.border_width_bottom = 3
 	style.border_color = Color(0.58, 0.88, 1.0, 1.0)
-	style.corner_radius_top_left = 12
-	style.corner_radius_top_right = 12
-	style.corner_radius_bottom_right = 12
-	style.corner_radius_bottom_left = 12
-	style.content_margin_left = 14
-	style.content_margin_right = 14
-	style.content_margin_top = 10
-	style.content_margin_bottom = 10
+	style.corner_radius_top_left = 18
+	style.corner_radius_top_right = 18
+	style.corner_radius_bottom_right = 18
+	style.corner_radius_bottom_left = 18
+	style.content_margin_left = 24
+	style.content_margin_right = 24
+	style.content_margin_top = 20
+	style.content_margin_bottom = 20
 	card.add_theme_stylebox_override("panel", style)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 10)
+	vbox.add_theme_constant_override("separation", 18)
 	card.add_child(vbox)
+
+	var title_label := Label.new()
+	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title_label.add_theme_font_size_override("font_size", HELP_PROMPT_TITLE_FONT_SIZE)
+	title_label.add_theme_color_override("font_color", Color(1.0, 0.84, 0.36, 1.0))
+	title_label.text = "Robot Request"
+	vbox.add_child(title_label)
 
 	var label := RichTextLabel.new()
 	label.bbcode_enabled = false
 	label.fit_content = true
 	label.scroll_active = false
 	label.selection_enabled = false
-	label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, 0.0)
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.add_theme_font_size_override("normal_font_size", HELP_PROMPT_BODY_FONT_SIZE)
+	label.custom_minimum_size = Vector2(card.custom_minimum_size.x - 48.0, 0.0)
 	vbox.add_child(label)
 
 	var buttons := HBoxContainer.new()
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	buttons.add_theme_constant_override("separation", 16)
 	vbox.add_child(buttons)
 
 	var primary_btn := Button.new()
+	primary_btn.custom_minimum_size = Vector2(160.0, HELP_PROMPT_BUTTON_HEIGHT)
+	primary_btn.add_theme_font_size_override("font_size", HELP_PROMPT_BUTTON_FONT_SIZE)
 	primary_btn.pressed.connect(func():
 		_on_help_request_primary_pressed(rid)
 	)
@@ -3140,6 +3166,8 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 
 	var decline_btn := Button.new()
 	decline_btn.text = "Decline"
+	decline_btn.custom_minimum_size = Vector2(160.0, HELP_PROMPT_BUTTON_HEIGHT)
+	decline_btn.add_theme_font_size_override("font_size", HELP_PROMPT_BUTTON_FONT_SIZE)
 	decline_btn.pressed.connect(func():
 		_submit_help_request_response(rid, "decline")
 	)
@@ -3147,6 +3175,8 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 
 	var later_btn := Button.new()
 	later_btn.text = "Later"
+	later_btn.custom_minimum_size = Vector2(160.0, HELP_PROMPT_BUTTON_HEIGHT)
+	later_btn.add_theme_font_size_override("font_size", HELP_PROMPT_BUTTON_FONT_SIZE)
 	later_btn.pressed.connect(func():
 		_submit_help_request_response(rid, "later")
 	)
@@ -3156,6 +3186,7 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 		"request_id": rid,
 		"request": request.duplicate(true),
 		"node": card,
+		"title_label": title_label,
 		"label": label,
 		"accept_btn": primary_btn,
 		"decline_btn": decline_btn,
@@ -3200,12 +3231,12 @@ func _show_or_update_help_request_card(request: Dictionary) -> void:
 func _apply_help_request_card_state(entry: Dictionary, request: Dictionary) -> void:
 	var stage := int(entry.get("dialogue_stage", HELP_DIALOGUE_STAGE_OPENER))
 	var label: RichTextLabel = entry.get("label", null)
+	var title_label: Label = entry.get("title_label", null)
+	if title_label != null:
+		title_label.text = "Robot Request"
 	if label != null:
 		label.clear()
-		label.push_color(Color(1.0, 0.84, 0.36, 1.0))
-		label.add_text("Robot Request")
-		label.pop()
-		label.add_text("\n\n" + _build_help_text(request, stage))
+		label.add_text(_build_help_text(request, stage))
 	var primary_btn: Button = entry.get("accept_btn", null)
 	var decline_btn: Button = entry.get("decline_btn", null)
 	var later_btn: Button = entry.get("later_btn", null)
