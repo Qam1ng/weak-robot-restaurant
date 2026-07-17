@@ -78,7 +78,7 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 	if robot == null or not is_instance_valid(robot):
 		return {}
 
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var request_id := "help_%06d" % _next_id
 	_next_id += 1
 	_request_index_in_session += 1
@@ -192,7 +192,7 @@ func mark_prompted(request_id: String) -> void:
 	var req: Dictionary = _requests_by_id.get(request_id, {})
 	if req.is_empty():
 		return
-	req["last_prompt_ms"] = Time.get_ticks_msec()
+	req["last_prompt_ms"] = _gameplay_now_ms()
 	_requests_by_id[request_id] = req
 	_log_help_event("prompted", req)
 	request_updated.emit(_copy(req))
@@ -204,7 +204,7 @@ func respond(request_id: String, response: String) -> Dictionary:
 	if str(req.get("status", "")) == STATUS_RESOLVED:
 		return _copy(req)
 
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var prompt_latency_ms := 0
 	if int(req.get("last_prompt_ms", 0)) > 0:
 		prompt_latency_ms = now_ms - int(req.get("last_prompt_ms", 0))
@@ -343,6 +343,18 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 	if err != OK:
 		if is_instance_valid(http):
 			http.queue_free()
+		var logger = _episode_logger()
+		if logger and logger.has_method("log_api_failure"):
+			logger.log_api_failure(
+				"apiAssignStrategy",
+				"strategy_assignment",
+				-1,
+				"request_queue_error",
+				"Failed to queue strategy assignment request.",
+				request_id,
+				"",
+				_gameplay_now_ms()
+			)
 		var engine = _persuasion_engine()
 		var fallback: Dictionary = {}
 		if engine and engine.has_method("assign_strategy_locally"):
@@ -356,6 +368,18 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 	if req.is_empty():
 		return
 	if code < 200 or code >= 300:
+		var logger = _episode_logger()
+		if logger and logger.has_method("log_api_failure"):
+			logger.log_api_failure(
+				"apiAssignStrategy",
+				"strategy_assignment",
+				code,
+				"http_error",
+				"Strategy assignment request returned HTTP %d." % code,
+				request_id,
+				"",
+				_gameplay_now_ms()
+			)
 		var engine = _persuasion_engine()
 		var fallback: Dictionary = {}
 		if engine and engine.has_method("assign_strategy_locally"):
@@ -364,6 +388,18 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 		return
 	var top: Variant = JSON.parse_string(body.get_string_from_utf8())
 	if not (top is Dictionary):
+		var logger = _episode_logger()
+		if logger and logger.has_method("log_api_failure"):
+			logger.log_api_failure(
+				"apiAssignStrategy",
+				"strategy_assignment",
+				code,
+				"parse_error",
+				"Strategy assignment response was not valid JSON.",
+				request_id,
+				"",
+				_gameplay_now_ms()
+			)
 		var engine = _persuasion_engine()
 		var fallback_parse: Dictionary = {}
 		if engine and engine.has_method("assign_strategy_locally"):

@@ -130,6 +130,14 @@ function sanitizeTipiScores(value) {
   };
 }
 
+function sanitizeFiniteNumber(value, fallback = null) {
+  if (value == null || value === "") {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function assignmentCounterDocId(buckets) {
   return [
     sanitizeText(buckets.urgency_bucket, "medium"),
@@ -312,6 +320,64 @@ async function upsertEpisodeLog(sessionId, participantId, data) {
   };
   await episodeRef.set(doc, {merge: true});
   return {episode_id: episodeId};
+}
+
+async function upsertApiFailureLog(sessionId, data) {
+  const failureId = sanitizeText(data.failure_id, "");
+  if (failureId === "") {
+    throw new Error("missing_failure_id");
+  }
+  const failureRef = db.collection("api_failures").doc(failureId);
+  const doc = {
+    failure_id: failureId,
+    session_id: sanitizeText(data.session_id, sessionId),
+    episode_id: sanitizeText(data.episode_id, ""),
+    request_id: sanitizeText(data.request_id, ""),
+    api_name: sanitizeText(data.api_name, ""),
+    event_type: sanitizeText(data.event_type, ""),
+    http_status: asNumber(data.http_status, -1),
+    error_code: sanitizeText(data.error_code, ""),
+    error_message: sanitizeText(data.error_message, ""),
+    client_timestamp_ms: asNumber(data.client_timestamp_ms, 0),
+    created_at: FieldValue.serverTimestamp(),
+  };
+  await failureRef.set(doc, {merge: true});
+  return {failure_id: failureId};
+}
+
+async function upsertRuntimeDebugEventLog(sessionId, data) {
+  const debugEventId = sanitizeText(data.debug_event_id, "");
+  if (debugEventId === "") {
+    throw new Error("missing_debug_event_id");
+  }
+  const eventRef = db.collection("runtime_debug_events").doc(debugEventId);
+  const doc = {
+    debug_event_id: debugEventId,
+    session_id: sanitizeText(data.session_id, sessionId),
+    episode_id: sanitizeText(data.episode_id, ""),
+    request_id: sanitizeText(data.request_id, ""),
+    timestamp_ms: asNumber(data.timestamp_ms, 0),
+    event_type: sanitizeText(data.event_type, ""),
+    robot_task_id: sanitizeText(data.robot_task_id, ""),
+    robot_step: sanitizeText(data.robot_step, ""),
+    delegation_scenario: sanitizeText(data.delegation_scenario, ""),
+    robot_x: sanitizeFiniteNumber(data.robot_x),
+    robot_y: sanitizeFiniteNumber(data.robot_y),
+    robot_target_x: sanitizeFiniteNumber(data.robot_target_x),
+    robot_target_y: sanitizeFiniteNumber(data.robot_target_y),
+    robot_battery_level: sanitizeFiniteNumber(data.robot_battery_level),
+    robot_inventory_count: asNumber(data.robot_inventory_count, 0),
+    player_active_tasks: asNumber(data.player_active_tasks, 0),
+    has_navigation_path: asBoolean(data.has_navigation_path, false),
+    path_length: asNumber(data.path_length, 0),
+    moved_distance_px: sanitizeFiniteNumber(data.moved_distance_px),
+    stuck_duration_ms: asNumber(data.stuck_duration_ms, 0),
+    total_stuck_time_ms: asNumber(data.total_stuck_time_ms, 0),
+    retry_count: asNumber(data.retry_count, 0),
+    created_at: FieldValue.serverTimestamp(),
+  };
+  await eventRef.set(doc, {merge: true});
+  return {debug_event_id: debugEventId};
 }
 
 function buildDialoguePrompts(body) {
@@ -533,6 +599,12 @@ exports.apiLog = onRequest(async (req, res) => {
         break;
       case "template_upsert":
         result = await upsertDelegationTemplate(data);
+        break;
+      case "api_failure_upsert":
+        result = await upsertApiFailureLog(sessionId, data);
+        break;
+      case "runtime_debug_event_upsert":
+        result = await upsertRuntimeDebugEventLog(sessionId, data);
         break;
       default:
         res.status(400).json({error: "unsupported_log_type"});

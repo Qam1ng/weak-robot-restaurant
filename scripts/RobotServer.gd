@@ -82,6 +82,7 @@ var _trial_handoff_armed_task_id: String = ""
 var _trial_handoff_pending_task_id: String = ""
 var _trial_handoff_item_needed: String = ""
 var _trial_stationary_pause: bool = false
+var _last_debug_step_key: String = ""
 
 func _has_property(obj: Object, prop_name: String) -> bool:
 	for p in obj.get_property_list():
@@ -396,11 +397,51 @@ func _task_board() -> Node:
 func _help_manager() -> Node:
 	return get_node_or_null("/root/HelpRequestManager")
 
+func _episode_logger() -> Node:
+	return get_node_or_null("/root/EpisodeLogger")
+
 func _gameplay_now_ms() -> int:
 	var game_mgr = get_node_or_null("/root/GameManager")
 	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
 		return int(game_mgr.get_gameplay_time_ms())
 	return Time.get_ticks_msec()
+
+func _player_active_task_count() -> int:
+	var board = _task_board()
+	if board and board.has_method("get_in_progress_tasks_for_assignee"):
+		var tasks: Array[Dictionary] = board.get_in_progress_tasks_for_assignee("player")
+		return tasks.size()
+	return 0
+
+func _current_delegation_scenario() -> String:
+	var help_mgr = _help_manager()
+	if help_mgr and _active_help_request_id != "" and help_mgr.has_method("get_request"):
+		var req: Dictionary = help_mgr.get_request(_active_help_request_id)
+		if not req.is_empty():
+			return str(req.get("delegation_scenario", ""))
+	return ""
+
+func _runtime_debug_payload(extra: Dictionary = {}) -> Dictionary:
+	var payload := {
+		"request_id": _active_help_request_id,
+		"timestamp_ms": _gameplay_now_ms(),
+		"robot_task_id": _active_task_id,
+		"robot_step": _active_task_step,
+		"delegation_scenario": _current_delegation_scenario(),
+		"robot_x": global_position.x,
+		"robot_y": global_position.y,
+		"robot_battery_level": battery_level,
+		"robot_inventory_count": inventory.items.size() if inventory != null else 0,
+		"player_active_tasks": _player_active_task_count()
+	}
+	for key in extra.keys():
+		payload[key] = extra[key]
+	return payload
+
+func _log_runtime_debug_event(event_type: String, extra: Dictionary = {}) -> void:
+	var logger = _episode_logger()
+	if logger and logger.has_method("log_runtime_debug_event"):
+		logger.log_runtime_debug_event(event_type, _runtime_debug_payload(extra))
 
 func _try_acquire_or_activate_robot_work() -> void:
 	if _active_task_id != "":
@@ -491,6 +532,7 @@ func _start_claimed_task(task: Dictionary) -> void:
 	if not _activate_task_context(task):
 		return
 	_idle_charge_cycle_complete = false
+	_log_runtime_debug_event("robot_task_assigned")
 	if not _episode_active:
 		var payload: Dictionary = task.get("payload", {})
 		var customer = _resolve_customer_from_payload(payload)
@@ -701,6 +743,10 @@ func _plan_current_task_step() -> void:
 
 	_active_task_step = board.get_current_step_name(_active_task_id)
 	_active_step_started = false
+	var step_key := "%s|%s" % [_active_task_id, _active_task_step]
+	if step_key != _last_debug_step_key:
+		_last_debug_step_key = step_key
+		_log_runtime_debug_event("robot_step_changed")
 	if _active_task_step == "":
 		_finish_active_task_if_needed()
 		return
@@ -861,6 +907,7 @@ func _clear_current_task_runtime() -> void:
 	_help_item_needed = ""
 	_active_help_request_id = ""
 	_help_request_suppressed = false
+	_last_debug_step_key = ""
 	_trial_handoff_armed_task_id = ""
 	_trial_handoff_pending_task_id = ""
 	_trial_handoff_item_needed = ""

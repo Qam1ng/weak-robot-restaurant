@@ -9,6 +9,8 @@ var _episode_start_time: int = 0
 var _episode_counter: int = 0
 var _participant_id: String = ""
 var _delegation_templates_logged := false
+var _remote_failure_counter: int = 0
+var _runtime_debug_counter: int = 0
 
 # File paths
 const DATA_DIR = "user://data/episodes/"
@@ -158,6 +160,51 @@ func log_participant_profile(profile: Dictionary) -> void:
 		"question_count": int(profile.get("question_count", 0))
 	}
 	_post_remote_log("participant_upsert", payload)
+
+func log_api_failure(api_name: String, event_type: String, http_status: int, error_code: String, error_message: String, request_id: String = "", episode_id: String = "", client_timestamp_ms: int = -1) -> void:
+	var failure_id := "fail_%s_%04d" % [_session_id, _remote_failure_counter]
+	_remote_failure_counter += 1
+	var payload := {
+		"failure_id": failure_id,
+		"session_id": _session_id,
+		"episode_id": episode_id if episode_id != "" else get_current_episode_id(),
+		"request_id": request_id,
+		"api_name": api_name,
+		"event_type": event_type,
+		"http_status": http_status,
+		"error_code": error_code,
+		"error_message": error_message,
+		"client_timestamp_ms": client_timestamp_ms if client_timestamp_ms >= 0 else _gameplay_now_ms()
+	}
+	_post_remote_log("api_failure_upsert", payload, false)
+
+func log_runtime_debug_event(event_type: String, data: Dictionary = {}) -> void:
+	var payload := {
+		"debug_event_id": "dbg_%s_%05d" % [_session_id, _runtime_debug_counter],
+		"session_id": _session_id,
+		"episode_id": str(data.get("episode_id", get_current_episode_id())),
+		"request_id": str(data.get("request_id", "")),
+		"timestamp_ms": int(data.get("timestamp_ms", _gameplay_now_ms())),
+		"event_type": event_type,
+		"robot_task_id": str(data.get("robot_task_id", "")),
+		"robot_step": str(data.get("robot_step", "")),
+		"delegation_scenario": str(data.get("delegation_scenario", "")),
+		"robot_x": float(data.get("robot_x", 0.0)),
+		"robot_y": float(data.get("robot_y", 0.0)),
+		"robot_target_x": data.get("robot_target_x", null),
+		"robot_target_y": data.get("robot_target_y", null),
+		"robot_battery_level": data.get("robot_battery_level", null),
+		"robot_inventory_count": int(data.get("robot_inventory_count", 0)),
+		"player_active_tasks": int(data.get("player_active_tasks", 0)),
+		"has_navigation_path": bool(data.get("has_navigation_path", false)),
+		"path_length": int(data.get("path_length", 0)),
+		"moved_distance_px": data.get("moved_distance_px", null),
+		"stuck_duration_ms": int(data.get("stuck_duration_ms", 0)),
+		"total_stuck_time_ms": int(data.get("total_stuck_time_ms", 0)),
+		"retry_count": int(data.get("retry_count", 0)),
+	}
+	_runtime_debug_counter += 1
+	_post_remote_log("runtime_debug_event_upsert", payload)
 
 func log_delegation_templates(templates: Array[Dictionary]) -> void:
 	if _delegation_templates_logged:
@@ -323,6 +370,8 @@ func reset_session() -> void:
 	_session_id = _generate_session_id()
 	_participant_id = _session_id
 	_delegation_templates_logged = false
+	_remote_failure_counter = 0
+	_runtime_debug_counter = 0
 
 func _generate_session_id() -> String:
 	var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace("T", "").replace(" ", "")
@@ -330,12 +379,12 @@ func _generate_session_id() -> String:
 	rng.randomize()
 	return "sess_%s_%06d" % [stamp, rng.randi_range(0, 999999)]
 
-func _post_remote_log(event_type: String, payload: Dictionary = {}) -> void:
+func _post_remote_log(event_type: String, payload: Dictionary = {}, allow_failure_capture: bool = true) -> void:
 	if not _should_post_remote_logs():
 		return
 	var http := HTTPRequest.new()
 	add_child(http)
-	http.request_completed.connect(_on_remote_log_completed.bind(http, event_type))
+	http.request_completed.connect(_on_remote_log_completed.bind(http, event_type, payload, allow_failure_capture))
 	var body := {
 		"session_id": _session_id,
 		"participant_id": _participant_id,
@@ -351,18 +400,47 @@ func _post_remote_log(event_type: String, payload: Dictionary = {}) -> void:
 		if is_instance_valid(http):
 			http.queue_free()
 		push_warning("[EpisodeLogger] Failed to queue remote log: %s" % event_type)
+		if allow_failure_capture and event_type != "api_failure_upsert":
+			log_api_failure(
+				"apiLog",
+				event_type,
+				-1,
+				"request_queue_error",
+				"Failed to queue remote log request",
+				str(payload.get("request_id", "")),
+				str(payload.get("episode_id", "")),
+				int(payload.get("timestamp_ms", _gameplay_now_ms()))
+			)
 
-func _on_remote_log_completed(_result: int, code: int, _headers: PackedStringArray, _body: PackedByteArray, http: HTTPRequest, event_type: String) -> void:
+func _on_remote_log_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, event_type: String, payload: Dictionary, allow_failure_capture: bool) -> void:
 	if is_instance_valid(http):
 		http.queue_free()
 	if code < 200 or code >= 300:
 		push_warning("[EpisodeLogger] Remote log failed (%s): %d" % [event_type, code])
+		if allow_failure_capture and event_type != "api_failure_upsert":
+			var err_text := body.get_string_from_utf8().strip_edges()
+			log_api_failure(
+				"apiLog",
+				event_type,
+				code,
+				"http_error",
+				err_text if err_text != "" else "Remote log returned non-2xx status",
+				str(payload.get("request_id", "")),
+				str(payload.get("episode_id", "")),
+				int(payload.get("timestamp_ms", _gameplay_now_ms()))
+			)
 
 func _should_post_remote_logs() -> bool:
 	return OS.has_feature("web")
 
 func _should_write_local_files() -> bool:
 	return not OS.has_feature("web")
+
+func _gameplay_now_ms() -> int:
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
+		return int(game_mgr.get_gameplay_time_ms())
+	return Time.get_ticks_msec()
 
 func _experiment_config() -> Node:
 	return get_node_or_null("/root/ExperimentConfig")
