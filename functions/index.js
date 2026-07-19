@@ -138,6 +138,53 @@ function sanitizeFiniteNumber(value, fallback = null) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+const RUNTIME_DEBUG_EVENT_TYPES = new Set([
+  "robot_task_assigned",
+  "robot_step_changed",
+  "navigation_start",
+  "navigation_retry",
+  "navigation_failed",
+  "pickup_started",
+  "pickup_failed",
+  "delivery_started",
+  "delivery_failed",
+]);
+
+const RUNTIME_DEBUG_EVENT_REASONS = new Set([
+  "",
+  "too_many_evasions",
+  "no_navigation_path",
+  "stuck_retry",
+  "missing_inventory",
+  "inventory_full",
+  "item_missing",
+  "too_far_from_item",
+  "empty_inventory",
+  "customer_missing",
+  "task_deadline_expired",
+  "customer_drink_timeout",
+]);
+
+const RUNTIME_DEBUG_ROBOT_STEPS = new Set([
+  "",
+  "TAKE_ORDER",
+  "PICKUP_FROM_KITCHEN",
+  "DELIVER_AND_SERVE",
+]);
+
+const RUNTIME_DEBUG_DELEGATION_SCENARIOS = new Set([
+  "",
+  "battery_pressure",
+  "workload_overload",
+  "deadline_pressure",
+  "trial_tutorial",
+]);
+
+function sanitizeEnumText(value, allowed, fallback = "") {
+  const cleaned = sanitizeText(value, fallback);
+  return allowed.has(cleaned) ? cleaned : fallback;
+}
+
 function assignmentCounterDocId(buckets) {
   return [
     sanitizeText(buckets.urgency_bucket, "medium"),
@@ -357,10 +404,11 @@ async function upsertRuntimeDebugEventLog(sessionId, data) {
     episode_id: sanitizeText(data.episode_id, ""),
     request_id: sanitizeText(data.request_id, ""),
     timestamp_ms: asNumber(data.timestamp_ms, 0),
-    event_type: sanitizeText(data.event_type, ""),
+    event_type: sanitizeEnumText(data.event_type, RUNTIME_DEBUG_EVENT_TYPES, ""),
+    event_reason: sanitizeEnumText(data.event_reason, RUNTIME_DEBUG_EVENT_REASONS, ""),
     robot_task_id: sanitizeText(data.robot_task_id, ""),
-    robot_step: sanitizeText(data.robot_step, ""),
-    delegation_scenario: sanitizeText(data.delegation_scenario, ""),
+    robot_step: sanitizeEnumText(data.robot_step, RUNTIME_DEBUG_ROBOT_STEPS, ""),
+    delegation_scenario: sanitizeEnumText(data.delegation_scenario, RUNTIME_DEBUG_DELEGATION_SCENARIOS, ""),
     robot_x: sanitizeFiniteNumber(data.robot_x),
     robot_y: sanitizeFiniteNumber(data.robot_y),
     robot_target_x: sanitizeFiniteNumber(data.robot_target_x),

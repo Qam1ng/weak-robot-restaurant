@@ -12,6 +12,48 @@ var _delegation_templates_logged := false
 var _remote_failure_counter: int = 0
 var _runtime_debug_counter: int = 0
 
+const DEBUG_EVENT_TYPES := {
+	"robot_task_assigned": true,
+	"robot_step_changed": true,
+	"navigation_start": true,
+	"navigation_retry": true,
+	"navigation_failed": true,
+	"pickup_started": true,
+	"pickup_failed": true,
+	"delivery_started": true,
+	"delivery_failed": true,
+}
+
+const DEBUG_EVENT_REASONS := {
+	"": true,
+	"too_many_evasions": true,
+	"no_navigation_path": true,
+	"stuck_retry": true,
+	"missing_inventory": true,
+	"inventory_full": true,
+	"item_missing": true,
+	"too_far_from_item": true,
+	"empty_inventory": true,
+	"customer_missing": true,
+	"task_deadline_expired": true,
+	"customer_drink_timeout": true,
+}
+
+const DEBUG_ROBOT_STEPS := {
+	"": true,
+	"TAKE_ORDER": true,
+	"PICKUP_FROM_KITCHEN": true,
+	"DELIVER_AND_SERVE": true,
+}
+
+const DEBUG_DELEGATION_SCENARIOS := {
+	"": true,
+	"battery_pressure": true,
+	"workload_overload": true,
+	"deadline_pressure": true,
+	"trial_tutorial": true,
+}
+
 # File paths
 const DATA_DIR = "user://data/episodes/"
 const CSV_FILE = "user://data/episodes_summary.csv"
@@ -179,16 +221,21 @@ func log_api_failure(api_name: String, event_type: String, http_status: int, err
 	_post_remote_log("api_failure_upsert", payload, false)
 
 func log_runtime_debug_event(event_type: String, data: Dictionary = {}) -> void:
+	var normalized_event_type := _normalize_debug_value(event_type, DEBUG_EVENT_TYPES)
+	var normalized_reason := _normalize_debug_value(str(data.get("event_reason", data.get("reason", ""))), DEBUG_EVENT_REASONS)
+	var normalized_step := _normalize_debug_value(str(data.get("robot_step", "")), DEBUG_ROBOT_STEPS)
+	var normalized_scenario := _normalize_debug_value(str(data.get("delegation_scenario", "")), DEBUG_DELEGATION_SCENARIOS)
 	var payload := {
 		"debug_event_id": "dbg_%s_%05d" % [_session_id, _runtime_debug_counter],
 		"session_id": _session_id,
 		"episode_id": str(data.get("episode_id", get_current_episode_id())),
 		"request_id": str(data.get("request_id", "")),
 		"timestamp_ms": int(data.get("timestamp_ms", _gameplay_now_ms())),
-		"event_type": event_type,
+		"event_type": normalized_event_type,
+		"event_reason": normalized_reason,
 		"robot_task_id": str(data.get("robot_task_id", "")),
-		"robot_step": str(data.get("robot_step", "")),
-		"delegation_scenario": str(data.get("delegation_scenario", "")),
+		"robot_step": normalized_step,
+		"delegation_scenario": normalized_scenario,
 		"robot_x": float(data.get("robot_x", 0.0)),
 		"robot_y": float(data.get("robot_y", 0.0)),
 		"robot_target_x": data.get("robot_target_x", null),
@@ -441,6 +488,12 @@ func _gameplay_now_ms() -> int:
 	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
 		return int(game_mgr.get_gameplay_time_ms())
 	return Time.get_ticks_msec()
+
+func _normalize_debug_value(raw_value: String, allowed: Dictionary) -> String:
+	var value := raw_value.strip_edges()
+	if allowed.has(value):
+		return value
+	return ""
 
 func _experiment_config() -> Node:
 	return get_node_or_null("/root/ExperimentConfig")
