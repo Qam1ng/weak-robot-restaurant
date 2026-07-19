@@ -182,11 +182,14 @@ class ActNavigate extends Core.Task:
 			has_valid_path = false
 
 		var to_next: Vector2 = next_path_pos - actor.global_position
+		var desired_velocity := Vector2.ZERO
 		if has_valid_path and to_next.length() > 1.0:
-			actor.velocity = to_next.normalized() * actor.move_speed
+			desired_velocity = to_next.normalized() * actor.move_speed
+		if agent.avoidance_enabled:
+			agent.set_velocity(desired_velocity)
 		else:
-			actor.velocity = Vector2.ZERO
-		actor.move_and_slide()
+			actor.velocity = desired_velocity
+			actor.move_and_slide()
 
 		return Core.Status.RUNNING
 
@@ -196,8 +199,10 @@ class ActNavigate extends Core.Task:
 		agent.path_desired_distance = 12.0
 		agent.target_desired_distance = 10.0
 		agent.max_speed = actor.move_speed
-		agent.avoidance_enabled = false
+		agent.avoidance_enabled = true
 		agent.radius = 10.0
+		agent.neighbor_distance = 120.0
+		agent.time_horizon = 1.0
 		agent.target_position = target
 
 

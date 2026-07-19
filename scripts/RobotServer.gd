@@ -182,9 +182,7 @@ func _ready() -> void:
 	# Configure Navigation Agent
 	agent.set_navigation_map(get_world_2d().navigation_map)
 	agent.navigation_layers = 1
-	# Use native path points from NavigationAgent2D, but apply movement directly in actor.
-	# Avoidance callback path can be flaky when nav sources are rebuilt at runtime.
-	agent.avoidance_enabled = false
+	agent.avoidance_enabled = true
 	agent.max_speed = move_speed
 	agent.radius = 10.0
 	# Avoid over-reacting to far-away agents, which can skew local steering.
@@ -192,7 +190,7 @@ func _ready() -> void:
 	agent.time_horizon = 1.0
 	agent.debug_enabled = false
 	
-	if agent.avoidance_enabled:
+	if agent.avoidance_enabled and not agent.velocity_computed.is_connected(_on_agent_velocity_computed):
 		agent.velocity_computed.connect(_on_agent_velocity_computed)
 	await _wait_for_nav_sync(agent.get_navigation_map(), 120)
 
