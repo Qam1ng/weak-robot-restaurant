@@ -9,6 +9,9 @@ const KEY_FILE_PATH := "res://secrets/openai_api_key.txt"
 
 var _api_key: String = ""
 
+func _episode_logger() -> Node:
+	return get_node_or_null("/root/EpisodeLogger")
+
 func _ready() -> void:
 	_api_key = _load_api_key()
 	if _use_backend_api():
@@ -149,25 +152,55 @@ func _on_directed_request_completed(_result: int, code: int, _headers: PackedStr
 func _request_dialogue_via_backend(request_id: String, body: Dictionary, fallback: String) -> void:
 	var http := HTTPRequest.new()
 	add_child(http)
-	http.request_completed.connect(_on_backend_dialogue_completed.bind(http, request_id, fallback))
+	http.request_completed.connect(_on_backend_dialogue_completed.bind(http, request_id, fallback, str(body.get("kind", "dialogue"))))
 	var err := http.request(API_DIALOGUE_URL, PackedStringArray([
 		"Content-Type: application/json"
 	]), HTTPClient.METHOD_POST, JSON.stringify(body))
 	if err != OK:
 		if is_instance_valid(http):
 			http.queue_free()
+		var logger = _episode_logger()
+		if logger and logger.has_method("log_api_failure"):
+			logger.log_api_failure(
+				"apiDialogue",
+				str(body.get("kind", "dialogue")),
+				-1,
+				"request_queue_error",
+				"Failed to queue dialogue request.",
+				request_id
+			)
 		_emit_dialogue_fallback(request_id, "request_error", fallback)
 
-func _on_backend_dialogue_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, request_id: String, fallback: String) -> void:
+func _on_backend_dialogue_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, request_id: String, fallback: String, event_type: String) -> void:
 	if is_instance_valid(http):
 		http.queue_free()
 
 	if code < 200 or code >= 300:
+		var logger = _episode_logger()
+		if logger and logger.has_method("log_api_failure"):
+			logger.log_api_failure(
+				"apiDialogue",
+				event_type,
+				code,
+				"http_error",
+				"Dialogue request returned HTTP %d." % code,
+				request_id
+			)
 		_emit_dialogue_fallback(request_id, "http_error", fallback, code)
 		return
 
 	var top: Variant = JSON.parse_string(body.get_string_from_utf8())
 	if not (top is Dictionary):
+		var logger = _episode_logger()
+		if logger and logger.has_method("log_api_failure"):
+			logger.log_api_failure(
+				"apiDialogue",
+				event_type,
+				code,
+				"parse_error",
+				"Dialogue response was not valid JSON.",
+				request_id
+			)
 		_emit_dialogue_fallback(request_id, "parse_error", fallback)
 		return
 

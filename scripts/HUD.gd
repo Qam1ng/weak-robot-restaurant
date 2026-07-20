@@ -60,6 +60,7 @@ var player_dialogue_overlay_decline_btn: Button
 var player_dialogue_overlay_later_btn: Button
 var _player_dialogue_info_cards: Array[Dictionary] = []
 var _help_prompt_cards: Array[Dictionary] = []
+var _delegation_pause_active: bool = false
 var _left_panel_width: float = 0.0
 var _last_help_bubble_utterance_by_request: Dictionary = {}
 var _shown_help_system_notice_by_request: Dictionary = {}
@@ -69,10 +70,13 @@ var _kitchen_pick_options: Array[String] = []
 var _tipi_questions: Array[Dictionary] = []
 var _tipi_index: int = 0
 var _tipi_responses := {}
+var _survey_nickname_input: LineEdit
+var _survey_mode: String = "nickname"
 var _survey_scale_buttons: Array[Button] = []
 var _player_task_notice_player: AudioStreamPlayer
 var _last_player_live_task_ids: Dictionary = {}
 var _player_task_notice_initialized: bool = false
+var _tutorial_toggle_flash_tween: Tween = null
 const FEED_COLOR_DIALOGUE := Color(0.84, 0.95, 1.0, 1.0)
 const HANDOFF_PROMPT_DISTANCE := 120.0
 const POPUP_MODE_NONE := "none"
@@ -93,6 +97,17 @@ const PLAYER_DIALOGUE_OVERLAY_WIDTH := 520.0
 const PLAYER_DIALOGUE_OVERLAY_SHOW_SEC := 3.0
 const PLAYER_DIALOGUE_STACK_GAP := 10.0
 const HELP_PROMPT_MAX_STACK := 2
+const HELP_PROMPT_WIDTH_RATIO := 0.95
+const HELP_PROMPT_X_OFFSET := 24.0
+const HELP_PROMPT_BODY_FONT_SIZE := 24
+const HELP_PROMPT_TITLE_FONT_SIZE := 32
+const HELP_PROMPT_BUTTON_FONT_SIZE := 22
+const HELP_PROMPT_BUTTON_HEIGHT := 60.0
+const TRIAL_GUIDE_BODY_FONT_SIZE := 20
+const TRIAL_GUIDE_MESSAGE_MIN_WIDTH := 320.0
+const HELP_DIALOGUE_STAGE_OPENER := 0
+const HELP_DIALOGUE_STAGE_BRIDGE := 1
+const HELP_DIALOGUE_STAGE_DELEGATION := 2
 const DIALOGUE_PANEL_WIDTH := 340.0
 const TUTORIAL_PANEL_WIDTH := 620.0
 const TUTORIAL_PANEL_MIN_HEIGHT := 420.0
@@ -108,11 +123,16 @@ const SCORE_PER_DRINK_SUCCESS := 1
 const SCORE_PER_DRINK_FAILURE := -3
 const SCORE_FAIL_THRESHOLD := -30
 const SURVEY_PANEL_BASE_SIZE := Vector2(580.0, 300.0)
+const SURVEY_PANEL_RESULT_HEIGHT := 220.0
 const SURVEY_PANEL_MARGIN := 24.0
 const SURVEY_PANEL_OFFSET_X := 20.0
 const SURVEY_QUESTION_Y_OFFSET := -34.0
 const SURVEY_RESULT_Y_OFFSET := -20.0
+const SURVEY_MODE_NICKNAME := "nickname"
+const SURVEY_MODE_TIPI := "tipi"
+const SURVEY_MODE_RESULT := "result"
 var _score_game_over: bool = false
+var _run_end_active: bool = false
 var _tutorial_started: bool = false
 var _customer_history_page: int = 0
 var _pending_day_notice: int = 0
@@ -164,6 +184,7 @@ func _ready() -> void:
 	_setup_customer_orders_ui()
 	_setup_player_dialogue_overlay_ui()
 	_setup_tutorial_ui()
+	_setup_survey_input_ui()
 	_setup_trial_guide_ui()
 	_setup_player_task_notice_audio()
 	_set_gameplay_panels_visible(false)
@@ -198,7 +219,10 @@ func _recenter_survey_panel() -> void:
 	if view_size.x <= 0.0 or view_size.y <= 0.0:
 		return
 	var target_w := clampf(SURVEY_PANEL_BASE_SIZE.x, 360.0, maxf(360.0, view_size.x - SURVEY_PANEL_MARGIN * 2.0))
-	var target_h := clampf(SURVEY_PANEL_BASE_SIZE.y, 260.0, maxf(260.0, view_size.y - SURVEY_PANEL_MARGIN * 2.0))
+	var panel_base_h := SURVEY_PANEL_BASE_SIZE.y
+	if _survey_mode == SURVEY_MODE_RESULT:
+		panel_base_h = SURVEY_PANEL_RESULT_HEIGHT
+	var target_h := clampf(panel_base_h, 220.0, maxf(220.0, view_size.y - SURVEY_PANEL_MARGIN * 2.0))
 	survey_panel.custom_minimum_size = Vector2(target_w, target_h)
 	survey_panel.size = Vector2(target_w, target_h)
 	var survey_y_offset := SURVEY_QUESTION_Y_OFFSET
@@ -617,6 +641,12 @@ func _on_day_changed_notice(day: int) -> void:
 	if not _formal_session_started:
 		_pending_day_notice = day
 		return
+	if day > 1:
+		_show_run_end_prompt(
+			"Shift Complete",
+			"Day 1 is complete.\nYou kept the score above %d and finished the shift." % SCORE_FAIL_THRESHOLD
+		)
+		return
 	_initial_day_notice_shown = true
 	var message := "You have entered Day %d." % day
 	if day == 1:
@@ -732,17 +762,34 @@ func _check_score_game_over() -> void:
 	if _score > SCORE_FAIL_THRESHOLD:
 		return
 	_score_game_over = true
-	get_tree().paused = true
-	_popup_mode = POPUP_MODE_GAME_OVER
-	_show_player_dialogue_prompt(
+	_show_run_end_prompt(
 		"Game Over",
-		"Score reached %d (threshold %d).\nShift failed." % [_score, SCORE_FAIL_THRESHOLD],
-		["Retry", "Quit"],
-		false
+		"Score reached %d (threshold %d).\nShift failed." % [_score, SCORE_FAIL_THRESHOLD]
 	)
 
+func _show_run_end_prompt(title: String, body: String) -> void:
+	if _run_end_active:
+		return
+	_run_end_active = true
+	_set_global_pause(true)
+	_popup_mode = POPUP_MODE_GAME_OVER
+	_show_player_dialogue_prompt(title, body, ["Retry", "Quit"], false)
+
 func _on_game_over_retry() -> void:
-	get_tree().paused = false
+	_set_global_pause(false)
+	_run_end_active = false
+	_score_game_over = false
+	_popup_mode = POPUP_MODE_NONE
+	var logger = get_node_or_null("/root/EpisodeLogger")
+	if logger and logger.has_method("reset_session"):
+		logger.reset_session()
+		if logger.has_method("log_delegation_templates"):
+			var engine = load("res://scripts/PersuasionEngine.gd")
+			if engine and engine.has_method("get_template_records"):
+				logger.log_delegation_templates(engine.get_template_records())
+	var profile = get_node_or_null("/root/PlayerProfile")
+	if profile and profile.has_method("reset_profile"):
+		profile.reset_profile()
 	var board = get_node_or_null("/root/TaskBoard")
 	if board and board.has_method("reset_all"):
 		board.reset_all()
@@ -912,6 +959,18 @@ func _process(_dt: float) -> void:
 	_update_gameplay_panel_layout()
 	_update_trial_guide_overlay()
 
+func _get_ui_now_ms() -> int:
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
+		return int(game_mgr.get_gameplay_time_ms())
+	return Time.get_ticks_msec()
+
+func _set_global_pause(paused: bool) -> void:
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("set_gameplay_paused"):
+		game_mgr.set_gameplay_paused(paused)
+	get_tree().paused = paused
+
 func _update_gameplay_panel_layout() -> void:
 	if inventory_panel == null or dialogue_panel == null or customer_panel == null:
 		return
@@ -958,11 +1017,16 @@ func _update_gameplay_panel_layout() -> void:
 	var stack_origin_y: float = gameplay_top_y + PLAYER_DIALOGUE_OVERLAY_Y_OFFSET
 	var stack_y: float = stack_origin_y
 	if help_prompt_stack:
-		help_prompt_stack.position = Vector2(centered_x, stack_origin_y)
-		help_prompt_stack.custom_minimum_size.x = PLAYER_DIALOGUE_OVERLAY_WIDTH
+		var help_prompt_width := GAMEPLAY_BAND_WIDTH * HELP_PROMPT_WIDTH_RATIO
+		help_prompt_stack.custom_minimum_size.x = help_prompt_width
 		if help_prompt_stack.visible:
 			var help_h := maxf(help_prompt_stack.size.y, help_prompt_stack.get_combined_minimum_size().y)
+			var help_x := center_x - help_prompt_width * 0.5 + HELP_PROMPT_X_OFFSET
+			var help_y := maxf(72.0, (view_size.y - help_h) * 0.44)
+			help_prompt_stack.position = Vector2(help_x, help_y)
 			stack_y += help_h + PLAYER_DIALOGUE_STACK_GAP
+		else:
+			help_prompt_stack.position = Vector2(center_x - help_prompt_width * 0.5 + HELP_PROMPT_X_OFFSET, stack_origin_y)
 	if player_dialogue_overlay:
 		var overlay_w := player_dialogue_overlay.custom_minimum_size.x
 		player_dialogue_overlay.position = Vector2((view_size.x - overlay_w) * 0.5, stack_y)
@@ -1034,7 +1098,7 @@ func _update_robot_task_panel() -> void:
 		var eta := "Waiting"
 		var deadline_ms := int(task.get("deadline_ms", 0))
 		if deadline_ms > 0:
-			var remain_sec := int(ceili(float(deadline_ms - Time.get_ticks_msec()) / 1000.0))
+			var remain_sec := int(ceili(float(deadline_ms - _get_ui_now_ms()) / 1000.0))
 			eta = str(maxi(remain_sec, 0)) + "s"
 		var line := Label.new()
 		line.text = "%s | %s | %s | %s" % [seat, item_label, step, eta]
@@ -1083,7 +1147,7 @@ func _update_customer_panel() -> void:
 		return
 
 	var board = get_node_or_null("/root/TaskBoard")
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _get_ui_now_ms()
 	var customer_lines: Array[Label] = []
 	for n in customers:
 		if not (n is Node):
@@ -1252,7 +1316,7 @@ func _update_player_task_panel() -> void:
 		var eta := "Waiting"
 		var deadline_ms := int(task.get("deadline_ms", 0))
 		if deadline_ms > 0:
-			var remain_sec := int(ceili(float(deadline_ms - Time.get_ticks_msec()) / 1000.0))
+			var remain_sec := int(ceili(float(deadline_ms - _get_ui_now_ms()) / 1000.0))
 			eta = str(maxi(remain_sec, 0)) + "s"
 		var line := Label.new()
 		line.text = "%s | %s | %s | %s" % [seat, item_label, step, eta]
@@ -1304,6 +1368,8 @@ func shutdown_immediately() -> void:
 		_clear_dynamic_children(survey_options)
 	if help_prompt_stack:
 		_clear_dynamic_children(help_prompt_stack)
+		help_prompt_stack.visible = false
+	_update_delegation_pause_state()
 	if player_dialogue_info_stack:
 		_clear_dynamic_children(player_dialogue_info_stack)
 	if dialogue_log:
@@ -1487,11 +1553,29 @@ func show_help_request(request: Dictionary) -> void:
 	_show_or_update_help_request_card(request)
 	_maybe_show_help_bubble(request)
 
-func _build_help_text(request: Dictionary) -> String:
-	var utterance = str(request.get("utterance", ""))
+func _build_help_text(request: Dictionary, dialogue_stage: int = HELP_DIALOGUE_STAGE_DELEGATION) -> String:
+	match dialogue_stage:
+		HELP_DIALOGUE_STAGE_OPENER:
+			var opener := str(request.get("opener_text", "")).strip_edges()
+			if opener != "":
+				return opener
+		HELP_DIALOGUE_STAGE_BRIDGE:
+			var bridge := str(request.get("bridge_text", "")).strip_edges()
+			if bridge != "":
+				return bridge
+	var utterance := str(request.get("utterance", "")).strip_edges()
 	if utterance == "":
 		utterance = "Can you help now?"
 	return utterance
+
+func _help_stage_reply_text(request: Dictionary, dialogue_stage: int) -> String:
+	match dialogue_stage:
+		HELP_DIALOGUE_STAGE_OPENER:
+			return str(request.get("opener_reply_text", "Sure, what do you need?"))
+		HELP_DIALOGUE_STAGE_BRIDGE:
+			return str(request.get("bridge_reply_text", "Alright, tell me what it is."))
+		_:
+			return "Accept"
 
 func _respond(response: String) -> void:
 	if _popup_mode == POPUP_MODE_KITCHEN_PICK:
@@ -1676,6 +1760,21 @@ func _setup_survey_scale_buttons() -> void:
 		survey_options.add_child(button)
 		_survey_scale_buttons.append(button)
 
+func _setup_survey_input_ui() -> void:
+	if survey_options == null:
+		return
+	_survey_nickname_input = LineEdit.new()
+	_survey_nickname_input.placeholder_text = "Enter your name"
+	_survey_nickname_input.max_length = 20
+	_survey_nickname_input.custom_minimum_size = Vector2(0, 44)
+	_survey_nickname_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_survey_nickname_input.visible = false
+	_survey_nickname_input.text_submitted.connect(func(_text: String) -> void:
+		if survey_confirm and survey_confirm.visible:
+			_finish_survey_and_start()
+	)
+	survey_options.add_child(_survey_nickname_input)
+
 func _on_tipi_scale_pressed(response_value: int) -> void:
 	_choose_tipi(response_value)
 
@@ -1694,18 +1793,65 @@ func _setup_tipi_survey() -> void:
 	]
 
 	var profile = get_node_or_null("/root/PlayerProfile")
-	if profile and profile.has_method("has_tipi") and bool(profile.has_tipi()):
+	if profile and profile.has_method("has_tipi") and bool(profile.has_tipi()) and profile.has_method("has_nickname") and bool(profile.has_nickname()):
 		_show_tutorial_before_game()
 		return
 
 	await _stabilize_player_camera_before_survey()
 
-	_tipi_index = 0
-	_tipi_responses.clear()
-
-	get_tree().paused = true
+	_set_global_pause(true)
 	_recenter_survey_panel()
 	survey_panel.show()
+	_show_nickname_prompt()
+
+func _show_nickname_prompt() -> void:
+	_survey_mode = SURVEY_MODE_NICKNAME
+	var profile = get_node_or_null("/root/PlayerProfile")
+	var current_nickname := ""
+	if profile and profile.has_method("get_profile"):
+		current_nickname = str(profile.get_profile().get("nickname", ""))
+	if survey_result_group_spacer:
+		survey_result_group_spacer.hide()
+	if survey_result_group:
+		survey_result_group.hide()
+	if survey_result_spacer:
+		survey_result_spacer.hide()
+	survey_confirm.hide()
+	if survey_question_title:
+		survey_question_title.show()
+	if survey_scale_title:
+		survey_scale_title.hide()
+	if survey_scale_spacer:
+		survey_scale_spacer.hide()
+	if survey_scale_hint:
+		survey_scale_hint.hide()
+	for button in _survey_scale_buttons:
+		button.hide()
+	if _survey_nickname_input:
+		_survey_nickname_input.text = current_nickname
+		_survey_nickname_input.show()
+		_survey_nickname_input.editable = true
+		_survey_nickname_input.call_deferred("grab_focus")
+	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 36)
+	survey_question.text = "What should we call you in the restaurant?"
+	if survey_question_title:
+		survey_question_title.text = "[b]Nickname[/b]"
+	if survey_scale_title:
+		survey_scale_title.hide()
+	if survey_scale_spacer:
+		survey_scale_spacer.hide()
+	if survey_scale_hint:
+		survey_scale_hint.text = ""
+	survey_confirm.text = "Continue"
+	survey_confirm.show()
+	_recenter_survey_panel()
+
+func _begin_tipi_questions() -> void:
+	_survey_mode = SURVEY_MODE_TIPI
+	if _survey_nickname_input:
+		_survey_nickname_input.hide()
+	_tipi_index = 0
+	_tipi_responses.clear()
 	if survey_result_group_spacer:
 		survey_result_group_spacer.hide()
 	if survey_result_group:
@@ -1769,6 +1915,8 @@ func _refresh_tipi_question() -> void:
 		survey_result_group.hide()
 
 func _choose_tipi(response_value: int) -> void:
+	if _survey_mode != SURVEY_MODE_TIPI:
+		return
 	if _tipi_index < 0 or _tipi_index >= _tipi_questions.size():
 		return
 	var q: Dictionary = _tipi_questions[_tipi_index]
@@ -1783,12 +1931,15 @@ func _choose_tipi(response_value: int) -> void:
 		_refresh_tipi_question()
 
 func _show_tipi_result() -> void:
+	_survey_mode = SURVEY_MODE_RESULT
 	var profile = get_node_or_null("/root/PlayerProfile")
 	if profile and profile.has_method("set_tipi"):
 		profile.set_tipi(_tipi_responses.duplicate(true), _tipi_questions.size())
 		var logger = get_node_or_null("/root/EpisodeLogger")
 		if logger and logger.has_method("log_participant_profile") and profile.has_method("get_profile"):
 			logger.log_participant_profile(profile.get_profile())
+	if _survey_nickname_input:
+		_survey_nickname_input.hide()
 
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 24)
 	survey_question.text = "Your responses have been recorded."
@@ -1809,13 +1960,46 @@ func _show_tipi_result() -> void:
 		survey_result_spacer.hide()
 	for button in _survey_scale_buttons:
 		button.hide()
-	survey_confirm.text = "Start Tutorial"
+	survey_confirm.text = "Open Tutorial"
 	survey_confirm.show()
 	_recenter_survey_panel()
 
 func _finish_survey_and_start() -> void:
+	if _survey_mode == SURVEY_MODE_NICKNAME:
+		var nickname := _normalized_nickname(_survey_nickname_input.text if _survey_nickname_input else "")
+		if nickname == "":
+			if survey_question:
+				survey_question.text = "Please enter a nickname using letters, numbers, hyphens, or underscores."
+			if _survey_nickname_input:
+				_survey_nickname_input.grab_focus()
+			return
+		if _survey_nickname_input:
+			_survey_nickname_input.text = nickname
+		var profile = get_node_or_null("/root/PlayerProfile")
+		if profile and profile.has_method("set_nickname"):
+			profile.set_nickname(nickname)
+			var logger = get_node_or_null("/root/EpisodeLogger")
+			if logger and logger.has_method("log_participant_profile") and profile.has_method("get_profile"):
+				logger.log_participant_profile(profile.get_profile())
+		_begin_tipi_questions()
+		return
 	survey_panel.hide()
-	_start_game_from_tutorial()
+	_show_tutorial_before_game()
+
+func _normalized_nickname(raw_value: String) -> String:
+	var trimmed := raw_value.strip_edges()
+	if trimmed == "":
+		return ""
+	var result := ""
+	for i in range(trimmed.length()):
+		var ch := trimmed.substr(i, 1)
+		var code := ch.unicode_at(0)
+		var is_upper := code >= 65 and code <= 90
+		var is_lower := code >= 97 and code <= 122
+		var is_digit := code >= 48 and code <= 57
+		if is_upper or is_lower or is_digit or ch == "_" or ch == "-":
+			result += ch
+	return result.left(20)
 
 func _setup_tutorial_ui() -> void:
 	tutorial_panel = PanelContainer.new()
@@ -1863,7 +2047,7 @@ func _setup_tutorial_ui() -> void:
 	vbox.add_child(button_row)
 
 	tutorial_start_button = Button.new()
-	tutorial_start_button.text = "Start Game"
+	tutorial_start_button.text = "Start Trial Session"
 	tutorial_start_button.custom_minimum_size = Vector2(0, 52)
 	tutorial_start_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tutorial_start_button.pressed.connect(_start_game_from_tutorial)
@@ -1908,7 +2092,7 @@ func _setup_tutorial_ui() -> void:
 	add_child(tutorial_toggle_button)
 
 func _show_tutorial_before_game() -> void:
-	get_tree().paused = true
+	_set_global_pause(true)
 	_set_gameplay_panels_visible(false)
 	if tutorial_panel:
 		tutorial_panel.show()
@@ -1922,11 +2106,9 @@ func _show_tutorial_before_game() -> void:
 
 func _start_game_from_tutorial() -> void:
 	_tutorial_started = true
-	if tutorial_panel:
-		tutorial_panel.hide()
-	if tutorial_toggle_button and _formal_session_started:
-		tutorial_toggle_button.show()
-	get_tree().paused = false
+	await _dismiss_tutorial_overlay(true)
+	_clear_player_input_state()
+	_set_global_pause(false)
 	_set_gameplay_panels_visible(true)
 	_start_trial_session()
 
@@ -1940,25 +2122,98 @@ func _show_pending_day_notice() -> void:
 func _open_tutorial_overlay() -> void:
 	if not _tutorial_started:
 		return
-	get_tree().paused = true
+	_set_global_pause(true)
 	if tutorial_panel:
 		tutorial_panel.show()
 	if tutorial_start_button:
 		tutorial_start_button.hide()
 	if tutorial_close_button:
+		tutorial_close_button.text = "Close"
 		tutorial_close_button.show()
 	if tutorial_toggle_button:
 		tutorial_toggle_button.hide()
 	_update_gameplay_panel_layout()
 
 func _close_tutorial_overlay() -> void:
-	if tutorial_panel:
-		tutorial_panel.hide()
+	await _dismiss_tutorial_overlay(false)
+	_clear_player_input_state()
+	_set_global_pause(false)
+
+func _dismiss_tutorial_overlay(start_trial: bool) -> void:
+	if tutorial_start_button:
+		tutorial_start_button.disabled = true
+	if tutorial_close_button:
+		tutorial_close_button.disabled = true
 	if tutorial_close_button:
 		tutorial_close_button.hide()
 	if tutorial_toggle_button:
 		tutorial_toggle_button.show()
-	get_tree().paused = false
+	var tween: Tween = null
+	if tutorial_panel:
+		tutorial_panel.modulate = Color(1.0, 1.0, 1.0, 1.0)
+		tutorial_panel.scale = Vector2.ONE
+		tween = create_tween()
+		tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+		tween.set_trans(Tween.TRANS_SINE)
+		tween.set_ease(Tween.EASE_IN_OUT)
+		tween.tween_property(tutorial_panel, "modulate:a", 0.0, 0.32)
+	if tween:
+		await tween.finished
+	if tutorial_panel:
+		tutorial_panel.hide()
+		tutorial_panel.modulate = Color(1.0, 1.0, 1.0, 1.0)
+		tutorial_panel.scale = Vector2.ONE
+	if start_trial:
+		await _spotlight_tutorial_toggle()
+	if tutorial_start_button:
+		tutorial_start_button.disabled = false
+		tutorial_start_button.text = "Start Trial Session"
+		tutorial_start_button.visible = start_trial
+	if tutorial_close_button:
+		tutorial_close_button.disabled = false
+		tutorial_close_button.visible = false
+
+func _flash_tutorial_toggle() -> void:
+	if tutorial_toggle_button == null:
+		return
+	if _tutorial_toggle_flash_tween:
+		_tutorial_toggle_flash_tween.kill()
+	tutorial_toggle_button.scale = Vector2.ONE
+	tutorial_toggle_button.modulate = Color(1.0, 1.0, 1.0, 1.0)
+	_tutorial_toggle_flash_tween = create_tween()
+	_tutorial_toggle_flash_tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	_tutorial_toggle_flash_tween.set_trans(Tween.TRANS_SINE)
+	_tutorial_toggle_flash_tween.set_ease(Tween.EASE_OUT)
+	_tutorial_toggle_flash_tween.tween_property(tutorial_toggle_button, "scale", Vector2(1.24, 1.24), 0.28)
+	_tutorial_toggle_flash_tween.parallel().tween_property(tutorial_toggle_button, "modulate", Color(1.2, 1.16, 0.86, 1.0), 0.28)
+	_tutorial_toggle_flash_tween.set_ease(Tween.EASE_IN_OUT)
+	_tutorial_toggle_flash_tween.tween_property(tutorial_toggle_button, "scale", Vector2.ONE, 0.42)
+	_tutorial_toggle_flash_tween.parallel().tween_property(tutorial_toggle_button, "modulate", Color(1.0, 1.0, 1.0, 1.0), 0.42)
+	_tutorial_toggle_flash_tween.finished.connect(func() -> void:
+		_tutorial_toggle_flash_tween = null
+	)
+
+func _clear_player_input_state() -> void:
+	for action in ["move_up", "move_down", "move_left", "move_right", "interact", "ui_cancel"]:
+		if InputMap.has_action(action):
+			Input.action_release(action)
+	Input.flush_buffered_events()
+
+func _spotlight_tutorial_toggle() -> void:
+	if tutorial_toggle_button == null or not tutorial_toggle_button.visible:
+		return
+	_show_trial_guide(
+		"",
+		{
+			"type": "control",
+			"id": tutorial_toggle_button.get_instance_id()
+		},
+		""
+	)
+	_flash_tutorial_toggle()
+	var timer := get_tree().create_timer(0.72, true, false, true)
+	await timer.timeout
+	_hide_trial_guide()
 
 func _set_gameplay_panels_visible(visible: bool) -> void:
 	if inventory_panel:
@@ -2053,10 +2308,10 @@ func _setup_trial_guide_ui() -> void:
 	message_style.corner_radius_top_right = 12
 	message_style.corner_radius_bottom_left = 12
 	message_style.corner_radius_bottom_right = 12
-	message_style.content_margin_left = 14
-	message_style.content_margin_right = 14
-	message_style.content_margin_top = 10
-	message_style.content_margin_bottom = 10
+	message_style.content_margin_left = 18
+	message_style.content_margin_right = 18
+	message_style.content_margin_top = 12
+	message_style.content_margin_bottom = 12
 	_trial_guide_message_panel.add_theme_stylebox_override("panel", message_style)
 	_trial_guide_layer.add_child(_trial_guide_message_panel)
 
@@ -2065,7 +2320,8 @@ func _setup_trial_guide_ui() -> void:
 	_trial_guide_message_label.fit_content = true
 	_trial_guide_message_label.scroll_active = false
 	_trial_guide_message_label.selection_enabled = false
-	_trial_guide_message_label.custom_minimum_size = Vector2(280.0, 0.0)
+	_trial_guide_message_label.add_theme_font_size_override("normal_font_size", TRIAL_GUIDE_BODY_FONT_SIZE)
+	_trial_guide_message_label.custom_minimum_size = Vector2(TRIAL_GUIDE_MESSAGE_MIN_WIDTH, 0.0)
 	_trial_guide_message_panel.add_child(_trial_guide_message_label)
 
 func _trial_wait(seconds: float) -> bool:
@@ -2097,8 +2353,6 @@ func _start_trial_session() -> void:
 		var spawner = game_mgr.get_customer_spawner()
 		if spawner and spawner.has_method("disable"):
 			spawner.disable()
-	if tutorial_toggle_button:
-		tutorial_toggle_button.hide()
 	if _trial_timeout_timer:
 		_trial_timeout_timer.start(TRIAL_SESSION_MAX_SEC)
 	call_deferred("_run_trial_intro")
@@ -2250,13 +2504,13 @@ func _show_trial_guide_for_handoff_accept() -> void:
 	if prompt_target.is_empty() or accept_target.is_empty():
 		return
 	_show_trial_guide(
-		"The robot may sometimes ask for your help. Pay attention to how it asks, and choose based on your own preference.",
+		"",
 		{
 			"type": "control",
 			"id": int(prompt_target.get("id", 0)),
 			"arrow_target": accept_target,
 			"hide_focus_border": true,
-			"message_min_width": 430.0,
+			"message_min_width": 500.0,
 			"message_offset_y": -20.0
 		},
 		"→"
@@ -2304,6 +2558,8 @@ func _begin_formal_session() -> void:
 	_formal_session_started = true
 	_initial_day_notice_shown = false
 	_pending_day_notice = 1
+	_run_end_active = false
+	_score_game_over = false
 	var robot = _trial_robot()
 	if robot != null and robot.has_method("set_trial_stationary_pause"):
 		robot.call("set_trial_stationary_pause", false)
@@ -2362,6 +2618,7 @@ func _reset_trial_world_state() -> void:
 	_success_count = 0
 	_failed_count = 0
 	_score_game_over = false
+	_run_end_active = false
 	_customer_history_page = 0
 	_last_player_live_task_ids.clear()
 	_refresh_score_label()
@@ -2383,6 +2640,7 @@ func _clear_trial_ui_state() -> void:
 	if help_prompt_stack:
 		_clear_dynamic_children(help_prompt_stack)
 		help_prompt_stack.visible = false
+	_update_delegation_pause_state()
 	_hide_player_dialogue_overlay()
 
 func _clear_actor_inventory(group_name: String) -> void:
@@ -2433,6 +2691,8 @@ func _trial_help_accept_target() -> Dictionary:
 	if idx < 0:
 		return {}
 	var entry: Dictionary = _help_prompt_cards[idx]
+	if int(entry.get("dialogue_stage", HELP_DIALOGUE_STAGE_OPENER)) < HELP_DIALOGUE_STAGE_DELEGATION:
+		return {}
 	var accept_btn: Button = entry.get("accept_btn", null)
 	if accept_btn == null or not is_instance_valid(accept_btn):
 		return {}
@@ -2527,7 +2787,10 @@ func _show_trial_guide(text: String, target: Dictionary, arrow: String = "↓") 
 	else:
 		_trial_guide_message_panel.visible = true
 		_trial_guide_message_label.append_text(text)
-	_set_trial_guide_arrow_direction(arrow)
+	if _trial_guide_arrow:
+		_trial_guide_arrow.visible = arrow.strip_edges() != ""
+	if arrow.strip_edges() != "":
+		_set_trial_guide_arrow_direction(arrow)
 	_update_trial_guide_overlay()
 
 func _set_trial_guide_arrow_direction(arrow: String) -> void:
@@ -2558,7 +2821,11 @@ func _update_trial_guide_overlay() -> void:
 	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 		return
 	var hide_focus_border := bool(_trial_guide_target.get("hide_focus_border", false))
+	rect.position = rect.position.round()
+	rect.size = rect.size.round()
 	var focus_rect := rect if hide_focus_border else rect.grow(8.0)
+	focus_rect.position = focus_rect.position.round()
+	focus_rect.size = focus_rect.size.round()
 	var view_size := get_viewport().get_visible_rect().size
 	var clipped_focus := Rect2(
 		Vector2(clampf(focus_rect.position.x, 0.0, view_size.x), clampf(focus_rect.position.y, 0.0, view_size.y)),
@@ -2567,6 +2834,8 @@ func _update_trial_guide_overlay() -> void:
 			clampf(focus_rect.end.y, 0.0, view_size.y) - clampf(focus_rect.position.y, 0.0, view_size.y)
 		)
 	)
+	clipped_focus.position = clipped_focus.position.round()
+	clipped_focus.size = clipped_focus.size.round()
 	if _trial_guide_dim_top:
 		_trial_guide_dim_top.position = Vector2.ZERO
 		_trial_guide_dim_top.size = Vector2(view_size.x, maxf(0.0, clipped_focus.position.y))
@@ -2584,7 +2853,7 @@ func _update_trial_guide_overlay() -> void:
 	_trial_guide_focus.size = focus_rect.size
 	var place_above := false
 	if _trial_guide_message_panel.visible:
-		var message_min_width := float(_trial_guide_target.get("message_min_width", 280.0))
+		var message_min_width := float(_trial_guide_target.get("message_min_width", TRIAL_GUIDE_MESSAGE_MIN_WIDTH))
 		_trial_guide_message_label.custom_minimum_size = Vector2(message_min_width, 0.0)
 		var message_size := _trial_guide_message_panel.get_combined_minimum_size()
 		_trial_guide_message_panel.size = message_size
@@ -2935,84 +3204,91 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 	var payload: Dictionary = request.get("payload", {})
 	var trial_accept_only := bool(payload.get("trial_accept_only", false))
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH, 0.0)
+	card.custom_minimum_size = Vector2(GAMEPLAY_BAND_WIDTH * HELP_PROMPT_WIDTH_RATIO, 0.0)
 
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.08, 0.11, 0.16, 0.92)
-	style.border_width_left = 2
-	style.border_width_top = 2
-	style.border_width_right = 2
-	style.border_width_bottom = 2
+	style.border_width_left = 3
+	style.border_width_top = 3
+	style.border_width_right = 3
+	style.border_width_bottom = 3
 	style.border_color = Color(0.58, 0.88, 1.0, 1.0)
-	style.corner_radius_top_left = 12
-	style.corner_radius_top_right = 12
-	style.corner_radius_bottom_right = 12
-	style.corner_radius_bottom_left = 12
-	style.content_margin_left = 14
-	style.content_margin_right = 14
-	style.content_margin_top = 10
-	style.content_margin_bottom = 10
+	style.corner_radius_top_left = 18
+	style.corner_radius_top_right = 18
+	style.corner_radius_bottom_right = 18
+	style.corner_radius_bottom_left = 18
+	style.content_margin_left = 24
+	style.content_margin_right = 24
+	style.content_margin_top = 20
+	style.content_margin_bottom = 20
 	card.add_theme_stylebox_override("panel", style)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 10)
+	vbox.add_theme_constant_override("separation", 18)
 	card.add_child(vbox)
+
+	var title_label := Label.new()
+	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title_label.add_theme_font_size_override("font_size", HELP_PROMPT_TITLE_FONT_SIZE)
+	title_label.add_theme_color_override("font_color", Color(1.0, 0.84, 0.36, 1.0))
+	title_label.text = "Robot Request"
+	vbox.add_child(title_label)
 
 	var label := RichTextLabel.new()
 	label.bbcode_enabled = false
 	label.fit_content = true
 	label.scroll_active = false
 	label.selection_enabled = false
-	label.custom_minimum_size = Vector2(PLAYER_DIALOGUE_OVERLAY_WIDTH - 28.0, 0.0)
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.add_theme_font_size_override("normal_font_size", HELP_PROMPT_BODY_FONT_SIZE)
+	label.custom_minimum_size = Vector2(card.custom_minimum_size.x - 48.0, 0.0)
 	vbox.add_child(label)
-	label.push_color(Color(0.58, 0.88, 1.0, 1.0))
-	label.add_text("Robot Request")
-	label.pop()
-	label.add_text("\n\n" + _build_help_text(request))
 
 	var buttons := HBoxContainer.new()
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	buttons.add_theme_constant_override("separation", 16)
 	vbox.add_child(buttons)
 
-	var accept_btn := Button.new()
-	accept_btn.text = "Accept"
-	accept_btn.pressed.connect(func():
-		var help_mgr = get_node_or_null("/root/HelpRequestManager")
-		if help_mgr:
-			help_mgr.respond(rid, "accept")
+	var primary_btn := Button.new()
+	primary_btn.custom_minimum_size = Vector2(160.0, HELP_PROMPT_BUTTON_HEIGHT)
+	primary_btn.add_theme_font_size_override("font_size", HELP_PROMPT_BUTTON_FONT_SIZE)
+	primary_btn.pressed.connect(func():
+		_on_help_request_primary_pressed(rid)
 	)
-	buttons.add_child(accept_btn)
+	buttons.add_child(primary_btn)
 
 	var decline_btn := Button.new()
 	decline_btn.text = "Decline"
-	if trial_accept_only:
-		decline_btn.disabled = true
-	else:
-		decline_btn.pressed.connect(func():
-			var help_mgr = get_node_or_null("/root/HelpRequestManager")
-			if help_mgr:
-				help_mgr.respond(rid, "decline")
-		)
+	decline_btn.custom_minimum_size = Vector2(160.0, HELP_PROMPT_BUTTON_HEIGHT)
+	decline_btn.add_theme_font_size_override("font_size", HELP_PROMPT_BUTTON_FONT_SIZE)
+	decline_btn.pressed.connect(func():
+		_submit_help_request_response(rid, "decline")
+	)
 	buttons.add_child(decline_btn)
 
 	var later_btn := Button.new()
 	later_btn.text = "Later"
-	if trial_accept_only:
-		later_btn.disabled = true
-	else:
-		later_btn.pressed.connect(func():
-			var help_mgr = get_node_or_null("/root/HelpRequestManager")
-			if help_mgr:
-				help_mgr.respond(rid, "later")
-		)
+	later_btn.custom_minimum_size = Vector2(160.0, HELP_PROMPT_BUTTON_HEIGHT)
+	later_btn.add_theme_font_size_override("font_size", HELP_PROMPT_BUTTON_FONT_SIZE)
+	later_btn.pressed.connect(func():
+		_submit_help_request_response(rid, "later")
+	)
 	buttons.add_child(later_btn)
 
-	return {
+	var entry := {
 		"request_id": rid,
+		"request": request.duplicate(true),
 		"node": card,
+		"title_label": title_label,
 		"label": label,
-		"accept_btn": accept_btn
+		"accept_btn": primary_btn,
+		"decline_btn": decline_btn,
+		"later_btn": later_btn,
+		"dialogue_stage": HELP_DIALOGUE_STAGE_OPENER,
+		"trial_accept_only": trial_accept_only
 	}
+	_apply_help_request_card_state(entry, request)
+	return entry
 
 func _find_help_request_card_index(request_id: String) -> int:
 	for i in range(_help_prompt_cards.size()):
@@ -3032,13 +3308,8 @@ func _show_or_update_help_request_card(request: Dictionary) -> void:
 	var idx := _find_help_request_card_index(rid)
 	if idx >= 0:
 		var entry: Dictionary = _help_prompt_cards[idx]
-		var label: RichTextLabel = entry.get("label", null)
-		if label != null:
-			label.clear()
-			label.push_color(Color(1.0, 0.84, 0.36, 1.0))
-			label.add_text("Robot Request")
-			label.pop()
-			label.add_text("\n\n" + _build_help_text(request))
+		entry["request"] = request.duplicate(true)
+		_apply_help_request_card_state(entry, request)
 		_help_prompt_cards[idx] = entry
 	else:
 		if _help_prompt_cards.size() >= HELP_PROMPT_MAX_STACK:
@@ -3047,13 +3318,67 @@ func _show_or_update_help_request_card(request: Dictionary) -> void:
 		_help_prompt_cards.append(created)
 		help_prompt_stack.add_child(created.get("node"))
 	help_prompt_stack.visible = not _help_prompt_cards.is_empty()
+	_update_delegation_pause_state()
 	_update_gameplay_panel_layout()
+
+func _apply_help_request_card_state(entry: Dictionary, request: Dictionary) -> void:
+	var stage := int(entry.get("dialogue_stage", HELP_DIALOGUE_STAGE_OPENER))
+	var label: RichTextLabel = entry.get("label", null)
+	var title_label: Label = entry.get("title_label", null)
+	if title_label != null:
+		title_label.text = "Robot Request"
+	if label != null:
+		label.clear()
+		label.add_text(_build_help_text(request, stage))
+	var primary_btn: Button = entry.get("accept_btn", null)
+	var decline_btn: Button = entry.get("decline_btn", null)
+	var later_btn: Button = entry.get("later_btn", null)
+	var trial_accept_only := bool(entry.get("trial_accept_only", false))
+	if primary_btn != null:
+		primary_btn.visible = true
+		primary_btn.text = _help_stage_reply_text(request, stage)
+		primary_btn.disabled = false
+	if decline_btn != null:
+		decline_btn.visible = stage == HELP_DIALOGUE_STAGE_DELEGATION
+		decline_btn.disabled = trial_accept_only
+	if later_btn != null:
+		later_btn.visible = stage == HELP_DIALOGUE_STAGE_DELEGATION
+		later_btn.disabled = trial_accept_only
+
+func _on_help_request_primary_pressed(request_id: String) -> void:
+	var idx := _find_help_request_card_index(request_id)
+	if idx < 0:
+		return
+	var entry: Dictionary = _help_prompt_cards[idx]
+	var stage := int(entry.get("dialogue_stage", HELP_DIALOGUE_STAGE_OPENER))
+	if stage >= HELP_DIALOGUE_STAGE_DELEGATION:
+		_submit_help_request_response(request_id, "accept")
+		return
+	stage += 1
+	entry["dialogue_stage"] = stage
+	var request: Dictionary = entry.get("request", {})
+	var help_mgr = get_node_or_null("/root/HelpRequestManager")
+	if help_mgr != null and help_mgr.has_method("get_request"):
+		var refreshed: Dictionary = help_mgr.get_request(request_id)
+		if not refreshed.is_empty():
+			request = refreshed
+			entry["request"] = refreshed.duplicate(true)
+	_apply_help_request_card_state(entry, request)
+	_help_prompt_cards[idx] = entry
+	if _trial_session_active and request_id == _trial_handoff_request_id and _trial_step == "await_handoff_accept" and stage >= HELP_DIALOGUE_STAGE_DELEGATION:
+		call_deferred("_show_trial_guide_for_handoff_accept")
+
+func _submit_help_request_response(request_id: String, response: String) -> void:
+	var help_mgr = get_node_or_null("/root/HelpRequestManager")
+	if help_mgr and help_mgr.has_method("respond"):
+		help_mgr.respond(request_id, response)
 
 func _remove_help_request_card(request_id: String) -> void:
 	var idx := _find_help_request_card_index(request_id)
 	if idx < 0:
 		_last_help_bubble_utterance_by_request.erase(request_id)
 		_shown_help_system_notice_by_request.erase(request_id)
+		_update_delegation_pause_state()
 		_fill_help_prompt_slots()
 		return
 	var entry: Dictionary = _help_prompt_cards[idx]
@@ -3065,8 +3390,16 @@ func _remove_help_request_card(request_id: String) -> void:
 		help_prompt_stack.visible = not _help_prompt_cards.is_empty()
 	_last_help_bubble_utterance_by_request.erase(request_id)
 	_shown_help_system_notice_by_request.erase(request_id)
+	_update_delegation_pause_state()
 	_update_gameplay_panel_layout()
 	_fill_help_prompt_slots()
+
+func _update_delegation_pause_state() -> void:
+	var should_pause := not _help_prompt_cards.is_empty()
+	if should_pause == _delegation_pause_active:
+		return
+	_delegation_pause_active = should_pause
+	_set_global_pause(should_pause)
 
 func _fill_help_prompt_slots() -> void:
 	if help_prompt_stack == null or _help_prompt_cards.size() >= HELP_PROMPT_MAX_STACK:

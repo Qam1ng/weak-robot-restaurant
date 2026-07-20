@@ -22,6 +22,12 @@ var _tasks_by_id: Dictionary = {}
 var _task_order: Array[String] = []
 var _next_id: int = 1
 
+func _gameplay_now_ms() -> int:
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
+		return int(game_mgr.get_gameplay_time_ms())
+	return Time.get_ticks_msec()
+
 func _process(_delta: float) -> void:
 	_fail_overdue_in_progress_tasks()
 
@@ -42,7 +48,7 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 		seat = str(customer.current_seat)
 
 	var task_id := _new_task_id()
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var food_item := _extract_food_from_request(request_text)
 	var steps := [
 		{"name": STEP_TAKE_ORDER, "state": "pending"},
@@ -90,7 +96,7 @@ func create_drink_order(customer: Node, drink_item: String, assignee: String = "
 	if "current_seat" in customer:
 		seat = str(customer.current_seat)
 	var task_id := _new_task_id()
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var steps := [
 		{"name": STEP_TAKE_ORDER, "state": "pending"},
 		{"name": STEP_PICKUP_FROM_KITCHEN, "state": "pending"},
@@ -161,7 +167,7 @@ func claim_task(task_id: String, assignee: String) -> Dictionary:
 
 	task["state"] = STATE_IN_PROGRESS
 	task["assigned_to"] = assignee
-	task["claimed_at_ms"] = Time.get_ticks_msec()
+	task["claimed_at_ms"] = _gameplay_now_ms()
 	_tasks_by_id[task_id] = task
 
 	var copied := _copy_task(task)
@@ -206,7 +212,7 @@ func complete_current_step(task_id: String, expected_step_name: String = "") -> 
 	task["current_step_index"] = idx + 1
 	if int(task["current_step_index"]) >= steps.size():
 		task["state"] = STATE_COMPLETED
-		task["completed_at_ms"] = Time.get_ticks_msec()
+		task["completed_at_ms"] = _gameplay_now_ms()
 
 	_tasks_by_id[task_id] = task
 	var copied := _copy_task(task)
@@ -224,7 +230,7 @@ func reassign_task(task_id: String, assignee: String) -> Dictionary:
 	if str(task.get("state", "")) != STATE_IN_PROGRESS:
 		return {}
 	task["assigned_to"] = assignee
-	task["reassigned_at_ms"] = Time.get_ticks_msec()
+	task["reassigned_at_ms"] = _gameplay_now_ms()
 	_tasks_by_id[task_id] = task
 	var copied := _copy_task(task)
 	task_updated.emit(copied)
@@ -354,7 +360,7 @@ func get_best_handoff_candidate_for_player() -> Dictionary:
 		var step_name := get_current_step_name(str(task.get("id", "")))
 		if step_name != STEP_TAKE_ORDER:
 			continue
-		var slack := _compute_slack_ms(task, Time.get_ticks_msec())
+		var slack := _compute_slack_ms(task, _gameplay_now_ms())
 		if slack < best_slack:
 			best_slack = slack
 			best = task
@@ -372,7 +378,7 @@ func get_task_slack_ms(task_id: String) -> int:
 	var task = _tasks_by_id.get(task_id, {})
 	if task.is_empty():
 		return 0
-	return _compute_slack_ms(task, Time.get_ticks_msec())
+	return _compute_slack_ms(task, _gameplay_now_ms())
 
 func get_open_task_count() -> int:
 	var count := 0
@@ -408,7 +414,7 @@ func complete_task(task_id: String) -> bool:
 	task["steps"] = steps
 	task["current_step_index"] = steps.size()
 	task["state"] = STATE_COMPLETED
-	task["completed_at_ms"] = Time.get_ticks_msec()
+	task["completed_at_ms"] = _gameplay_now_ms()
 	_tasks_by_id[task_id] = task
 
 	var copied := _copy_task(task)
@@ -425,7 +431,7 @@ func fail_task(task_id: String, reason: String = "unknown_failure") -> bool:
 		return false
 
 	task["state"] = STATE_FAILED
-	task["failed_at_ms"] = Time.get_ticks_msec()
+	task["failed_at_ms"] = _gameplay_now_ms()
 	task["failure_reason"] = reason
 	_tasks_by_id[task_id] = task
 
@@ -454,7 +460,7 @@ func fail_task_by_customer(customer_instance_id: int, reason: String = "customer
 	return changed
 
 func _fail_overdue_in_progress_tasks() -> void:
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var overdue_ids: Array[String] = []
 	for task_id in _task_order:
 		var task: Dictionary = _tasks_by_id.get(task_id, {})

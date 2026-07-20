@@ -529,7 +529,7 @@ func _on_reached() -> void:
 			_update_anim_by_velocity(Vector2.ZERO)
 
 		current_state = State.WAITING_FOR_FOOD
-		_task_deadline_ms = Time.get_ticks_msec() + int(maxf(1.0, patience_seconds) * 1000.0)
+		_task_deadline_ms = _gameplay_now_ms() + int(maxf(1.0, patience_seconds) * 1000.0)
 		_patience_timed_out = false
 		print("[Customer] Arrived at seat! Requesting: %s" % request_text)
 		var bubble_mgr = get_node_or_null("/root/BubbleManager")
@@ -566,6 +566,12 @@ func _post_taskboard_request() -> void:
 		return
 	print("[Customer] Task created: ", task.get("id", "unknown"), " | state=", task.get("state", "unknown"))
 	_refresh_order_bubble()
+
+func _gameplay_now_ms() -> int:
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
+		return int(game_mgr.get_gameplay_time_ms())
+	return Time.get_ticks_msec()
 
 func _update_anim_by_velocity(v: Vector2) -> void:
 	var moving := v.length() > 1.0
@@ -969,7 +975,7 @@ func _tick_order_timeouts() -> void:
 	if _patience_timed_out:
 		return
 	var task_board = get_node_or_null("/root/TaskBoard")
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var food_deadline_ms := get_task_deadline_ms()
 	if food_deadline_ms > 0 and now_ms >= food_deadline_ms:
 		_patience_timed_out = true

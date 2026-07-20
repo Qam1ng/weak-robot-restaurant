@@ -48,15 +48,11 @@ const EMERGENCY_HANDOFF_APPROACH_DISTANCE := 120.0
 const DEADLINE_HANDOFF_TRIGGER_MS := 55_000
 const ORPHAN_FOOD_ITEM_TTL_MS := 45_000
 const PLAYER_ITEM_TTL_MS := 120_000
-const RECIPROCITY_FULFILLMENT_MULTIPLIER := 1.15
 var _active_task_id: String = ""
 var _active_task_step: String = ""
 var _active_step_started: bool = false
 var _last_replan_ms: int = 0
 var _pending_overload_handoff_task_id: String = ""
-var _reciprocity_fulfillment_pending: bool = false
-var _reciprocity_fulfillment_active: bool = false
-var _reciprocity_fulfillment_task_id: String = ""
 
 # ---------- Unified Constraints ----------
 const BATTERY_MODE_NORMAL := "normal"
@@ -72,12 +68,12 @@ const BATTERY_MODE_EMERGENCY := "emergency"
 var _battery_mode: String = BATTERY_MODE_NORMAL
 var _constraint_input: Dictionary = {}
 var _active_help_request_id: String = ""
-var _help_request_suppressed: bool = false
-var _overload_handoff_declined_task_id: String = ""
-var _deadline_handoff_declined_task_id: String = ""
+var _workload_declined_task_ids: Dictionary = {}
+var _deadline_declined_task_ids: Dictionary = {}
 var _recharge_override_active: bool = false
 var _last_recharge_notice_ms: int = 0
 var _battery_emergency_handoff_attempted_task_id: String = ""
+var _battery_pressure_declined_until_recharge: bool = false
 var _last_emergency_approach_notice_ms: int = 0
 var _last_overload_approach_notice_ms: int = 0
 var _pending_player_line_request_id: String = ""
@@ -86,6 +82,9 @@ var _trial_handoff_armed_task_id: String = ""
 var _trial_handoff_pending_task_id: String = ""
 var _trial_handoff_item_needed: String = ""
 var _trial_stationary_pause: bool = false
+var _last_debug_step_key: String = ""
+var _step_navigation_failure_count: int = 0
+var _soft_pass_through_people: bool = false
 
 func _has_property(obj: Object, prop_name: String) -> bool:
 	for p in obj.get_property_list():
@@ -185,9 +184,7 @@ func _ready() -> void:
 	# Configure Navigation Agent
 	agent.set_navigation_map(get_world_2d().navigation_map)
 	agent.navigation_layers = 1
-	# Use native path points from NavigationAgent2D, but apply movement directly in actor.
-	# Avoidance callback path can be flaky when nav sources are rebuilt at runtime.
-	agent.avoidance_enabled = false
+	agent.avoidance_enabled = true
 	agent.max_speed = move_speed
 	agent.radius = 10.0
 	# Avoid over-reacting to far-away agents, which can skew local steering.
@@ -195,7 +192,7 @@ func _ready() -> void:
 	agent.time_horizon = 1.0
 	agent.debug_enabled = false
 	
-	if agent.avoidance_enabled:
+	if agent.avoidance_enabled and not agent.velocity_computed.is_connected(_on_agent_velocity_computed):
 		agent.velocity_computed.connect(_on_agent_velocity_computed)
 	await _wait_for_nav_sync(agent.get_navigation_map(), 120)
 
@@ -325,12 +322,13 @@ func _check_episode_completion() -> void:
 	# If BT reported failure for this step, never advance step state.
 	if bool(bt_runner.bb.get("last_plan_failed", false)):
 		bt_runner.bb["last_plan_failed"] = false
+		_handle_step_plan_failure()
 		_active_step_started = false
 		return
 
 	# Step cannot start yet, keep waiting and re-check constraints.
 	if not _active_step_started:
-		var now_ms := Time.get_ticks_msec()
+		var now_ms := _gameplay_now_ms()
 		if now_ms - _last_replan_ms >= 300:
 			_last_replan_ms = now_ms
 			_plan_current_task_step()
@@ -349,41 +347,40 @@ func _sync_active_task_state() -> bool:
 		_release_robot_food_for_task(_active_task_id, "task_missing")
 		_invalidate_active_help_request("task_missing")
 		_end_current_episode(false, "task_missing")
-		_end_reciprocity_fulfillment_for_task(_active_task_id)
 		_clear_current_task_runtime()
 		return true
 
 	var state := str(task.get("state", ""))
 	if state == TASK_STATE_FAILED:
 		var reason := str(task.get("failure_reason", "task_failed"))
+		_clear_task_declined_suppressions(_active_task_id)
 		_release_robot_food_for_task(_active_task_id, "task_failed")
 		_invalidate_active_help_request("task_failed")
 		_end_current_episode(false, reason)
-		_end_reciprocity_fulfillment_for_task(_active_task_id)
 		_clear_current_task_runtime()
 		return true
 	if state == TASK_STATE_COMPLETED:
+		_clear_task_declined_suppressions(_active_task_id)
 		_release_robot_food_for_task(_active_task_id, "task_completed")
 		_invalidate_active_help_request("task_completed")
 		_end_current_episode(true)
-		_end_reciprocity_fulfillment_for_task(_active_task_id)
 		_clear_current_task_runtime()
 		return true
 	if state != TASK_STATE_IN_PROGRESS:
+		_clear_task_declined_suppressions(_active_task_id)
 		_release_robot_food_for_task(_active_task_id, "task_invalid_state")
 		_invalidate_active_help_request("task_invalid_state")
 		_end_current_episode(false, "task_invalid_state:" + state)
-		_end_reciprocity_fulfillment_for_task(_active_task_id)
 		_clear_current_task_runtime()
 		return true
 	var payload: Dictionary = task.get("payload", {})
 	if _resolve_customer_from_payload(payload) == null:
 		if board.has_method("fail_task"):
 			board.fail_task(_active_task_id, "customer_missing")
+		_clear_task_declined_suppressions(_active_task_id)
 		_release_robot_food_for_task(_active_task_id, "customer_missing")
 		_invalidate_active_help_request("customer_missing")
 		_end_current_episode(false, "customer_missing")
-		_end_reciprocity_fulfillment_for_task(_active_task_id)
 		_clear_current_task_runtime()
 		return true
 	return false
@@ -404,6 +401,52 @@ func _task_board() -> Node:
 
 func _help_manager() -> Node:
 	return get_node_or_null("/root/HelpRequestManager")
+
+func _episode_logger() -> Node:
+	return get_node_or_null("/root/EpisodeLogger")
+
+func _gameplay_now_ms() -> int:
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
+		return int(game_mgr.get_gameplay_time_ms())
+	return Time.get_ticks_msec()
+
+func _player_active_task_count() -> int:
+	var board = _task_board()
+	if board and board.has_method("get_in_progress_tasks_for_assignee"):
+		var tasks: Array[Dictionary] = board.get_in_progress_tasks_for_assignee("player")
+		return tasks.size()
+	return 0
+
+func _current_delegation_scenario() -> String:
+	var help_mgr = _help_manager()
+	if help_mgr and _active_help_request_id != "" and help_mgr.has_method("get_request"):
+		var req: Dictionary = help_mgr.get_request(_active_help_request_id)
+		if not req.is_empty():
+			return str(req.get("delegation_scenario", ""))
+	return ""
+
+func _runtime_debug_payload(extra: Dictionary = {}) -> Dictionary:
+	var payload := {
+		"request_id": _active_help_request_id,
+		"timestamp_ms": _gameplay_now_ms(),
+		"robot_task_id": _active_task_id,
+		"robot_step": _active_task_step,
+		"delegation_scenario": _current_delegation_scenario(),
+		"robot_x": global_position.x,
+		"robot_y": global_position.y,
+		"robot_battery_level": battery_level,
+		"robot_inventory_count": inventory.items.size() if inventory != null else 0,
+		"player_active_tasks": _player_active_task_count()
+	}
+	for key in extra.keys():
+		payload[key] = extra[key]
+	return payload
+
+func _log_runtime_debug_event(event_type: String, extra: Dictionary = {}) -> void:
+	var logger = _episode_logger()
+	if logger and logger.has_method("log_runtime_debug_event"):
+		logger.log_runtime_debug_event(event_type, _runtime_debug_payload(extra))
 
 func _try_acquire_or_activate_robot_work() -> void:
 	if _active_task_id != "":
@@ -471,7 +514,7 @@ func _try_claim_next_task() -> void:
 	# Pending work exists: in conserve/normal we should still serve orders.
 	_idle_charge_cycle_complete = false
 	if _battery_mode == BATTERY_MODE_EMERGENCY:
-		var task_slack_ms = int(task.get("deadline_ms", Time.get_ticks_msec()) - Time.get_ticks_msec())
+		var task_slack_ms = int(task.get("deadline_ms", _gameplay_now_ms()) - _gameplay_now_ms())
 		if task_slack_ms > 20_000:
 			return
 
@@ -494,7 +537,7 @@ func _start_claimed_task(task: Dictionary) -> void:
 	if not _activate_task_context(task):
 		return
 	_idle_charge_cycle_complete = false
-	_try_activate_reciprocity_fulfillment_for_task(_active_task_id)
+	_log_runtime_debug_event("robot_task_assigned")
 	if not _episode_active:
 		var payload: Dictionary = task.get("payload", {})
 		var customer = _resolve_customer_from_payload(payload)
@@ -557,6 +600,7 @@ func _get_robot_assigned_food_tasks() -> Array[Dictionary]:
 				board.complete_task(task_id)
 			continue
 		out.append(task)
+	_prune_declined_task_suppressions(out)
 	return out
 
 func _get_best_unassigned_food_task() -> Dictionary:
@@ -581,7 +625,7 @@ func _get_best_unassigned_food_task() -> Dictionary:
 
 func _should_continue_collecting_orders() -> bool:
 	var assigned := _get_robot_assigned_food_tasks()
-	if assigned.size() >= _robot_handoff_threshold_tasks():
+	if _effective_workload_task_count(assigned) >= _robot_handoff_threshold_tasks():
 		return false
 	if not _is_in_dining_side():
 		return false
@@ -594,7 +638,7 @@ func _task_step_name(task: Dictionary) -> String:
 	return str(board.get_current_step_name(str(task.get("id", ""))))
 
 func _task_slack_ms(task: Dictionary) -> int:
-	return int(task.get("deadline_ms", 0)) - Time.get_ticks_msec()
+	return int(task.get("deadline_ms", 0)) - _gameplay_now_ms()
 
 func _deadline_handoff_candidate() -> Dictionary:
 	var tasks := _get_robot_assigned_food_tasks()
@@ -603,7 +647,7 @@ func _deadline_handoff_candidate() -> Dictionary:
 	var best_slack := INF
 	for task in tasks:
 		var task_id := str(task.get("id", ""))
-		if task_id == "" or task_id == _deadline_handoff_declined_task_id:
+		if task_id == "" or _is_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE):
 			continue
 		var slack := _task_slack_ms(task)
 		if slack <= 0 or slack > DEADLINE_HANDOFF_TRIGGER_MS:
@@ -705,6 +749,11 @@ func _plan_current_task_step() -> void:
 
 	_active_task_step = board.get_current_step_name(_active_task_id)
 	_active_step_started = false
+	var step_key := "%s|%s" % [_active_task_id, _active_task_step]
+	if step_key != _last_debug_step_key:
+		_reset_step_navigation_recovery()
+		_last_debug_step_key = step_key
+		_log_runtime_debug_event("robot_step_changed")
 	if _active_task_step == "":
 		_finish_active_task_if_needed()
 		return
@@ -790,6 +839,9 @@ func _consume_existing_inventory_for_active_pickup() -> bool:
 	return true
 
 func _plan_deliver_step() -> void:
+	if not _inventory_has_item_for_active_task():
+		if _recover_missing_delivery_item():
+			return
 	var actions := [
 		{"action": "navigate", "params": {"target": "customer"}},
 		{"action": "drop", "params": {}}
@@ -847,8 +899,8 @@ func _finish_active_task_if_needed() -> void:
 	if not board.is_task_completed(_active_task_id):
 		return
 
+	_clear_task_declined_suppressions(_active_task_id)
 	_end_current_episode(true)
-	_end_reciprocity_fulfillment_for_task(_active_task_id)
 	_clear_current_task_runtime()
 
 func _clear_current_task_runtime() -> void:
@@ -865,33 +917,82 @@ func _clear_current_task_runtime() -> void:
 	_waiting_for_help = false
 	_help_item_needed = ""
 	_active_help_request_id = ""
-	_help_request_suppressed = false
+	_last_debug_step_key = ""
+	_reset_step_navigation_recovery()
 	_trial_handoff_armed_task_id = ""
 	_trial_handoff_pending_task_id = ""
 	_trial_handoff_item_needed = ""
 	if _get_robot_assigned_food_tasks().is_empty():
-		_overload_handoff_declined_task_id = ""
-		_deadline_handoff_declined_task_id = ""
+		_workload_declined_task_ids.clear()
+		_deadline_declined_task_ids.clear()
 
-func _queue_reciprocity_fulfillment() -> void:
-	_reciprocity_fulfillment_pending = true
+func _handle_step_plan_failure() -> void:
+	var failure_reason := str(bt_runner.bb.get("help_reason", "")).strip_edges()
+	var action_failure_reason := str(bt_runner.bb.get("action_failure_reason", "")).strip_edges()
+	if action_failure_reason == "empty_inventory" and _active_task_step == STEP_DELIVER_AND_SERVE:
+		if _recover_missing_delivery_item():
+			bt_runner.bb.erase("action_failure_reason")
+			bt_runner.bb.erase("help_reason")
+			bt_runner.bb.erase("help_stuck_position")
+			bt_runner.bb.erase("help_evasion_attempts")
+			return
+	if failure_reason == "too_many_evasions":
+		_step_navigation_failure_count += 1
+		if _step_navigation_failure_count >= 2:
+			_set_soft_pass_through_people(true)
+	else:
+		_reset_step_navigation_recovery()
+	bt_runner.bb.erase("help_reason")
+	bt_runner.bb.erase("help_stuck_position")
+	bt_runner.bb.erase("help_evasion_attempts")
+	bt_runner.bb.erase("action_failure_reason")
 
-func _try_activate_reciprocity_fulfillment_for_task(task_id: String) -> void:
-	if not _reciprocity_fulfillment_pending or task_id == "":
+func _reset_step_navigation_recovery() -> void:
+	_step_navigation_failure_count = 0
+	_set_soft_pass_through_people(false)
+
+func _set_soft_pass_through_people(active: bool) -> void:
+	if _soft_pass_through_people == active:
 		return
-	_reciprocity_fulfillment_pending = false
-	_reciprocity_fulfillment_active = true
-	_reciprocity_fulfillment_task_id = task_id
-
-func _end_reciprocity_fulfillment_for_task(task_id: String) -> void:
-	if task_id == "":
+	_soft_pass_through_people = active
+	if agent == null:
 		return
-	if _reciprocity_fulfillment_active and _reciprocity_fulfillment_task_id == task_id:
-		_reciprocity_fulfillment_active = false
-		_reciprocity_fulfillment_task_id = ""
+	agent.avoidance_enabled = not active
+	if not active and not agent.velocity_computed.is_connected(_on_agent_velocity_computed):
+		agent.velocity_computed.connect(_on_agent_velocity_computed)
 
-func _is_reciprocity_fulfillment_applied_to_current_task() -> bool:
-	return _reciprocity_fulfillment_active and _reciprocity_fulfillment_task_id != "" and _reciprocity_fulfillment_task_id == _active_task_id
+func should_soft_pass_through_people() -> bool:
+	return _soft_pass_through_people
+
+func _inventory_has_item_for_active_task() -> bool:
+	if _active_task_id == "":
+		return false
+	var board := _task_board()
+	if board == null or not board.has_method("get_task"):
+		return false
+	var task: Dictionary = board.get_task(_active_task_id)
+	if task.is_empty():
+		return false
+	return _inventory_has_item_for_task(task)
+
+func _recover_missing_delivery_item() -> bool:
+	if _active_task_id == "":
+		return false
+	var board := _task_board()
+	if board == null or not board.has_method("reset_task_to_step"):
+		return false
+	if not board.reset_task_to_step(_active_task_id, STEP_PICKUP_FROM_KITCHEN):
+		return false
+	_active_step_started = false
+	bt_runner.bb["planned_actions"] = []
+	bt_runner.bb["last_plan_failed"] = false
+	bt_runner.bb.erase("action_failure_reason")
+	bt_runner.bb.erase("help_reason")
+	bt_runner.bb.erase("help_stuck_position")
+	bt_runner.bb.erase("help_evasion_attempts")
+	_last_replan_ms = 0
+	_plan_current_task_step()
+	return true
 
 func _find_inventory_item_index_for_task(task_id: String, item_name: String, allow_reusable: bool) -> int:
 	if inventory == null:
@@ -960,7 +1061,7 @@ func _take_inventory_item_for_active_task() -> Dictionary:
 func _release_robot_food_for_task(task_id: String, _reason: String) -> void:
 	if inventory == null or task_id == "":
 		return
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var changed := false
 	for i in range(inventory.items.size()):
 		var entry: Dictionary = inventory.items[i]
@@ -976,7 +1077,7 @@ func _release_robot_food_for_task(task_id: String, _reason: String) -> void:
 func _expire_orphaned_food_inventory() -> void:
 	if inventory == null or inventory.items.is_empty():
 		return
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var kept: Array = []
 	var changed := false
 	for raw_entry in inventory.items:
@@ -1028,7 +1129,14 @@ func _invalidate_active_help_request(resolution_path: String) -> void:
 	if _active_help_request_id == "":
 		return
 	var help_mgr = _help_manager()
-	if help_mgr and help_mgr.has_method("cancel_request"):
+	if help_mgr == null:
+		return
+	var req: Dictionary = help_mgr.get_request(_active_help_request_id) if help_mgr.has_method("get_request") else {}
+	if not req.is_empty() and str(req.get("status", "")) == "cooldown":
+		if help_mgr.has_method("resolve_later_not_retriggered"):
+			help_mgr.resolve_later_not_retriggered(_active_help_request_id)
+			return
+	if help_mgr.has_method("cancel_request"):
 		help_mgr.cancel_request(_active_help_request_id, resolution_path)
 
 func _set_step_plan(actions: Array) -> void:
@@ -1042,7 +1150,7 @@ func _set_step_plan(actions: Array) -> void:
 	bt_runner.bb["last_plan_failed"] = false
 
 func _collect_constraint_input() -> Dictionary:
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var deadline_ms := 0
 	var slack_ms := 0
 	var board = _task_board()
@@ -1077,6 +1185,10 @@ func _tick_emergency_delegation() -> bool:
 	var is_battery_emergency := _battery_mode == BATTERY_MODE_EMERGENCY
 	if not is_battery_emergency:
 		return false
+	if _battery_pressure_declined_until_recharge:
+		if not _recharge_override_active:
+			_activate_recharge_override("Battery critical. Recharging now.")
+		return true
 
 	# If currently waiting on a help request, keep waiting (highest priority state).
 	if _waiting_for_help:
@@ -1094,9 +1206,12 @@ func _tick_emergency_delegation() -> bool:
 		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
 		if not existing.is_empty():
 			var st := str(existing.get("status", ""))
-			if st != "resolved":
+			if st == "pending" or st == "accepted":
 				_waiting_for_help = true
 				return true
+			if st == "cooldown":
+				_waiting_for_help = false
+				return false
 
 	# Emergency handoff must be in-person: approach player first, then request/popup.
 	var distance_to_player := global_position.distance_to(player.global_position)
@@ -1105,7 +1220,7 @@ func _tick_emergency_delegation() -> bool:
 		var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
 		if not has_plan:
 			_plan_navigate_to_position(player.global_position, "emergency_player")
-		var now_ms := Time.get_ticks_msec()
+		var now_ms := _gameplay_now_ms()
 		if now_ms - _last_emergency_approach_notice_ms > 1800:
 			_last_emergency_approach_notice_ms = now_ms
 			speak("Battery critical. Coming to you for urgent handoff.")
@@ -1141,7 +1256,7 @@ func _tick_emergency_delegation() -> bool:
 		"delegation_scenario": DELEGATION_SCENARIO_BATTERY_PRESSURE
 		}, {
 			"cooldown_ms": 2500,
-			"max_escalation": 1,
+			"max_escalation": 2,
 			"urgency": 1.0
 		})
 	_waiting_for_help = true
@@ -1152,7 +1267,7 @@ func _tick_overload_handoff_delegation() -> bool:
 		return false
 	if _pending_overload_handoff_task_id == "" or _pending_overload_handoff_task_id != _active_task_id:
 		return false
-	if _overload_handoff_declined_task_id == _active_task_id:
+	if _is_task_declined_for_scenario(_active_task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD):
 		# Player refused this request episode; continue task execution.
 		_pending_overload_handoff_task_id = ""
 		return false
@@ -1168,9 +1283,12 @@ func _tick_overload_handoff_delegation() -> bool:
 		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
 		if not existing.is_empty():
 			var st := str(existing.get("status", ""))
-			if st != "resolved":
+			if st == "pending" or st == "accepted":
 				_waiting_for_help = true
 				return true
+			if st == "cooldown":
+				_waiting_for_help = false
+				return false
 
 	var distance_to_player := global_position.distance_to(player.global_position)
 	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
@@ -1178,7 +1296,7 @@ func _tick_overload_handoff_delegation() -> bool:
 		var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
 		if not has_plan:
 			_plan_navigate_to_position(player.global_position, "overload_player")
-		var now_ms := Time.get_ticks_msec()
+		var now_ms := _gameplay_now_ms()
 		if now_ms - _last_overload_approach_notice_ms > 1800:
 			_last_overload_approach_notice_ms = now_ms
 			speak("Task load is high. Coming to you for handoff.")
@@ -1282,9 +1400,12 @@ func _tick_deadline_handoff_delegation() -> bool:
 		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
 		if not existing.is_empty():
 			var st := str(existing.get("status", ""))
-			if st != "resolved":
+			if st == "pending" or st == "accepted":
 				_waiting_for_help = true
 				return true
+			if st == "cooldown":
+				_waiting_for_help = false
+				return false
 
 	var distance_to_player := global_position.distance_to(player.global_position)
 	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
@@ -1292,7 +1413,7 @@ func _tick_deadline_handoff_delegation() -> bool:
 		var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
 		if not has_plan:
 			_plan_navigate_to_position(player.global_position, "deadline_player")
-		var now_ms := Time.get_ticks_msec()
+		var now_ms := _gameplay_now_ms()
 		if now_ms - _last_overload_approach_notice_ms > 1800:
 			_last_overload_approach_notice_ms = now_ms
 			speak("This order is close to timing out. Coming to you for urgent handoff.")
@@ -1316,7 +1437,7 @@ func _tick_deadline_handoff_delegation() -> bool:
 		"delegation_scenario": DELEGATION_SCENARIO_DEADLINE_PRESSURE
 	}, {
 		"cooldown_ms": 2500,
-		"max_escalation": 1,
+		"max_escalation": 2,
 		"urgency": 1.0
 	})
 	_waiting_for_help = true
@@ -1365,8 +1486,6 @@ func _update_battery_and_mode(dt: float) -> void:
 	var drain_rate := battery_drain_idle_per_sec
 	if moving:
 		drain_rate = battery_drain_move_per_sec
-		if _is_reciprocity_fulfillment_applied_to_current_task():
-			drain_rate *= RECIPROCITY_FULFILLMENT_MULTIPLIER
 
 	battery_level -= drain_rate * dt
 	# Charge whenever robot is inside recharge zone, even with an active task/recharge override.
@@ -1386,6 +1505,7 @@ func _update_battery_mode() -> void:
 		_idle_charge_cycle_complete = false
 	else:
 		_battery_mode = BATTERY_MODE_NORMAL
+		_battery_pressure_declined_until_recharge = false
 
 	if previous != _battery_mode:
 		# Emergency mode should immediately interrupt execution and recharge.
@@ -1398,8 +1518,6 @@ func _update_agent_speed_by_battery_mode() -> void:
 		speed_scale = 0.8
 	elif _battery_mode == BATTERY_MODE_EMERGENCY:
 		speed_scale = 0.6
-	if _is_reciprocity_fulfillment_applied_to_current_task():
-		speed_scale *= RECIPROCITY_FULFILLMENT_MULTIPLIER
 	agent.max_speed = move_speed * speed_scale
 
 func _is_near_recharge_station() -> bool:
@@ -1451,8 +1569,13 @@ func _tick_recharge_override(has_plan: bool) -> bool:
 		var help_mgr = _help_manager()
 		if help_mgr and _active_help_request_id != "":
 			var req: Dictionary = help_mgr.get_request(_active_help_request_id)
-			if not req.is_empty() and str(req.get("status", "")) != "resolved":
-				return true
+			if not req.is_empty():
+				var req_status := str(req.get("status", ""))
+				if req_status == "cooldown":
+					if help_mgr.has_method("resolve_later_not_retriggered"):
+						help_mgr.resolve_later_not_retriggered(_active_help_request_id)
+				elif req_status != "resolved":
+					return true
 		_activate_recharge_override("Battery critical. Recharging now.")
 		return true
 
@@ -1463,6 +1586,7 @@ func _tick_recharge_override(has_plan: bool) -> bool:
 		# Pause work while charging until safe level.
 		if battery_level >= maxf(EMERGENCY_RECHARGE_RESUME_LEVEL, battery_conserve_threshold + 5.0):
 			_recharge_override_active = false
+			_battery_pressure_declined_until_recharge = false
 			_active_step_started = false
 			if _active_task_id != "":
 				_try_speak_recharge_notice("Battery stabilized. Resuming task.")
@@ -1480,7 +1604,7 @@ func _tick_recharge_override(has_plan: bool) -> bool:
 func _try_speak_recharge_notice(text: String) -> void:
 	if text.strip_edges() == "":
 		return
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	if now_ms - _last_recharge_notice_ms < 1800:
 		return
 	_last_recharge_notice_ms = now_ms
@@ -1520,27 +1644,34 @@ func _on_help_request_updated(request: Dictionary) -> void:
 	_active_help_request_id = req_id
 
 	if status == "accepted":
-		_help_request_suppressed = false
 		if task_id != "":
-			if _overload_handoff_declined_task_id == task_id:
-				_overload_handoff_declined_task_id = ""
-			if _deadline_handoff_declined_task_id == task_id:
-				_deadline_handoff_declined_task_id = ""
+			_clear_task_declined_suppressions(task_id)
+		if reason == "battery_emergency":
+			_battery_pressure_declined_until_recharge = false
 		_apply_handoff_accept(request)
+	elif status == "cooldown":
+		set_waiting_for_help(false, "")
 	elif status == "resolved" and final_response == "decline":
 		if reason == "robot_over_threshold_post_take_order" and task_id != "":
-			_overload_handoff_declined_task_id = task_id
+			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD)
 		elif reason == "deadline_critical" and task_id != "":
-			_deadline_handoff_declined_task_id = task_id
-		else:
-			_help_request_suppressed = true
+			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE)
+		elif reason == "battery_emergency":
+			_battery_pressure_declined_until_recharge = true
+		set_waiting_for_help(false, "")
+		if _battery_mode == BATTERY_MODE_EMERGENCY and not _recharge_override_active:
+			_activate_recharge_override("Battery critical. Recharging now.")
+	elif status == "resolved" and str(request.get("resolution_path", "")) == "later_not_retriggered":
+		if reason == "deadline_critical" and task_id != "":
+			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE)
+		elif reason == "battery_emergency":
+			_battery_pressure_declined_until_recharge = true
 		set_waiting_for_help(false, "")
 		if _battery_mode == BATTERY_MODE_EMERGENCY and not _recharge_override_active:
 			_activate_recharge_override("Battery critical. Recharging now.")
 
 func _apply_handoff_accept(request: Dictionary) -> void:
 	var payload: Dictionary = request.get("payload", {})
-	var strategy := str(request.get("strategy", ""))
 	var mode := str(payload.get("handoff_mode", "TAKEOVER_TASK"))
 	var task_id := str(payload.get("task_id", _active_task_id))
 	if task_id == "":
@@ -1588,15 +1719,12 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 
 	if task_id == _active_task_id:
 		var accepted_request_id := _active_help_request_id
+		_clear_task_declined_suppressions(task_id)
 		_end_current_episode(false, "task_handoff_to_player")
-		_end_reciprocity_fulfillment_for_task(task_id)
 		_clear_current_task_runtime()
 		bt_runner.bb["planned_actions"] = []
 		_active_step_started = false
 		_active_help_request_id = accepted_request_id
-
-	if strategy == "reciprocity":
-		_queue_reciprocity_fulfillment()
 
 	set_waiting_for_help(false, "")
 	speak("Task handoff accepted. You take over this order.")
@@ -1648,8 +1776,8 @@ func _transfer_item_to_player_for_handoff(payload: Dictionary) -> String:
 		item.get("region", Rect2i()),
 		{
 			"item_owner": "player",
-			"picked_up_at_ms": Time.get_ticks_msec(),
-			"expires_at_ms": Time.get_ticks_msec() + PLAYER_ITEM_TTL_MS
+			"picked_up_at_ms": _gameplay_now_ms(),
+			"expires_at_ms": _gameplay_now_ms() + PLAYER_ITEM_TTL_MS
 		}
 	)
 	if not accepted:
@@ -1660,6 +1788,54 @@ func _transfer_item_to_player_for_handoff(payload: Dictionary) -> String:
 	if inventory.items.is_empty():
 		bt_runner.bb["carrying_item"] = false
 	return "ok"
+
+func _is_task_declined_for_scenario(task_id: String, scenario: String) -> bool:
+	if task_id == "":
+		return false
+	match scenario:
+		DELEGATION_SCENARIO_WORKLOAD_OVERLOAD:
+			return bool(_workload_declined_task_ids.get(task_id, false))
+		DELEGATION_SCENARIO_DEADLINE_PRESSURE:
+			return bool(_deadline_declined_task_ids.get(task_id, false))
+		_:
+			return false
+
+func _set_task_declined_for_scenario(task_id: String, scenario: String) -> void:
+	if task_id == "":
+		return
+	match scenario:
+		DELEGATION_SCENARIO_WORKLOAD_OVERLOAD:
+			_workload_declined_task_ids[task_id] = true
+		DELEGATION_SCENARIO_DEADLINE_PRESSURE:
+			_deadline_declined_task_ids[task_id] = true
+
+func _clear_task_declined_suppressions(task_id: String) -> void:
+	if task_id == "":
+		return
+	_workload_declined_task_ids.erase(task_id)
+	_deadline_declined_task_ids.erase(task_id)
+
+func _prune_declined_task_suppressions(active_tasks: Array[Dictionary]) -> void:
+	var active_ids := {}
+	for task in active_tasks:
+		var task_id := str(task.get("id", ""))
+		if task_id != "":
+			active_ids[task_id] = true
+	for task_id in _workload_declined_task_ids.keys():
+		if not bool(active_ids.get(str(task_id), false)):
+			_workload_declined_task_ids.erase(task_id)
+	for task_id in _deadline_declined_task_ids.keys():
+		if not bool(active_ids.get(str(task_id), false)):
+			_deadline_declined_task_ids.erase(task_id)
+
+func _effective_workload_task_count(tasks: Array[Dictionary]) -> int:
+	var count := 0
+	for task in tasks:
+		var task_id := str(task.get("id", ""))
+		if _is_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD):
+			continue
+		count += 1
+	return count
 
 func _has_transferable_item_for_task(task_id: String, item_name: String) -> bool:
 	if inventory == null:

@@ -343,8 +343,14 @@ func _cleanup_holding_bar_resources() -> void:
 	_holding_bar_panel = null
 	_holding_bar_root = null
 
+func _gameplay_now_ms() -> int:
+	var game_mgr = get_node_or_null("/root/GameManager")
+	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
+		return int(game_mgr.get_gameplay_time_ms())
+	return Time.get_ticks_msec()
+
 func _player_item_meta(item_name: String, extra: Dictionary = {}) -> Dictionary:
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var meta := {
 		"item_owner": "player",
 		"item_name": item_name,
@@ -358,7 +364,7 @@ func _player_item_meta(item_name: String, extra: Dictionary = {}) -> Dictionary:
 func _expire_stale_inventory_items() -> void:
 	if inventory == null or inventory.items.is_empty():
 		return
-	var now_ms := Time.get_ticks_msec()
+	var now_ms := _gameplay_now_ms()
 	var kept: Array = []
 	var expired_names: Array[String] = []
 	for raw_entry in inventory.items:
