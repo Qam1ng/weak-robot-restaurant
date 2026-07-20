@@ -304,6 +304,7 @@ class ActDropItem extends Core.Task:
 
 		var inventory = actor.get_node_or_null("Inventory")
 		if not inventory:
+			bb["action_failure_reason"] = "missing_inventory"
 			BT_Actions._emit_runtime_debug(actor, "delivery_failed", {"event_reason": "missing_inventory"})
 			return Core.Status.FAILURE
 
@@ -314,6 +315,7 @@ class ActDropItem extends Core.Task:
 			item = inventory.remove_last()
 		if item.is_empty():
 			actor.speak("Nothing to deliver!")
+			bb["action_failure_reason"] = "empty_inventory"
 			BT_Actions._emit_runtime_debug(actor, "delivery_failed", {"event_reason": "empty_inventory"})
 			return Core.Status.FAILURE
 

@@ -834,6 +834,9 @@ func _consume_existing_inventory_for_active_pickup() -> bool:
 	return true
 
 func _plan_deliver_step() -> void:
+	if not _inventory_has_item_for_active_task():
+		if _recover_missing_delivery_item():
+			return
 	var actions := [
 		{"action": "navigate", "params": {"target": "customer"}},
 		{"action": "drop", "params": {}}
@@ -920,6 +923,14 @@ func _clear_current_task_runtime() -> void:
 
 func _handle_step_plan_failure() -> void:
 	var failure_reason := str(bt_runner.bb.get("help_reason", "")).strip_edges()
+	var action_failure_reason := str(bt_runner.bb.get("action_failure_reason", "")).strip_edges()
+	if action_failure_reason == "empty_inventory" and _active_task_step == STEP_DELIVER_AND_SERVE:
+		if _recover_missing_delivery_item():
+			bt_runner.bb.erase("action_failure_reason")
+			bt_runner.bb.erase("help_reason")
+			bt_runner.bb.erase("help_stuck_position")
+			bt_runner.bb.erase("help_evasion_attempts")
+			return
 	if failure_reason == "too_many_evasions":
 		_step_navigation_failure_count += 1
 		if _step_navigation_failure_count >= 2:
@@ -929,6 +940,7 @@ func _handle_step_plan_failure() -> void:
 	bt_runner.bb.erase("help_reason")
 	bt_runner.bb.erase("help_stuck_position")
 	bt_runner.bb.erase("help_evasion_attempts")
+	bt_runner.bb.erase("action_failure_reason")
 
 func _reset_step_navigation_recovery() -> void:
 	_step_navigation_failure_count = 0
@@ -946,6 +958,36 @@ func _set_soft_pass_through_people(active: bool) -> void:
 
 func should_soft_pass_through_people() -> bool:
 	return _soft_pass_through_people
+
+func _inventory_has_item_for_active_task() -> bool:
+	if _active_task_id == "":
+		return false
+	var board := _task_board()
+	if board == null or not board.has_method("get_task"):
+		return false
+	var task: Dictionary = board.get_task(_active_task_id)
+	if task.is_empty():
+		return false
+	return _inventory_has_item_for_task(task)
+
+func _recover_missing_delivery_item() -> bool:
+	if _active_task_id == "":
+		return false
+	var board := _task_board()
+	if board == null or not board.has_method("reset_task_to_step"):
+		return false
+	if not board.reset_task_to_step(_active_task_id, STEP_PICKUP_FROM_KITCHEN):
+		return false
+	_active_step_started = false
+	bt_runner.bb["planned_actions"] = []
+	bt_runner.bb["last_plan_failed"] = false
+	bt_runner.bb.erase("action_failure_reason")
+	bt_runner.bb.erase("help_reason")
+	bt_runner.bb.erase("help_stuck_position")
+	bt_runner.bb.erase("help_evasion_attempts")
+	_last_replan_ms = 0
+	_plan_current_task_step()
+	return true
 
 func _find_inventory_item_index_for_task(task_id: String, item_name: String, allow_reusable: bool) -> int:
 	if inventory == null:
