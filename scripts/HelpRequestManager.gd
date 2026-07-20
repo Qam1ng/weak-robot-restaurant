@@ -65,6 +65,9 @@ func _process(_dt: float) -> void:
 		if str(req.get("status", "")) != STATUS_COOLDOWN:
 			continue
 		var runtime := _runtime_for(request_id)
+		if bool(runtime.get("later_gate_active", false)):
+			if _advance_later_cooldown_request(request_id, req, runtime, now_ms):
+				continue
 		if now_ms < int(runtime.get("cooldown_until_ms", 0)):
 			continue
 		req["status"] = STATUS_PENDING
@@ -159,7 +162,6 @@ func get_promptable_request_for_robot(robot: Node) -> Dictionary:
 	if robot == null:
 		return {}
 	var robot_iid := robot.get_instance_id()
-	var now_ms := _gameplay_now_ms()
 	var best: Dictionary = {}
 	var best_score := -INF
 
@@ -170,11 +172,9 @@ func get_promptable_request_for_robot(robot: Node) -> Dictionary:
 		if int(req.get("robot_instance_id", 0)) != robot_iid:
 			continue
 		var status := str(req.get("status", ""))
-		if status != STATUS_PENDING and status != STATUS_COOLDOWN:
+		if status != STATUS_PENDING:
 			continue
 		if bool(req.get("assignment_pending", false)):
-			continue
-		if now_ms < int(_runtime_for(request_id).get("cooldown_until_ms", 0)):
 			continue
 
 		var escalation := int(req.get("escalation_count", 0))
@@ -230,7 +230,7 @@ func respond(request_id: String, response: String) -> Dictionary:
 				_request_runtime_by_id.erase(request_id)
 			else:
 				req["status"] = STATUS_COOLDOWN
-				runtime["cooldown_until_ms"] = _gameplay_now_ms() + int(runtime.get("cooldown_ms", 4000))
+				runtime = _arm_later_gate(req, runtime, now_ms)
 				_request_runtime_by_id[request_id] = runtime
 				_refresh_request_surface(req)
 		_:
@@ -285,6 +285,15 @@ func cancel_request(request_id: String, resolution_path: String = "invalidated")
 	request_resolved.emit(copied)
 	return copied
 
+func resolve_later_not_retriggered(request_id: String) -> Dictionary:
+	var req: Dictionary = _requests_by_id.get(request_id, {})
+	if req.is_empty():
+		return {}
+	if str(req.get("status", "")) == STATUS_RESOLVED:
+		return _copy(req)
+	_resolve_later_not_retriggered(request_id, req)
+	return _copy(_requests_by_id.get(request_id, {}))
+
 func requeue_request(request_id: String, cooldown_ms: int = 1500, resolution_note: String = "retry_later") -> Dictionary:
 	var req: Dictionary = _requests_by_id.get(request_id, {})
 	if req.is_empty():
@@ -305,6 +314,160 @@ func requeue_request(request_id: String, cooldown_ms: int = 1500, resolution_not
 	_log_help_event("requeued", req, {"resolution_note": resolution_note})
 	request_updated.emit(copied)
 	return copied
+
+func _arm_later_gate(req: Dictionary, runtime: Dictionary, now_ms: int) -> Dictionary:
+	var scenario := str(req.get("delegation_scenario", "")).strip_edges()
+	if scenario == "":
+		var payload: Dictionary = req.get("payload", {})
+		scenario = str(payload.get("delegation_scenario", "")).strip_edges()
+	runtime["later_gate_active"] = true
+	runtime["later_scenario"] = scenario
+	runtime["later_response_ms"] = now_ms
+	runtime["later_player_active_tasks"] = int(_sample_player_state().get("active_tasks", 0))
+	runtime["later_robot_load"] = _current_robot_food_load(_robot_from_request(req))
+	runtime["later_task_slack_ms"] = _current_request_task_slack_ms(req)
+	match scenario:
+		"battery_pressure":
+			runtime["cooldown_until_ms"] = now_ms + 5000
+		_:
+			runtime["cooldown_until_ms"] = 0
+	return runtime
+
+func _advance_later_cooldown_request(request_id: String, req: Dictionary, runtime: Dictionary, now_ms: int) -> bool:
+	var outcome := _evaluate_later_retrigger(req, runtime, now_ms)
+	match outcome:
+		"wait":
+			_request_runtime_by_id[request_id] = runtime
+			return true
+		"retrigger":
+			req["status"] = STATUS_PENDING
+			req["resolution_path"] = ""
+			runtime["cooldown_until_ms"] = 0
+			runtime["later_gate_active"] = false
+			_request_runtime_by_id[request_id] = runtime
+			_refresh_request_surface(req)
+			_requests_by_id[request_id] = req
+			_log_help_event("cooldown_expired", req)
+			request_updated.emit(_copy(req))
+			return true
+		"close":
+			_resolve_later_not_retriggered(request_id, req)
+			return true
+		_:
+			return true
+
+func _evaluate_later_retrigger(req: Dictionary, runtime: Dictionary, now_ms: int) -> String:
+	var scenario := str(runtime.get("later_scenario", req.get("delegation_scenario", ""))).strip_edges()
+	match scenario:
+		"workload_overload":
+			return _evaluate_workload_later(req, runtime)
+		"deadline_pressure":
+			return _evaluate_deadline_later(req, runtime)
+		"battery_pressure":
+			return _evaluate_battery_later(req, runtime, now_ms)
+		_:
+			return "retrigger" if now_ms >= int(runtime.get("cooldown_until_ms", 0)) else "wait"
+
+func _evaluate_workload_later(req: Dictionary, runtime: Dictionary) -> String:
+	if not _request_task_still_owned_by_robot(req):
+		return "close"
+	var player_active_tasks := int(_sample_player_state().get("active_tasks", 0))
+	var robot_load := _current_robot_food_load(_robot_from_request(req))
+	var anchor_player_tasks := int(runtime.get("later_player_active_tasks", 0))
+	var anchor_robot_load := int(runtime.get("later_robot_load", robot_load))
+	if anchor_player_tasks > 0:
+		if player_active_tasks <= anchor_player_tasks - 1:
+			return "retrigger"
+		return "wait"
+	if robot_load >= anchor_robot_load + 1:
+		return "retrigger"
+	return "wait"
+
+func _evaluate_deadline_later(req: Dictionary, runtime: Dictionary) -> String:
+	if not _request_task_still_owned_by_robot(req):
+		return "close"
+	var current_slack_ms := _current_request_task_slack_ms(req)
+	if current_slack_ms <= 0:
+		return "close"
+	var anchor_slack_ms := int(runtime.get("later_task_slack_ms", current_slack_ms))
+	if anchor_slack_ms <= 35000:
+		return "close"
+	if current_slack_ms <= 35000:
+		return "retrigger"
+	return "wait"
+
+func _evaluate_battery_later(req: Dictionary, runtime: Dictionary, now_ms: int) -> String:
+	var robot = _robot_from_request(req)
+	if robot == null or not is_instance_valid(robot):
+		return "close"
+	var since_later_ms := now_ms - int(runtime.get("later_response_ms", now_ms))
+	if robot.has_method("_is_near_recharge_station") and bool(robot.call("_is_near_recharge_station")):
+		return "close"
+	var battery_level := float(robot.get("battery_level"))
+	if battery_level > 20.0:
+		return "close"
+	if since_later_ms < 5000:
+		return "wait"
+	if battery_level <= 15.0:
+		return "retrigger"
+	return "close"
+
+func _resolve_later_not_retriggered(request_id: String, req: Dictionary) -> void:
+	req["status"] = STATUS_RESOLVED
+	req["final_response"] = RESPONSE_LATER
+	req["resolution_path"] = "later_not_retriggered"
+	_requests_by_id[request_id] = req
+	_request_runtime_by_id.erase(request_id)
+	var copied := _copy(req)
+	_log_help_event("resolved", req)
+	request_updated.emit(copied)
+	request_resolved.emit(copied)
+
+func _current_request_task_slack_ms(req: Dictionary) -> int:
+	var payload: Dictionary = req.get("payload", {})
+	var task_id := str(payload.get("task_id", ""))
+	if task_id == "":
+		return 0
+	var board = get_node_or_null("/root/TaskBoard")
+	if board == null or not board.has_method("get_task"):
+		return 0
+	var task: Dictionary = board.get_task(task_id)
+	if task.is_empty():
+		return 0
+	return int(task.get("deadline_ms", 0)) - _gameplay_now_ms()
+
+func _request_task_still_owned_by_robot(req: Dictionary) -> bool:
+	var payload: Dictionary = req.get("payload", {})
+	var task_id := str(payload.get("task_id", ""))
+	if task_id == "":
+		return false
+	var board = get_node_or_null("/root/TaskBoard")
+	if board == null or not board.has_method("get_task"):
+		return false
+	var task: Dictionary = board.get_task(task_id)
+	if task.is_empty():
+		return false
+	if str(task.get("state", "")) != "in_progress":
+		return false
+	var robot := _robot_from_request(req)
+	if robot == null or not is_instance_valid(robot):
+		return false
+	return str(task.get("assigned_to", "")) == str(robot.name)
+
+func _current_robot_food_load(robot: Node) -> int:
+	if robot == null or not is_instance_valid(robot):
+		return 0
+	var board = get_node_or_null("/root/TaskBoard")
+	if board == null or not board.has_method("get_in_progress_tasks_for_assignee"):
+		return 0
+	var tasks: Array[Dictionary] = board.get_in_progress_tasks_for_assignee(str(robot.name))
+	var count := 0
+	for task in tasks:
+		var payload: Dictionary = task.get("payload", {})
+		if str(payload.get("order_kind", "food")) != "food":
+			continue
+		count += 1
+	return count
 
 
 func _copy(req: Dictionary) -> Dictionary:

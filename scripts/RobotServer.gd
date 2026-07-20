@@ -1129,7 +1129,14 @@ func _invalidate_active_help_request(resolution_path: String) -> void:
 	if _active_help_request_id == "":
 		return
 	var help_mgr = _help_manager()
-	if help_mgr and help_mgr.has_method("cancel_request"):
+	if help_mgr == null:
+		return
+	var req: Dictionary = help_mgr.get_request(_active_help_request_id) if help_mgr.has_method("get_request") else {}
+	if not req.is_empty() and str(req.get("status", "")) == "cooldown":
+		if help_mgr.has_method("resolve_later_not_retriggered"):
+			help_mgr.resolve_later_not_retriggered(_active_help_request_id)
+			return
+	if help_mgr.has_method("cancel_request"):
 		help_mgr.cancel_request(_active_help_request_id, resolution_path)
 
 func _set_step_plan(actions: Array) -> void:
@@ -1199,9 +1206,12 @@ func _tick_emergency_delegation() -> bool:
 		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
 		if not existing.is_empty():
 			var st := str(existing.get("status", ""))
-			if st != "resolved":
+			if st == "pending" or st == "accepted":
 				_waiting_for_help = true
 				return true
+			if st == "cooldown":
+				_waiting_for_help = false
+				return false
 
 	# Emergency handoff must be in-person: approach player first, then request/popup.
 	var distance_to_player := global_position.distance_to(player.global_position)
@@ -1246,7 +1256,7 @@ func _tick_emergency_delegation() -> bool:
 		"delegation_scenario": DELEGATION_SCENARIO_BATTERY_PRESSURE
 		}, {
 			"cooldown_ms": 2500,
-			"max_escalation": 1,
+			"max_escalation": 2,
 			"urgency": 1.0
 		})
 	_waiting_for_help = true
@@ -1273,9 +1283,12 @@ func _tick_overload_handoff_delegation() -> bool:
 		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
 		if not existing.is_empty():
 			var st := str(existing.get("status", ""))
-			if st != "resolved":
+			if st == "pending" or st == "accepted":
 				_waiting_for_help = true
 				return true
+			if st == "cooldown":
+				_waiting_for_help = false
+				return false
 
 	var distance_to_player := global_position.distance_to(player.global_position)
 	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
@@ -1387,9 +1400,12 @@ func _tick_deadline_handoff_delegation() -> bool:
 		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
 		if not existing.is_empty():
 			var st := str(existing.get("status", ""))
-			if st != "resolved":
+			if st == "pending" or st == "accepted":
 				_waiting_for_help = true
 				return true
+			if st == "cooldown":
+				_waiting_for_help = false
+				return false
 
 	var distance_to_player := global_position.distance_to(player.global_position)
 	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
@@ -1421,7 +1437,7 @@ func _tick_deadline_handoff_delegation() -> bool:
 		"delegation_scenario": DELEGATION_SCENARIO_DEADLINE_PRESSURE
 	}, {
 		"cooldown_ms": 2500,
-		"max_escalation": 1,
+		"max_escalation": 2,
 		"urgency": 1.0
 	})
 	_waiting_for_help = true
@@ -1553,8 +1569,13 @@ func _tick_recharge_override(has_plan: bool) -> bool:
 		var help_mgr = _help_manager()
 		if help_mgr and _active_help_request_id != "":
 			var req: Dictionary = help_mgr.get_request(_active_help_request_id)
-			if not req.is_empty() and str(req.get("status", "")) != "resolved":
-				return true
+			if not req.is_empty():
+				var req_status := str(req.get("status", ""))
+				if req_status == "cooldown":
+					if help_mgr.has_method("resolve_later_not_retriggered"):
+						help_mgr.resolve_later_not_retriggered(_active_help_request_id)
+				elif req_status != "resolved":
+					return true
 		_activate_recharge_override("Battery critical. Recharging now.")
 		return true
 
@@ -1628,10 +1649,20 @@ func _on_help_request_updated(request: Dictionary) -> void:
 		if reason == "battery_emergency":
 			_battery_pressure_declined_until_recharge = false
 		_apply_handoff_accept(request)
+	elif status == "cooldown":
+		set_waiting_for_help(false, "")
 	elif status == "resolved" and final_response == "decline":
 		if reason == "robot_over_threshold_post_take_order" and task_id != "":
 			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD)
 		elif reason == "deadline_critical" and task_id != "":
+			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE)
+		elif reason == "battery_emergency":
+			_battery_pressure_declined_until_recharge = true
+		set_waiting_for_help(false, "")
+		if _battery_mode == BATTERY_MODE_EMERGENCY and not _recharge_override_active:
+			_activate_recharge_override("Battery critical. Recharging now.")
+	elif status == "resolved" and str(request.get("resolution_path", "")) == "later_not_retriggered":
+		if reason == "deadline_critical" and task_id != "":
 			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE)
 		elif reason == "battery_emergency":
 			_battery_pressure_declined_until_recharge = true
