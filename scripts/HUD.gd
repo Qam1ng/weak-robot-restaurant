@@ -3101,6 +3101,8 @@ func _should_skip_player_overlay_message(source: Node2D, recipient: Node2D, kind
 		return true
 	if kind == "robot" and recipient_kind == "player":
 		return true
+	if _delegation_pause_active:
+		return true
 	if _popup_mode == POPUP_MODE_KITCHEN_PICK or _popup_mode == POPUP_MODE_GAME_OVER:
 		return true
 	return false
