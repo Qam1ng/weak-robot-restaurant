@@ -83,6 +83,8 @@ var _trial_handoff_pending_task_id: String = ""
 var _trial_handoff_item_needed: String = ""
 var _trial_stationary_pause: bool = false
 var _last_debug_step_key: String = ""
+var _step_navigation_failure_count: int = 0
+var _soft_pass_through_people: bool = false
 
 func _has_property(obj: Object, prop_name: String) -> bool:
 	for p in obj.get_property_list():
@@ -320,6 +322,7 @@ func _check_episode_completion() -> void:
 	# If BT reported failure for this step, never advance step state.
 	if bool(bt_runner.bb.get("last_plan_failed", false)):
 		bt_runner.bb["last_plan_failed"] = false
+		_handle_step_plan_failure()
 		_active_step_started = false
 		return
 
@@ -743,6 +746,7 @@ func _plan_current_task_step() -> void:
 	_active_step_started = false
 	var step_key := "%s|%s" % [_active_task_id, _active_task_step]
 	if step_key != _last_debug_step_key:
+		_reset_step_navigation_recovery()
 		_last_debug_step_key = step_key
 		_log_runtime_debug_event("robot_step_changed")
 	if _active_task_step == "":
@@ -906,12 +910,42 @@ func _clear_current_task_runtime() -> void:
 	_active_help_request_id = ""
 	_help_request_suppressed = false
 	_last_debug_step_key = ""
+	_reset_step_navigation_recovery()
 	_trial_handoff_armed_task_id = ""
 	_trial_handoff_pending_task_id = ""
 	_trial_handoff_item_needed = ""
 	if _get_robot_assigned_food_tasks().is_empty():
 		_overload_handoff_declined_task_id = ""
 		_deadline_handoff_declined_task_id = ""
+
+func _handle_step_plan_failure() -> void:
+	var failure_reason := str(bt_runner.bb.get("help_reason", "")).strip_edges()
+	if failure_reason == "too_many_evasions":
+		_step_navigation_failure_count += 1
+		if _step_navigation_failure_count >= 2:
+			_set_soft_pass_through_people(true)
+	else:
+		_reset_step_navigation_recovery()
+	bt_runner.bb.erase("help_reason")
+	bt_runner.bb.erase("help_stuck_position")
+	bt_runner.bb.erase("help_evasion_attempts")
+
+func _reset_step_navigation_recovery() -> void:
+	_step_navigation_failure_count = 0
+	_set_soft_pass_through_people(false)
+
+func _set_soft_pass_through_people(active: bool) -> void:
+	if _soft_pass_through_people == active:
+		return
+	_soft_pass_through_people = active
+	if agent == null:
+		return
+	agent.avoidance_enabled = not active
+	if not active and not agent.velocity_computed.is_connected(_on_agent_velocity_computed):
+		agent.velocity_computed.connect(_on_agent_velocity_computed)
+
+func should_soft_pass_through_people() -> bool:
+	return _soft_pass_through_people
 
 func _find_inventory_item_index_for_task(task_id: String, item_name: String, allow_reusable: bool) -> int:
 	if inventory == null:

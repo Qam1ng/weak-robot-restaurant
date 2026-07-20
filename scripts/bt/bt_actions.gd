@@ -201,7 +201,8 @@ class ActNavigate extends Core.Task:
 		agent.path_desired_distance = 12.0
 		agent.target_desired_distance = 10.0
 		agent.max_speed = actor.move_speed
-		agent.avoidance_enabled = true
+		var soft_pass := actor != null and actor.has_method("should_soft_pass_through_people") and bool(actor.call("should_soft_pass_through_people"))
+		agent.avoidance_enabled = not soft_pass
 		agent.radius = 10.0
 		agent.neighbor_distance = 120.0
 		agent.time_horizon = 1.0
