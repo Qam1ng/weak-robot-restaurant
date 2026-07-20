@@ -68,12 +68,12 @@ const BATTERY_MODE_EMERGENCY := "emergency"
 var _battery_mode: String = BATTERY_MODE_NORMAL
 var _constraint_input: Dictionary = {}
 var _active_help_request_id: String = ""
-var _help_request_suppressed: bool = false
-var _overload_handoff_declined_task_id: String = ""
-var _deadline_handoff_declined_task_id: String = ""
+var _workload_declined_task_ids: Dictionary = {}
+var _deadline_declined_task_ids: Dictionary = {}
 var _recharge_override_active: bool = false
 var _last_recharge_notice_ms: int = 0
 var _battery_emergency_handoff_attempted_task_id: String = ""
+var _battery_pressure_declined_until_recharge: bool = false
 var _last_emergency_approach_notice_ms: int = 0
 var _last_overload_approach_notice_ms: int = 0
 var _pending_player_line_request_id: String = ""
@@ -353,18 +353,21 @@ func _sync_active_task_state() -> bool:
 	var state := str(task.get("state", ""))
 	if state == TASK_STATE_FAILED:
 		var reason := str(task.get("failure_reason", "task_failed"))
+		_clear_task_declined_suppressions(_active_task_id)
 		_release_robot_food_for_task(_active_task_id, "task_failed")
 		_invalidate_active_help_request("task_failed")
 		_end_current_episode(false, reason)
 		_clear_current_task_runtime()
 		return true
 	if state == TASK_STATE_COMPLETED:
+		_clear_task_declined_suppressions(_active_task_id)
 		_release_robot_food_for_task(_active_task_id, "task_completed")
 		_invalidate_active_help_request("task_completed")
 		_end_current_episode(true)
 		_clear_current_task_runtime()
 		return true
 	if state != TASK_STATE_IN_PROGRESS:
+		_clear_task_declined_suppressions(_active_task_id)
 		_release_robot_food_for_task(_active_task_id, "task_invalid_state")
 		_invalidate_active_help_request("task_invalid_state")
 		_end_current_episode(false, "task_invalid_state:" + state)
@@ -374,6 +377,7 @@ func _sync_active_task_state() -> bool:
 	if _resolve_customer_from_payload(payload) == null:
 		if board.has_method("fail_task"):
 			board.fail_task(_active_task_id, "customer_missing")
+		_clear_task_declined_suppressions(_active_task_id)
 		_release_robot_food_for_task(_active_task_id, "customer_missing")
 		_invalidate_active_help_request("customer_missing")
 		_end_current_episode(false, "customer_missing")
@@ -596,6 +600,7 @@ func _get_robot_assigned_food_tasks() -> Array[Dictionary]:
 				board.complete_task(task_id)
 			continue
 		out.append(task)
+	_prune_declined_task_suppressions(out)
 	return out
 
 func _get_best_unassigned_food_task() -> Dictionary:
@@ -620,7 +625,7 @@ func _get_best_unassigned_food_task() -> Dictionary:
 
 func _should_continue_collecting_orders() -> bool:
 	var assigned := _get_robot_assigned_food_tasks()
-	if assigned.size() >= _robot_handoff_threshold_tasks():
+	if _effective_workload_task_count(assigned) >= _robot_handoff_threshold_tasks():
 		return false
 	if not _is_in_dining_side():
 		return false
@@ -642,7 +647,7 @@ func _deadline_handoff_candidate() -> Dictionary:
 	var best_slack := INF
 	for task in tasks:
 		var task_id := str(task.get("id", ""))
-		if task_id == "" or task_id == _deadline_handoff_declined_task_id:
+		if task_id == "" or _is_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE):
 			continue
 		var slack := _task_slack_ms(task)
 		if slack <= 0 or slack > DEADLINE_HANDOFF_TRIGGER_MS:
@@ -894,6 +899,7 @@ func _finish_active_task_if_needed() -> void:
 	if not board.is_task_completed(_active_task_id):
 		return
 
+	_clear_task_declined_suppressions(_active_task_id)
 	_end_current_episode(true)
 	_clear_current_task_runtime()
 
@@ -911,15 +917,14 @@ func _clear_current_task_runtime() -> void:
 	_waiting_for_help = false
 	_help_item_needed = ""
 	_active_help_request_id = ""
-	_help_request_suppressed = false
 	_last_debug_step_key = ""
 	_reset_step_navigation_recovery()
 	_trial_handoff_armed_task_id = ""
 	_trial_handoff_pending_task_id = ""
 	_trial_handoff_item_needed = ""
 	if _get_robot_assigned_food_tasks().is_empty():
-		_overload_handoff_declined_task_id = ""
-		_deadline_handoff_declined_task_id = ""
+		_workload_declined_task_ids.clear()
+		_deadline_declined_task_ids.clear()
 
 func _handle_step_plan_failure() -> void:
 	var failure_reason := str(bt_runner.bb.get("help_reason", "")).strip_edges()
@@ -1173,6 +1178,10 @@ func _tick_emergency_delegation() -> bool:
 	var is_battery_emergency := _battery_mode == BATTERY_MODE_EMERGENCY
 	if not is_battery_emergency:
 		return false
+	if _battery_pressure_declined_until_recharge:
+		if not _recharge_override_active:
+			_activate_recharge_override("Battery critical. Recharging now.")
+		return true
 
 	# If currently waiting on a help request, keep waiting (highest priority state).
 	if _waiting_for_help:
@@ -1248,7 +1257,7 @@ func _tick_overload_handoff_delegation() -> bool:
 		return false
 	if _pending_overload_handoff_task_id == "" or _pending_overload_handoff_task_id != _active_task_id:
 		return false
-	if _overload_handoff_declined_task_id == _active_task_id:
+	if _is_task_declined_for_scenario(_active_task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD):
 		# Player refused this request episode; continue task execution.
 		_pending_overload_handoff_task_id = ""
 		return false
@@ -1480,6 +1489,7 @@ func _update_battery_mode() -> void:
 		_idle_charge_cycle_complete = false
 	else:
 		_battery_mode = BATTERY_MODE_NORMAL
+		_battery_pressure_declined_until_recharge = false
 
 	if previous != _battery_mode:
 		# Emergency mode should immediately interrupt execution and recharge.
@@ -1555,6 +1565,7 @@ func _tick_recharge_override(has_plan: bool) -> bool:
 		# Pause work while charging until safe level.
 		if battery_level >= maxf(EMERGENCY_RECHARGE_RESUME_LEVEL, battery_conserve_threshold + 5.0):
 			_recharge_override_active = false
+			_battery_pressure_declined_until_recharge = false
 			_active_step_started = false
 			if _active_task_id != "":
 				_try_speak_recharge_notice("Battery stabilized. Resuming task.")
@@ -1612,20 +1623,18 @@ func _on_help_request_updated(request: Dictionary) -> void:
 	_active_help_request_id = req_id
 
 	if status == "accepted":
-		_help_request_suppressed = false
 		if task_id != "":
-			if _overload_handoff_declined_task_id == task_id:
-				_overload_handoff_declined_task_id = ""
-			if _deadline_handoff_declined_task_id == task_id:
-				_deadline_handoff_declined_task_id = ""
+			_clear_task_declined_suppressions(task_id)
+		if reason == "battery_emergency":
+			_battery_pressure_declined_until_recharge = false
 		_apply_handoff_accept(request)
 	elif status == "resolved" and final_response == "decline":
 		if reason == "robot_over_threshold_post_take_order" and task_id != "":
-			_overload_handoff_declined_task_id = task_id
+			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD)
 		elif reason == "deadline_critical" and task_id != "":
-			_deadline_handoff_declined_task_id = task_id
-		else:
-			_help_request_suppressed = true
+			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE)
+		elif reason == "battery_emergency":
+			_battery_pressure_declined_until_recharge = true
 		set_waiting_for_help(false, "")
 		if _battery_mode == BATTERY_MODE_EMERGENCY and not _recharge_override_active:
 			_activate_recharge_override("Battery critical. Recharging now.")
@@ -1679,6 +1688,7 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 
 	if task_id == _active_task_id:
 		var accepted_request_id := _active_help_request_id
+		_clear_task_declined_suppressions(task_id)
 		_end_current_episode(false, "task_handoff_to_player")
 		_clear_current_task_runtime()
 		bt_runner.bb["planned_actions"] = []
@@ -1747,6 +1757,54 @@ func _transfer_item_to_player_for_handoff(payload: Dictionary) -> String:
 	if inventory.items.is_empty():
 		bt_runner.bb["carrying_item"] = false
 	return "ok"
+
+func _is_task_declined_for_scenario(task_id: String, scenario: String) -> bool:
+	if task_id == "":
+		return false
+	match scenario:
+		DELEGATION_SCENARIO_WORKLOAD_OVERLOAD:
+			return bool(_workload_declined_task_ids.get(task_id, false))
+		DELEGATION_SCENARIO_DEADLINE_PRESSURE:
+			return bool(_deadline_declined_task_ids.get(task_id, false))
+		_:
+			return false
+
+func _set_task_declined_for_scenario(task_id: String, scenario: String) -> void:
+	if task_id == "":
+		return
+	match scenario:
+		DELEGATION_SCENARIO_WORKLOAD_OVERLOAD:
+			_workload_declined_task_ids[task_id] = true
+		DELEGATION_SCENARIO_DEADLINE_PRESSURE:
+			_deadline_declined_task_ids[task_id] = true
+
+func _clear_task_declined_suppressions(task_id: String) -> void:
+	if task_id == "":
+		return
+	_workload_declined_task_ids.erase(task_id)
+	_deadline_declined_task_ids.erase(task_id)
+
+func _prune_declined_task_suppressions(active_tasks: Array[Dictionary]) -> void:
+	var active_ids := {}
+	for task in active_tasks:
+		var task_id := str(task.get("id", ""))
+		if task_id != "":
+			active_ids[task_id] = true
+	for task_id in _workload_declined_task_ids.keys():
+		if not bool(active_ids.get(str(task_id), false)):
+			_workload_declined_task_ids.erase(task_id)
+	for task_id in _deadline_declined_task_ids.keys():
+		if not bool(active_ids.get(str(task_id), false)):
+			_deadline_declined_task_ids.erase(task_id)
+
+func _effective_workload_task_count(tasks: Array[Dictionary]) -> int:
+	var count := 0
+	for task in tasks:
+		var task_id := str(task.get("id", ""))
+		if _is_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD):
+			continue
+		count += 1
+	return count
 
 func _has_transferable_item_for_task(task_id: String, item_name: String) -> bool:
 	if inventory == null:
