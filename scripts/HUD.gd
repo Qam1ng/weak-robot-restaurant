@@ -57,7 +57,7 @@ var player_dialogue_overlay_buttons: HBoxContainer
 var player_dialogue_overlay_button_spacer: Control
 var player_dialogue_overlay_accept_btn: Button
 var player_dialogue_overlay_decline_btn: Button
-var player_dialogue_overlay_later_btn: Button
+var player_dialogue_overlay_third_btn: Button
 var _player_dialogue_info_cards: Array[Dictionary] = []
 var _help_prompt_cards: Array[Dictionary] = []
 var _delegation_pause_active: bool = false
@@ -579,10 +579,10 @@ func _setup_player_dialogue_overlay_ui() -> void:
 	player_dialogue_overlay_decline_btn.pressed.connect(func(): _respond("decline"))
 	player_dialogue_overlay_buttons.add_child(player_dialogue_overlay_decline_btn)
 
-	player_dialogue_overlay_later_btn = Button.new()
-	player_dialogue_overlay_later_btn.text = "Later"
-	player_dialogue_overlay_later_btn.pressed.connect(func(): _respond("later"))
-	player_dialogue_overlay_buttons.add_child(player_dialogue_overlay_later_btn)
+	player_dialogue_overlay_third_btn = Button.new()
+	player_dialogue_overlay_third_btn.text = ""
+	player_dialogue_overlay_third_btn.pressed.connect(func(): _respond("third"))
+	player_dialogue_overlay_buttons.add_child(player_dialogue_overlay_third_btn)
 
 	_update_gameplay_panel_layout()
 
@@ -1585,7 +1585,7 @@ func _respond(response: String) -> void:
 				idx = 0
 			"decline":
 				idx = 1
-			"later":
+			"third":
 				idx = 2
 		if idx >= 0 and idx < _kitchen_pick_options.size():
 			kitchen_pick_selected.emit(_kitchen_pick_options[idx])
@@ -1709,7 +1709,7 @@ func show_kitchen_pick_feedback(item_name: String, success: bool) -> void:
 		1:
 			button = player_dialogue_overlay_decline_btn
 		2:
-			button = player_dialogue_overlay_later_btn
+			button = player_dialogue_overlay_third_btn
 	_flash_kitchen_pick_button(button, success)
 
 func _reset_help_buttons() -> void:
@@ -1717,10 +1717,10 @@ func _reset_help_buttons() -> void:
 		player_dialogue_overlay_accept_btn.text = "Accept"
 	if player_dialogue_overlay_decline_btn:
 		player_dialogue_overlay_decline_btn.text = "Decline"
-	if player_dialogue_overlay_later_btn:
-		player_dialogue_overlay_later_btn.text = "Later"
-	if player_dialogue_overlay_later_btn:
-		player_dialogue_overlay_later_btn.visible = true
+	if player_dialogue_overlay_third_btn:
+		player_dialogue_overlay_third_btn.text = ""
+	if player_dialogue_overlay_third_btn:
+		player_dialogue_overlay_third_btn.visible = false
 
 func _flash_kitchen_pick_button(button: Button, success: bool) -> void:
 	if button == null or not is_instance_valid(button):
@@ -3192,12 +3192,12 @@ func _show_player_dialogue_prompt(title: String, body: String, button_texts: Arr
 				player_dialogue_overlay_decline_btn.text = button_texts[1]
 				player_dialogue_overlay_decline_btn.disabled = false
 				player_dialogue_overlay_decline_btn.modulate = Color(1, 1, 1, 1)
-		if player_dialogue_overlay_later_btn:
-			player_dialogue_overlay_later_btn.visible = show_third_button and button_texts.size() >= 3
+		if player_dialogue_overlay_third_btn:
+			player_dialogue_overlay_third_btn.visible = show_third_button and button_texts.size() >= 3
 			if button_texts.size() >= 3:
-				player_dialogue_overlay_later_btn.text = button_texts[2]
-				player_dialogue_overlay_later_btn.disabled = false
-				player_dialogue_overlay_later_btn.modulate = Color(1, 1, 1, 1)
+				player_dialogue_overlay_third_btn.text = button_texts[2]
+				player_dialogue_overlay_third_btn.disabled = false
+				player_dialogue_overlay_third_btn.modulate = Color(1, 1, 1, 1)
 	_trim_player_dialogue_info_cards()
 	_update_gameplay_panel_layout()
 
@@ -3268,15 +3268,6 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 	)
 	buttons.add_child(decline_btn)
 
-	var later_btn := Button.new()
-	later_btn.text = "Later"
-	later_btn.custom_minimum_size = Vector2(160.0, HELP_PROMPT_BUTTON_HEIGHT)
-	later_btn.add_theme_font_size_override("font_size", HELP_PROMPT_BUTTON_FONT_SIZE)
-	later_btn.pressed.connect(func():
-		_submit_help_request_response(rid, "later")
-	)
-	buttons.add_child(later_btn)
-
 	var entry := {
 		"request_id": rid,
 		"request": request.duplicate(true),
@@ -3285,7 +3276,6 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 		"label": label,
 		"accept_btn": primary_btn,
 		"decline_btn": decline_btn,
-		"later_btn": later_btn,
 		"dialogue_stage": HELP_DIALOGUE_STAGE_OPENER,
 		"trial_accept_only": trial_accept_only
 	}
@@ -3334,7 +3324,6 @@ func _apply_help_request_card_state(entry: Dictionary, request: Dictionary) -> v
 		label.add_text(_build_help_text(request, stage))
 	var primary_btn: Button = entry.get("accept_btn", null)
 	var decline_btn: Button = entry.get("decline_btn", null)
-	var later_btn: Button = entry.get("later_btn", null)
 	var trial_accept_only := bool(entry.get("trial_accept_only", false))
 	if primary_btn != null:
 		primary_btn.visible = true
@@ -3343,9 +3332,6 @@ func _apply_help_request_card_state(entry: Dictionary, request: Dictionary) -> v
 	if decline_btn != null:
 		decline_btn.visible = stage == HELP_DIALOGUE_STAGE_DELEGATION
 		decline_btn.disabled = trial_accept_only
-	if later_btn != null:
-		later_btn.visible = stage == HELP_DIALOGUE_STAGE_DELEGATION
-		later_btn.disabled = trial_accept_only
 
 func _on_help_request_primary_pressed(request_id: String) -> void:
 	var idx := _find_help_request_card_index(request_id)
