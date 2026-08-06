@@ -1225,7 +1225,11 @@ func _update_battery_label() -> void:
 	var mode := str(robot.get("_battery_mode"))
 	if mode == "" or mode == "Null":
 		mode = "normal"
-	battery_label.text = "Battery: %d%%" % clampi(level, 0, 100)
+	var clamped_level := clampi(level, 0, 100)
+	if mode == "emergency" and clamped_level <= 0:
+		battery_label.text = "Battery: Low"
+	else:
+		battery_label.text = "Battery: %d%%" % clamped_level
 
 	if mode == "emergency":
 		battery_label.add_theme_color_override("font_color", Color(1.0, 0.52, 0.52, 1.0))
