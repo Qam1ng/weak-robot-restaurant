@@ -2451,7 +2451,7 @@ func _show_trial_guide_for_delete_open() -> void:
 	if inventory_target.is_empty() or hotdog_target.is_empty():
 		return
 	_show_trial_guide(
-		"A practice %s was added to your inventory. Press [b]I[/b] to open the inventory portal." % _trial_delete_item_name,
+		"You picked up an extra %s by mistake. Press [b]I[/b] to open the inventory portal." % _trial_delete_item_name,
 		{
 			"type": "control_group",
 			"ids": inventory_target.get("ids", []),
@@ -2466,7 +2466,7 @@ func _show_trial_guide_for_delete_confirm() -> void:
 	if delete_target.is_empty() or inventory_portal_panel == null:
 		return
 	_show_trial_guide(
-		"Delete the practice %s from your inventory, then continue." % _trial_delete_item_name,
+		"Delete the extra %s from your inventory, then continue." % _trial_delete_item_name,
 		{
 			"type": "control",
 			"id": inventory_portal_panel.get_instance_id(),
