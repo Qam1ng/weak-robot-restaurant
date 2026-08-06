@@ -3490,6 +3490,9 @@ func _update_delegation_pause_state() -> void:
 		return
 	_delegation_pause_active = should_pause
 	if should_pause:
+		if _popup_mode == POPUP_MODE_KITCHEN_PICK:
+			hide_kitchen_pick_popup()
+		hide_inventory_portal()
 		for entry in _player_dialogue_info_cards:
 			var node: Control = entry.get("node", null)
 			if node != null and is_instance_valid(node):
