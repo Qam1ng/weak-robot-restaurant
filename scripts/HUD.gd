@@ -900,9 +900,9 @@ func _show_run_end_prompt(title: String, body: String) -> void:
 	_run_end_active = true
 	_set_global_pause(true)
 	_popup_mode = POPUP_MODE_GAME_OVER
-	_show_player_dialogue_prompt(title, body, ["Retry", "Quit"], false)
+	_show_player_dialogue_prompt(title, body, ["Play Again"], false)
 
-func _on_game_over_retry() -> void:
+func _on_game_over_play_again() -> void:
 	_set_global_pause(false)
 	_run_end_active = false
 	_score_game_over = false
@@ -927,9 +927,6 @@ func _on_game_over_retry() -> void:
 	if game_mgr and game_mgr.has_method("reset_run"):
 		game_mgr.reset_run()
 	get_tree().reload_current_scene()
-
-func _on_game_over_quit() -> void:
-	get_tree().quit()
 
 func _connect_dialogue_feed_signals() -> void:
 	var bubble_mgr = get_node_or_null("/root/BubbleManager")
@@ -1702,11 +1699,8 @@ func _respond(response: String) -> void:
 		return
 
 	if _popup_mode == POPUP_MODE_GAME_OVER:
-		match response:
-			"accept":
-				_on_game_over_retry()
-			"decline":
-				_on_game_over_quit()
+		if response == "accept":
+			_on_game_over_play_again()
 		return
 
 	if _popup_mode == POPUP_MODE_TRIAL_COMPLETE:
