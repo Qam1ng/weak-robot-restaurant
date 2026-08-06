@@ -33,7 +33,6 @@ const DEBUG_EVENT_REASONS := {
 	"inventory_full": true,
 	"item_missing": true,
 	"too_far_from_item": true,
-	"empty_inventory": true,
 	"customer_missing": true,
 	"task_deadline_expired": true,
 	"customer_drink_timeout": true,

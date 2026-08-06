@@ -314,11 +314,8 @@ class ActDropItem extends Core.Task:
 		else:
 			item = inventory.remove_last()
 		if item.is_empty():
-			actor.speak("Nothing to deliver!")
-			bb["action_failure_reason"] = "empty_inventory"
-			BT_Actions._emit_runtime_debug(actor, "delivery_failed", {"event_reason": "empty_inventory"})
+			push_error("ActDropItem: missing bound item for active delivery task.")
 			return Core.Status.FAILURE
-
 		bb["carrying_item"] = false
 		var item_name := str(item.get("name", "item"))
 		actor.speak("Here's your " + item_name + "! Enjoy!")

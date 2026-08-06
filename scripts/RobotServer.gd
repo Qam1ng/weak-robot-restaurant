@@ -46,7 +46,6 @@ const IDLE_WAIT_MARKER := "RG4"
 const EMERGENCY_RECHARGE_RESUME_LEVEL := 55.0
 const EMERGENCY_HANDOFF_APPROACH_DISTANCE := 120.0
 const DEADLINE_HANDOFF_TRIGGER_MS := 55_000
-const ORPHAN_FOOD_ITEM_TTL_MS := 45_000
 const PLAYER_ITEM_TTL_MS := 120_000
 var _active_task_id: String = ""
 var _active_task_step: String = ""
@@ -259,7 +258,6 @@ func _discover_locations():
 
 func _physics_process(dt: float) -> void:
 	_update_battery_and_mode(dt)
-	_expire_orphaned_food_inventory()
 
 	# Animation logic: based on current real velocity, not path preview
 	_update_anim(velocity)
@@ -674,7 +672,7 @@ func _inventory_has_item_for_task(task: Dictionary) -> bool:
 	var item_name := str(payload.get("food_item", "")).strip_edges()
 	if item_name == "":
 		return false
-	return _find_inventory_item_index_for_task(str(task.get("id", "")), item_name, true) != -1
+	return _find_inventory_item_index_for_task(str(task.get("id", "")), item_name) != -1
 
 func _try_activate_take_order_task() -> bool:
 	var tasks := _get_robot_assigned_food_tasks()
@@ -839,9 +837,6 @@ func _consume_existing_inventory_for_active_pickup() -> bool:
 	return true
 
 func _plan_deliver_step() -> void:
-	if not _inventory_has_item_for_active_task():
-		if _recover_missing_delivery_item():
-			return
 	var actions := [
 		{"action": "navigate", "params": {"target": "customer"}},
 		{"action": "drop", "params": {}}
@@ -928,14 +923,6 @@ func _clear_current_task_runtime() -> void:
 
 func _handle_step_plan_failure() -> void:
 	var failure_reason := str(bt_runner.bb.get("help_reason", "")).strip_edges()
-	var action_failure_reason := str(bt_runner.bb.get("action_failure_reason", "")).strip_edges()
-	if action_failure_reason == "empty_inventory" and _active_task_step == STEP_DELIVER_AND_SERVE:
-		if _recover_missing_delivery_item():
-			bt_runner.bb.erase("action_failure_reason")
-			bt_runner.bb.erase("help_reason")
-			bt_runner.bb.erase("help_stuck_position")
-			bt_runner.bb.erase("help_evasion_attempts")
-			return
 	if failure_reason == "too_many_evasions":
 		_step_navigation_failure_count += 1
 		if _step_navigation_failure_count >= 2:
@@ -964,37 +951,7 @@ func _set_soft_pass_through_people(active: bool) -> void:
 func should_soft_pass_through_people() -> bool:
 	return _soft_pass_through_people
 
-func _inventory_has_item_for_active_task() -> bool:
-	if _active_task_id == "":
-		return false
-	var board := _task_board()
-	if board == null or not board.has_method("get_task"):
-		return false
-	var task: Dictionary = board.get_task(_active_task_id)
-	if task.is_empty():
-		return false
-	return _inventory_has_item_for_task(task)
-
-func _recover_missing_delivery_item() -> bool:
-	if _active_task_id == "":
-		return false
-	var board := _task_board()
-	if board == null or not board.has_method("reset_task_to_step"):
-		return false
-	if not board.reset_task_to_step(_active_task_id, STEP_PICKUP_FROM_KITCHEN):
-		return false
-	_active_step_started = false
-	bt_runner.bb["planned_actions"] = []
-	bt_runner.bb["last_plan_failed"] = false
-	bt_runner.bb.erase("action_failure_reason")
-	bt_runner.bb.erase("help_reason")
-	bt_runner.bb.erase("help_stuck_position")
-	bt_runner.bb.erase("help_evasion_attempts")
-	_last_replan_ms = 0
-	_plan_current_task_step()
-	return true
-
-func _find_inventory_item_index_for_task(task_id: String, item_name: String, allow_reusable: bool) -> int:
+func _find_inventory_item_index_for_task(task_id: String, item_name: String) -> int:
 	if inventory == null:
 		return -1
 	var wanted := item_name.strip_edges().to_lower()
@@ -1006,23 +963,14 @@ func _find_inventory_item_index_for_task(task_id: String, item_name: String, all
 			continue
 		if str(entry.get("task_id", "")) == task_id:
 			return i
-	if not allow_reusable:
-		return -1
-	for i in range(inventory.items.size()):
-		var entry: Dictionary = inventory.items[i]
-		if str(entry.get("name", "")).to_lower() != wanted:
-			continue
-		if str(entry.get("task_id", "")) == "":
-			return i
 	return -1
 
 func _reserve_inventory_item_for_task(task_id: String, item_name: String) -> bool:
-	var idx := _find_inventory_item_index_for_task(task_id, item_name, true)
+	var idx := _find_inventory_item_index_for_task(task_id, item_name)
 	if idx == -1:
 		return false
 	var entry: Dictionary = inventory.items[idx]
 	entry["task_id"] = task_id
-	entry["orphaned_at_ms"] = 0
 	inventory.items[idx] = entry
 	inventory.emit_signal("inventory_changed", inventory.items)
 	return true
@@ -1037,7 +985,6 @@ func _pickup_item_meta(item_name: String) -> Dictionary:
 		return {}
 	return {
 		"task_id": _active_task_id,
-		"orphaned_at_ms": 0
 	}
 
 func _take_inventory_item_for_active_task() -> Dictionary:
@@ -1049,7 +996,7 @@ func _take_inventory_item_for_active_task() -> Dictionary:
 	var item_name := str(payload.get("food_item", "")).strip_edges().to_lower()
 	if item_name == "":
 		item_name = _current_food_item.strip_edges().to_lower()
-	var idx := _find_inventory_item_index_for_task(_active_task_id, item_name, false)
+	var idx := _find_inventory_item_index_for_task(_active_task_id, item_name)
 	if idx == -1:
 		return {}
 	var item: Dictionary = inventory.items.pop_at(idx)
@@ -1061,35 +1008,19 @@ func _take_inventory_item_for_active_task() -> Dictionary:
 func _release_robot_food_for_task(task_id: String, _reason: String) -> void:
 	if inventory == null or task_id == "":
 		return
-	var now_ms := _gameplay_now_ms()
-	var changed := false
-	for i in range(inventory.items.size()):
-		var entry: Dictionary = inventory.items[i]
-		if str(entry.get("task_id", "")) != task_id:
-			continue
-		entry["task_id"] = ""
-		entry["orphaned_at_ms"] = now_ms
-		inventory.items[i] = entry
-		changed = true
-	if changed:
-		inventory.emit_signal("inventory_changed", inventory.items)
-
-func _expire_orphaned_food_inventory() -> void:
-	if inventory == null or inventory.items.is_empty():
-		return
-	var now_ms := _gameplay_now_ms()
 	var kept: Array = []
 	var changed := false
 	for raw_entry in inventory.items:
 		var entry: Dictionary = raw_entry
-		var orphaned_at_ms := int(entry.get("orphaned_at_ms", 0))
-		if orphaned_at_ms > 0 and now_ms - orphaned_at_ms >= ORPHAN_FOOD_ITEM_TTL_MS:
+		if str(entry.get("task_id", "")) == task_id:
 			changed = true
 			continue
 		kept.append(entry)
 	if changed:
 		inventory.items = kept
 		inventory.emit_signal("inventory_changed", inventory.items)
+		if inventory.items.is_empty():
+			bt_runner.bb["carrying_item"] = false
 
 func _clear_invalid_bound_inventory_items() -> bool:
 	if inventory == null or inventory.items.is_empty():
@@ -1103,7 +1034,7 @@ func _clear_invalid_bound_inventory_items() -> bool:
 		var entry: Dictionary = raw_entry
 		var task_id := str(entry.get("task_id", ""))
 		if task_id == "":
-			kept.append(entry)
+			changed = true
 			continue
 		var task: Dictionary = board.get_task(task_id)
 		if task.is_empty():
@@ -1449,14 +1380,7 @@ func _handle_pickup_inventory_full(_item_name: String) -> bool:
 		return false
 	if _waiting_for_help:
 		return true
-	if _try_activate_delivery_task():
-		return true
-	if _consume_existing_inventory_for_active_pickup():
-		return true
-	_clear_invalid_bound_inventory_items()
-	speak("Inventory full. Reordering tasks.")
-	_clear_current_task_runtime()
-	return true
+	return _try_activate_delivery_task()
 
 func _handoff_mode_for_active_task(item_name: String) -> String:
 	var effective_step := _active_task_step
@@ -1761,7 +1685,7 @@ func _transfer_item_to_player_for_handoff(payload: Dictionary) -> String:
 		return "player_unavailable"
 	var task_id := str(payload.get("task_id", ""))
 	var preferred := str(payload.get("item_needed", "")).strip_edges()
-	var idx := _find_inventory_item_index_for_task(task_id, preferred, true)
+	var idx := _find_inventory_item_index_for_task(task_id, preferred)
 	if idx == -1 and preferred != "":
 		idx = inventory.find_item(preferred)
 	if idx == -1:
@@ -1840,7 +1764,7 @@ func _effective_workload_task_count(tasks: Array[Dictionary]) -> int:
 func _has_transferable_item_for_task(task_id: String, item_name: String) -> bool:
 	if inventory == null:
 		return false
-	return _find_inventory_item_index_for_task(task_id, item_name, false) != -1
+	return _find_inventory_item_index_for_task(task_id, item_name) != -1
 
 func _on_help_request_resolved(request: Dictionary) -> void:
 	if request.is_empty():
