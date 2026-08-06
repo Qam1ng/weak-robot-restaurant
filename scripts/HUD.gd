@@ -167,6 +167,22 @@ const TRIAL_SESSION_MAX_SEC := 100.0
 const TRIAL_GUIDE_FOCUS_BORDER := Color(1.0, 0.93, 0.62, 1.0)
 const TRIAL_GUIDE_ARROW_TEXTURE := preload("res://assets/icons/orders/right-arrow.png")
 const TRIAL_GUIDE_ARROW_SIZE := Vector2(24.0, 24.0)
+const UI_BTN_NEUTRAL_BG := Color(0.18, 0.21, 0.27, 0.96)
+const UI_BTN_NEUTRAL_HOVER_BG := Color(0.25, 0.29, 0.36, 0.98)
+const UI_BTN_NEUTRAL_PRESSED_BG := Color(0.13, 0.16, 0.21, 0.98)
+const UI_BTN_PRIMARY_BG := Color(0.74, 0.58, 0.20, 0.98)
+const UI_BTN_PRIMARY_HOVER_BG := Color(0.84, 0.67, 0.25, 1.0)
+const UI_BTN_PRIMARY_PRESSED_BG := Color(0.58, 0.44, 0.14, 1.0)
+const UI_BTN_DANGER_BG := Color(0.72, 0.22, 0.22, 1.0)
+const UI_BTN_DANGER_HOVER_BG := Color(0.84, 0.29, 0.29, 1.0)
+const UI_BTN_DANGER_PRESSED_BG := Color(0.56, 0.15, 0.15, 1.0)
+const UI_BTN_TAB_BG := Color(0.11, 0.13, 0.17, 0.98)
+const UI_BTN_TAB_HOVER_BG := Color(0.20, 0.23, 0.29, 1.0)
+const UI_BTN_TAB_PRESSED_BG := Color(0.30, 0.35, 0.42, 1.0)
+const UI_BTN_TEXT_LIGHT := Color(0.96, 0.97, 0.99, 1.0)
+const UI_BTN_TEXT_DARK := Color(0.10, 0.08, 0.04, 1.0)
+const UI_BTN_BORDER := Color(0.92, 0.96, 1.0, 0.22)
+const UI_BTN_FOCUS_BORDER := Color(1.0, 0.88, 0.50, 0.95)
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -177,6 +193,7 @@ func _ready() -> void:
 
 	_setup_survey_scale_buttons()
 	survey_confirm.pressed.connect(_finish_survey_and_start)
+	_apply_button_theme(survey_confirm, "primary")
 
 	_setup_inventory_ui()
 	_setup_inventory_portal_ui()
@@ -240,6 +257,111 @@ func _connect_help_signals() -> void:
 		help_mgr.request_created.connect(_on_help_request_created)
 	if not help_mgr.request_resolved.is_connected(_on_help_request_resolved):
 		help_mgr.request_resolved.connect(_on_help_request_resolved)
+
+func _make_button_style(bg: Color, border: Color, radius: int = 10, border_width: int = 1, pad_x: int = 14, pad_y: int = 8) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg
+	style.corner_radius_top_left = radius
+	style.corner_radius_top_right = radius
+	style.corner_radius_bottom_right = radius
+	style.corner_radius_bottom_left = radius
+	style.border_width_left = border_width
+	style.border_width_top = border_width
+	style.border_width_right = border_width
+	style.border_width_bottom = border_width
+	style.border_color = border
+	style.content_margin_left = pad_x
+	style.content_margin_right = pad_x
+	style.content_margin_top = pad_y
+	style.content_margin_bottom = pad_y
+	return style
+
+func _apply_button_theme(button: Button, variant: String = "neutral") -> void:
+	if button == null:
+		return
+	var normal_bg := UI_BTN_NEUTRAL_BG
+	var hover_bg := UI_BTN_NEUTRAL_HOVER_BG
+	var pressed_bg := UI_BTN_NEUTRAL_PRESSED_BG
+	var font_color := UI_BTN_TEXT_LIGHT
+	var border_color := UI_BTN_BORDER
+	var radius := 10
+	var border_width := 1
+	var pad_x := 14
+	var pad_y := 8
+	match variant:
+		"primary":
+			normal_bg = UI_BTN_PRIMARY_BG
+			hover_bg = UI_BTN_PRIMARY_HOVER_BG
+			pressed_bg = UI_BTN_PRIMARY_PRESSED_BG
+			font_color = UI_BTN_TEXT_DARK
+			border_color = Color(1.0, 0.94, 0.72, 0.55)
+		"danger":
+			normal_bg = Color(0.66, 0.22, 0.22, 1.0)
+			hover_bg = Color(0.76, 0.28, 0.28, 1.0)
+			pressed_bg = Color(0.52, 0.16, 0.16, 1.0)
+			font_color = Color(1.0, 0.97, 0.97, 1.0)
+			border_color = Color(1.0, 0.82, 0.82, 0.22)
+			radius = 7
+			pad_x = 8
+			pad_y = 4
+		"tab":
+			normal_bg = UI_BTN_TAB_BG
+			hover_bg = UI_BTN_TAB_HOVER_BG
+			pressed_bg = UI_BTN_TAB_PRESSED_BG
+			font_color = UI_BTN_TEXT_LIGHT
+			border_color = Color(0.76, 0.95, 1.0, 0.24)
+			radius = 7
+			pad_x = 12
+			pad_y = 6
+	var normal_style := _make_button_style(normal_bg, border_color, radius, border_width, pad_x, pad_y)
+	var hover_style := _make_button_style(hover_bg, border_color.lerp(UI_BTN_FOCUS_BORDER, 0.35), radius, border_width, pad_x, pad_y)
+	var pressed_style := _make_button_style(pressed_bg, border_color.lerp(UI_BTN_FOCUS_BORDER, 0.18), radius, border_width, pad_x, pad_y)
+	var focus_style := _make_button_style(hover_bg, UI_BTN_FOCUS_BORDER, radius, max(border_width, 2), pad_x, pad_y)
+	var disabled_style := _make_button_style(normal_bg.darkened(0.18), border_color * Color(1.0, 1.0, 1.0, 0.55), radius, border_width, pad_x, pad_y)
+	button.add_theme_stylebox_override("normal", normal_style)
+	button.add_theme_stylebox_override("hover", hover_style)
+	button.add_theme_stylebox_override("pressed", pressed_style)
+	button.add_theme_stylebox_override("focus", focus_style)
+	button.add_theme_stylebox_override("disabled", disabled_style)
+	button.add_theme_color_override("font_color", font_color)
+	button.add_theme_color_override("font_hover_color", font_color)
+	button.add_theme_color_override("font_pressed_color", font_color)
+	button.add_theme_color_override("font_focus_color", font_color)
+	button.add_theme_color_override("font_disabled_color", font_color * Color(1.0, 1.0, 1.0, 0.58))
+
+func _apply_nickname_input_theme(line_edit: LineEdit) -> void:
+	if line_edit == null:
+		return
+	var border := Color(0.90, 0.76, 0.34, 0.75)
+	var bg := Color(0.09, 0.10, 0.14, 0.96)
+	var normal_style := _make_button_style(bg, border, 10, 1, 14, 10)
+	var hover_style := _make_button_style(bg, border, 10, 1, 14, 10)
+	var focus_style := _make_button_style(bg, border, 10, 1, 14, 10)
+	var read_only_style := _make_button_style(bg, border * Color(1.0, 1.0, 1.0, 0.65), 10, 1, 14, 10)
+	line_edit.add_theme_stylebox_override("normal", normal_style)
+	line_edit.add_theme_stylebox_override("hover", hover_style)
+	line_edit.add_theme_stylebox_override("focus", focus_style)
+	line_edit.add_theme_stylebox_override("read_only", read_only_style)
+	line_edit.add_theme_color_override("font_color", UI_BTN_TEXT_LIGHT)
+	line_edit.add_theme_color_override("font_placeholder_color", Color(0.78, 0.71, 0.55, 0.72))
+	line_edit.add_theme_color_override("caret_color", Color(1.0, 0.90, 0.58, 1.0))
+	line_edit.add_theme_color_override("selection_color", Color(0.36, 0.51, 0.82, 0.65))
+
+func _apply_default_overlay_button_themes() -> void:
+	if player_dialogue_overlay_accept_btn:
+		_apply_button_theme(player_dialogue_overlay_accept_btn, "primary")
+	if player_dialogue_overlay_decline_btn:
+		_apply_button_theme(player_dialogue_overlay_decline_btn, "neutral")
+	if player_dialogue_overlay_third_btn:
+		_apply_button_theme(player_dialogue_overlay_third_btn, "neutral")
+
+func _apply_kitchen_pick_button_themes() -> void:
+	if player_dialogue_overlay_accept_btn:
+		_apply_button_theme(player_dialogue_overlay_accept_btn, "neutral")
+	if player_dialogue_overlay_decline_btn:
+		_apply_button_theme(player_dialogue_overlay_decline_btn, "neutral")
+	if player_dialogue_overlay_third_btn:
+		_apply_button_theme(player_dialogue_overlay_third_btn, "neutral")
 
 func _connect_robot_inventory() -> void:
 	await get_tree().process_frame
@@ -462,6 +584,7 @@ func _setup_customer_orders_ui() -> void:
 	customer_live_btn.pressed.connect(func():
 		_set_customer_tab(CUSTOMER_TAB_LIVE)
 	)
+	_apply_button_theme(customer_live_btn, "tab")
 	customer_tab_buttons.add_child(customer_live_btn)
 
 	customer_history_btn = Button.new()
@@ -471,6 +594,7 @@ func _setup_customer_orders_ui() -> void:
 	customer_history_btn.pressed.connect(func():
 		_set_customer_tab(CUSTOMER_TAB_HISTORY)
 	)
+	_apply_button_theme(customer_history_btn, "tab")
 	customer_tab_buttons.add_child(customer_history_btn)
 
 	customer_items_box = VBoxContainer.new()
@@ -488,6 +612,7 @@ func _setup_customer_orders_ui() -> void:
 		_customer_history_page = maxi(_customer_history_page - 1, 0)
 		_update_customer_panel()
 	)
+	_apply_button_theme(customer_history_prev_btn, "tab")
 	customer_history_pager.add_child(customer_history_prev_btn)
 
 	customer_history_page_label = Label.new()
@@ -500,6 +625,7 @@ func _setup_customer_orders_ui() -> void:
 		_customer_history_page += 1
 		_update_customer_panel()
 	)
+	_apply_button_theme(customer_history_next_btn, "tab")
 	customer_history_pager.add_child(customer_history_next_btn)
 
 	_update_gameplay_panel_layout()
@@ -583,6 +709,7 @@ func _setup_player_dialogue_overlay_ui() -> void:
 	player_dialogue_overlay_third_btn.text = ""
 	player_dialogue_overlay_third_btn.pressed.connect(func(): _respond("third"))
 	player_dialogue_overlay_buttons.add_child(player_dialogue_overlay_third_btn)
+	_apply_default_overlay_button_themes()
 
 	_update_gameplay_panel_layout()
 
@@ -885,24 +1012,7 @@ func _refresh_inventory_portal(items: Array) -> void:
 		var delete_btn := Button.new()
 		delete_btn.text = "Delete"
 		delete_btn.custom_minimum_size = Vector2(44.0, 0.0)
-		var delete_style := StyleBoxFlat.new()
-		delete_style.bg_color = Color(0.70, 0.18, 0.18, 1.0)
-		delete_style.corner_radius_top_left = 6
-		delete_style.corner_radius_top_right = 6
-		delete_style.corner_radius_bottom_left = 6
-		delete_style.corner_radius_bottom_right = 6
-		delete_style.content_margin_left = 5
-		delete_style.content_margin_right = 5
-		delete_style.content_margin_top = 2
-		delete_style.content_margin_bottom = 2
-		var delete_hover := delete_style.duplicate()
-		delete_hover.bg_color = Color(0.82, 0.24, 0.24, 1.0)
-		var delete_pressed := delete_style.duplicate()
-		delete_pressed.bg_color = Color(0.55, 0.12, 0.12, 1.0)
-		delete_btn.add_theme_stylebox_override("normal", delete_style)
-		delete_btn.add_theme_stylebox_override("hover", delete_hover)
-		delete_btn.add_theme_stylebox_override("pressed", delete_pressed)
-		delete_btn.add_theme_color_override("font_color", Color(1.0, 0.96, 0.96, 1.0))
+		_apply_button_theme(delete_btn, "danger")
 		delete_btn.set_meta("inventory_item_uid", int(item.get("uid", 0)))
 		delete_btn.pressed.connect(_on_inventory_portal_delete_pressed.bind(int(item.get("uid", 0))), CONNECT_DEFERRED)
 		row.add_child(delete_btn)
@@ -1673,6 +1783,7 @@ func show_kitchen_pick_popup(options: Array[String], title: String = "Kitchen Pi
 		],
 		true
 	)
+	_apply_kitchen_pick_button_themes()
 
 func hide_kitchen_pick_popup() -> void:
 	if _popup_mode != POPUP_MODE_KITCHEN_PICK:
@@ -1721,27 +1832,21 @@ func _reset_help_buttons() -> void:
 		player_dialogue_overlay_third_btn.text = ""
 	if player_dialogue_overlay_third_btn:
 		player_dialogue_overlay_third_btn.visible = false
+	_apply_default_overlay_button_themes()
 
 func _flash_kitchen_pick_button(button: Button, success: bool) -> void:
 	if button == null or not is_instance_valid(button):
 		return
 	var flash_token := int(button.get_meta("kitchen_flash_token", 0)) + 1
 	button.set_meta("kitchen_flash_token", flash_token)
-	var flash_style := StyleBoxFlat.new()
-	flash_style.bg_color = Color(0.0, 0.0, 0.0, 0.0)
-	flash_style.border_width_left = 2
-	flash_style.border_width_top = 2
-	flash_style.border_width_right = 2
-	flash_style.border_width_bottom = 2
-	flash_style.border_color = Color(0.40, 0.86, 0.48, 1.0) if success else Color(0.92, 0.34, 0.34, 1.0)
-	flash_style.corner_radius_top_left = 8
-	flash_style.corner_radius_top_right = 8
-	flash_style.corner_radius_bottom_left = 8
-	flash_style.corner_radius_bottom_right = 8
-	button.add_theme_stylebox_override("normal", flash_style)
-	button.add_theme_stylebox_override("hover", flash_style)
-	button.add_theme_stylebox_override("pressed", flash_style)
-	button.add_theme_stylebox_override("focus", flash_style)
+	var border := Color(0.40, 0.86, 0.48, 1.0) if success else Color(0.92, 0.34, 0.34, 1.0)
+	var flash_normal := _make_button_style(UI_BTN_NEUTRAL_BG, border, 10, 2, 14, 8)
+	var flash_hover := _make_button_style(UI_BTN_NEUTRAL_HOVER_BG, border, 10, 2, 14, 8)
+	var flash_pressed := _make_button_style(UI_BTN_NEUTRAL_PRESSED_BG, border, 10, 2, 14, 8)
+	button.add_theme_stylebox_override("normal", flash_normal)
+	button.add_theme_stylebox_override("hover", flash_hover)
+	button.add_theme_stylebox_override("pressed", flash_pressed)
+	button.add_theme_stylebox_override("focus", flash_hover)
 	var tween := create_tween()
 	tween.tween_interval(0.8)
 	tween.tween_callback(Callable(self, "_clear_kitchen_pick_button_flash").bind(button.get_instance_id(), flash_token))
@@ -1757,6 +1862,7 @@ func _setup_survey_scale_buttons() -> void:
 		button.custom_minimum_size = Vector2(64, 44)
 		button.text = str(i)
 		button.pressed.connect(_on_tipi_scale_pressed.bind(i))
+		_apply_button_theme(button, "neutral")
 		survey_options.add_child(button)
 		_survey_scale_buttons.append(button)
 
@@ -1769,6 +1875,7 @@ func _setup_survey_input_ui() -> void:
 	_survey_nickname_input.custom_minimum_size = Vector2(0, 44)
 	_survey_nickname_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_survey_nickname_input.visible = false
+	_apply_nickname_input_theme(_survey_nickname_input)
 	_survey_nickname_input.text_submitted.connect(func(_text: String) -> void:
 		if survey_confirm and survey_confirm.visible:
 			_finish_survey_and_start()
@@ -2051,6 +2158,7 @@ func _setup_tutorial_ui() -> void:
 	tutorial_start_button.custom_minimum_size = Vector2(0, 52)
 	tutorial_start_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tutorial_start_button.pressed.connect(_start_game_from_tutorial)
+	_apply_button_theme(tutorial_start_button, "primary")
 	button_row.add_child(tutorial_start_button)
 
 	tutorial_close_button = Button.new()
@@ -2059,6 +2167,7 @@ func _setup_tutorial_ui() -> void:
 	tutorial_close_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tutorial_close_button.visible = false
 	tutorial_close_button.pressed.connect(_close_tutorial_overlay)
+	_apply_button_theme(tutorial_close_button, "neutral")
 	button_row.add_child(tutorial_close_button)
 
 	tutorial_toggle_button = Button.new()
@@ -2068,26 +2177,7 @@ func _setup_tutorial_ui() -> void:
 	tutorial_toggle_button.custom_minimum_size = Vector2(TUTORIAL_TOGGLE_SIZE, TUTORIAL_TOGGLE_SIZE)
 	tutorial_toggle_button.tooltip_text = "Tutorial"
 	tutorial_toggle_button.add_theme_font_size_override("font_size", 22)
-	tutorial_toggle_button.add_theme_color_override("font_color", Color(1.0, 0.97, 0.78, 1.0))
-	var toggle_style := StyleBoxFlat.new()
-	toggle_style.bg_color = Color(0.08, 0.08, 0.08, 0.92)
-	toggle_style.corner_radius_top_left = 10
-	toggle_style.corner_radius_top_right = 10
-	toggle_style.corner_radius_bottom_right = 10
-	toggle_style.corner_radius_bottom_left = 10
-	toggle_style.border_width_left = 1
-	toggle_style.border_width_top = 1
-	toggle_style.border_width_right = 1
-	toggle_style.border_width_bottom = 1
-	toggle_style.border_color = Color(1.0, 0.97, 0.78, 0.35)
-	tutorial_toggle_button.add_theme_stylebox_override("normal", toggle_style)
-	var toggle_hover := toggle_style.duplicate() as StyleBoxFlat
-	toggle_hover.bg_color = Color(0.16, 0.16, 0.16, 0.96)
-	toggle_hover.border_color = Color(1.0, 0.97, 0.78, 0.6)
-	tutorial_toggle_button.add_theme_stylebox_override("hover", toggle_hover)
-	var toggle_pressed := toggle_style.duplicate() as StyleBoxFlat
-	toggle_pressed.bg_color = Color(0.22, 0.22, 0.22, 0.98)
-	tutorial_toggle_button.add_theme_stylebox_override("pressed", toggle_pressed)
+	_apply_button_theme(tutorial_toggle_button, "tab")
 	tutorial_toggle_button.pressed.connect(_open_tutorial_overlay)
 	add_child(tutorial_toggle_button)
 
@@ -2109,7 +2199,6 @@ func _start_game_from_tutorial() -> void:
 	await _dismiss_tutorial_overlay(true)
 	_clear_player_input_state()
 	_set_global_pause(false)
-	_set_gameplay_panels_visible(true)
 	_start_trial_session()
 
 func _show_pending_day_notice() -> void:
@@ -2146,7 +2235,7 @@ func _dismiss_tutorial_overlay(start_trial: bool) -> void:
 		tutorial_close_button.disabled = true
 	if tutorial_close_button:
 		tutorial_close_button.hide()
-	if tutorial_toggle_button:
+	if tutorial_toggle_button and not start_trial:
 		tutorial_toggle_button.show()
 	var tween: Tween = null
 	if tutorial_panel:
@@ -2164,6 +2253,11 @@ func _dismiss_tutorial_overlay(start_trial: bool) -> void:
 		tutorial_panel.modulate = Color(1.0, 1.0, 1.0, 1.0)
 		tutorial_panel.scale = Vector2.ONE
 	if start_trial:
+		_set_gameplay_panels_visible(true)
+		_update_gameplay_panel_layout()
+		await get_tree().process_frame
+		if tutorial_toggle_button:
+			tutorial_toggle_button.show()
 		await _spotlight_tutorial_toggle()
 	if tutorial_start_button:
 		tutorial_start_button.disabled = false
@@ -3101,6 +3195,8 @@ func _should_skip_player_overlay_message(source: Node2D, recipient: Node2D, kind
 		return true
 	if kind == "robot" and recipient_kind == "player":
 		return true
+	if not _help_prompt_cards.is_empty():
+		return true
 	if _delegation_pause_active:
 		return true
 	if _popup_mode == POPUP_MODE_KITCHEN_PICK or _popup_mode == POPUP_MODE_GAME_OVER:
@@ -3257,6 +3353,7 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 	primary_btn.pressed.connect(func():
 		_on_help_request_primary_pressed(rid)
 	)
+	_apply_button_theme(primary_btn, "primary")
 	buttons.add_child(primary_btn)
 
 	var decline_btn := Button.new()
@@ -3266,6 +3363,7 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 	decline_btn.pressed.connect(func():
 		_submit_help_request_response(rid, "decline")
 	)
+	_apply_button_theme(decline_btn, "neutral")
 	buttons.add_child(decline_btn)
 
 	var entry := {
@@ -3387,6 +3485,14 @@ func _update_delegation_pause_state() -> void:
 	if should_pause == _delegation_pause_active:
 		return
 	_delegation_pause_active = should_pause
+	if should_pause:
+		for entry in _player_dialogue_info_cards:
+			var node: Control = entry.get("node", null)
+			if node != null and is_instance_valid(node):
+				node.queue_free()
+		_player_dialogue_info_cards.clear()
+		if player_dialogue_info_stack:
+			player_dialogue_info_stack.visible = false
 	_set_global_pause(should_pause)
 
 func _fill_help_prompt_slots() -> void:
@@ -3453,7 +3559,7 @@ func _clear_kitchen_pick_button_flash(button_instance_id: int, flash_token: int)
 	var button_node := button as Button
 	if int(button_node.get_meta("kitchen_flash_token", 0)) != flash_token:
 		return
-	button_node.remove_theme_stylebox_override("normal")
-	button_node.remove_theme_stylebox_override("hover")
-	button_node.remove_theme_stylebox_override("pressed")
-	button_node.remove_theme_stylebox_override("focus")
+	if _popup_mode == POPUP_MODE_KITCHEN_PICK:
+		_apply_kitchen_pick_button_themes()
+	else:
+		_apply_default_overlay_button_themes()

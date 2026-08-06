@@ -43,6 +43,7 @@ const DELEGATION_SCENARIO_DEADLINE_PRESSURE := "deadline_pressure"
 const DELEGATION_SCENARIO_TRIAL_TUTORIAL := "trial_tutorial"
 const CHARGING_MARKER := "RS1"
 const IDLE_WAIT_MARKER := "RG4"
+const TRIAL_HANDOFF_WAIT_DISTANCE := 8.0
 const EMERGENCY_RECHARGE_RESUME_LEVEL := 55.0
 const EMERGENCY_HANDOFF_APPROACH_DISTANCE := 120.0
 const DEADLINE_HANDOFF_TRIGGER_MS := 55_000
@@ -81,6 +82,8 @@ var _trial_handoff_armed_task_id: String = ""
 var _trial_handoff_pending_task_id: String = ""
 var _trial_handoff_item_needed: String = ""
 var _trial_stationary_pause: bool = false
+var _trial_handoff_release_requested: bool = false
+var _trial_handoff_wait_position_cached: Vector2 = Vector2.ZERO
 var _last_debug_step_key: String = ""
 var _step_navigation_failure_count: int = 0
 var _soft_pass_through_people: bool = false
@@ -169,6 +172,7 @@ class ActExecutePlan extends Core.Task:
 
 func _ready() -> void:
 	add_to_group("robot")
+	_trial_handoff_wait_position_cached = global_position
 	
 	if not has_node("Inventory"):
 		inventory = InventoryScript.new()
@@ -194,6 +198,9 @@ func _ready() -> void:
 	if agent.avoidance_enabled and not agent.velocity_computed.is_connected(_on_agent_velocity_computed):
 		agent.velocity_computed.connect(_on_agent_velocity_computed)
 	await _wait_for_nav_sync(agent.get_navigation_map(), 120)
+	var nav_map: RID = get_world_2d().navigation_map
+	if nav_map.is_valid():
+		_trial_handoff_wait_position_cached = NavigationServer2D.map_get_closest_point(nav_map, _trial_handoff_wait_position_cached)
 
 	# Dynamic RayCast creation for BT Avoidance
 	if not has_node("RayCast2D"):
@@ -276,7 +283,11 @@ func _check_episode_completion() -> void:
 
 	if _trial_stationary_pause:
 		bt_runner.bb["planned_actions"] = []
+		if agent != null:
+			agent.target_position = global_position
+			agent.set_velocity(Vector2.ZERO)
 		velocity = Vector2.ZERO
+		move_and_slide()
 		return
 
 	# No active current task: select the next robot job from the claimed queue,
@@ -871,9 +882,8 @@ func _on_active_step_finished() -> void:
 			_active_task_step = STEP_DELIVER_AND_SERVE
 			_trial_handoff_pending_task_id = _active_task_id
 			_trial_handoff_item_needed = _current_food_item.strip_edges().to_lower()
-			_trial_stationary_pause = true
-			bt_runner.bb["planned_actions"] = []
-			velocity = Vector2.ZERO
+			_trial_handoff_release_requested = false
+			_plan_trial_handoff_wait_position()
 			_active_step_started = false
 			return
 	if expected_step == STEP_PICKUP_FROM_KITCHEN and inventory != null and not inventory.is_full():
@@ -917,6 +927,7 @@ func _clear_current_task_runtime() -> void:
 	_trial_handoff_armed_task_id = ""
 	_trial_handoff_pending_task_id = ""
 	_trial_handoff_item_needed = ""
+	_trial_handoff_release_requested = false
 	if _get_robot_assigned_food_tasks().is_empty():
 		_workload_declined_task_ids.clear()
 		_deadline_declined_task_ids.clear()
@@ -1253,6 +1264,18 @@ func _tick_overload_handoff_delegation() -> bool:
 func _tick_trial_item_handoff() -> bool:
 	if _active_task_id == "" or _trial_handoff_pending_task_id == "" or _trial_handoff_pending_task_id != _active_task_id:
 		return false
+
+	if not _trial_handoff_release_requested:
+		if not _is_at_trial_handoff_wait_point():
+			var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
+			if not has_plan:
+				_plan_trial_handoff_wait_position()
+		else:
+			_trial_stationary_pause = true
+			bt_runner.bb["planned_actions"] = []
+			velocity = Vector2.ZERO
+		_waiting_for_help = false
+		return true
 
 	var help_mgr = _help_manager()
 	if help_mgr == null:
@@ -1847,6 +1870,7 @@ func start_trial_task_handoff(task_id: String, item_name: String) -> void:
 		_trial_handoff_pending_task_id = task_id
 	if _trial_handoff_item_needed == "":
 		_trial_handoff_item_needed = item_name
+	_trial_handoff_release_requested = true
 	_trial_stationary_pause = false
 	_waiting_for_help = false
 	bt_runner.bb["planned_actions"] = []
@@ -1860,4 +1884,17 @@ func set_trial_stationary_pause(paused: bool) -> void:
 	_trial_stationary_pause = paused
 	if paused:
 		bt_runner.bb["planned_actions"] = []
+		if agent != null:
+			agent.target_position = global_position
+			agent.set_velocity(Vector2.ZERO)
 		velocity = Vector2.ZERO
+		move_and_slide()
+
+func _trial_handoff_wait_position() -> Vector2:
+	return _trial_handoff_wait_position_cached
+
+func _is_at_trial_handoff_wait_point() -> bool:
+	return global_position.distance_to(_trial_handoff_wait_position()) <= TRIAL_HANDOFF_WAIT_DISTANCE
+
+func _plan_trial_handoff_wait_position() -> void:
+	_plan_navigate_to_position(_trial_handoff_wait_position(), "trial_wait")
