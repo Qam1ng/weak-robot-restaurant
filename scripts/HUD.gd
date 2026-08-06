@@ -733,6 +733,8 @@ func _connect_time_signals() -> void:
 		return
 	if time_mgr.has_signal("day_changed") and not time_mgr.day_changed.is_connected(_on_day_changed_notice):
 		time_mgr.day_changed.connect(_on_day_changed_notice)
+	if time_mgr.has_signal("run_day_completed") and not time_mgr.run_day_completed.is_connected(_on_run_day_completed_notice):
+		time_mgr.run_day_completed.connect(_on_run_day_completed_notice)
 	if time_mgr.has_signal("time_changed") and not time_mgr.time_changed.is_connected(_refresh_day_phase_label):
 		time_mgr.time_changed.connect(_refresh_day_phase_label)
 	if time_mgr.has_signal("period_changed") and not time_mgr.period_changed.is_connected(_on_period_changed_label):
@@ -769,16 +771,20 @@ func _on_day_changed_notice(day: int) -> void:
 		_pending_day_notice = day
 		return
 	if day > 1:
-		_show_run_end_prompt(
-			"Shift Complete",
-			"Day 1 is complete.\nYou kept the score above %d and finished the shift." % SCORE_FAIL_THRESHOLD
-		)
 		return
 	_initial_day_notice_shown = true
 	var message := "You have entered Day %d." % day
 	if day == 1:
 		message = "The formal session is starting. You have entered Day 1."
 	_show_player_dialogue_overlay("System", message, "system")
+
+func _on_run_day_completed_notice(day: int) -> void:
+	if day <= 0 or not _formal_session_started:
+		return
+	_show_run_end_prompt(
+		"Shift Complete",
+		"Day %d is complete.\nYou kept the score above %d and finished the shift." % [day, SCORE_FAIL_THRESHOLD]
+	)
 
 func _on_task_created(task: Dictionary) -> void:
 	var payload: Dictionary = task.get("payload", {})
