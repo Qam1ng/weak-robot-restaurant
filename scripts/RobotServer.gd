@@ -6,9 +6,7 @@ class_name RobotServer
 @export var move_speed: float = 100.0
 @onready var agent: NavigationAgent2D = $NavigationAgent2D
 @onready var anim: AnimatedSprite2D   = $AnimatedSprite2D
-@onready var ray: RayCast2D = null # Created in _ready
 
-var _moving: bool = false
 var _last_dir: Vector2 = Vector2.DOWN
 
 # ---------- BT ----------
@@ -87,8 +85,6 @@ var _trial_handoff_item_needed: String = ""
 var _trial_stationary_pause: bool = false
 var _trial_handoff_release_requested: bool = false
 var _last_debug_step_key: String = ""
-var _step_navigation_failure_count: int = 0
-var _soft_pass_through_people: bool = false
 
 func _has_property(obj: Object, prop_name: String) -> bool:
 	for p in obj.get_property_list():
@@ -165,7 +161,6 @@ class ActExecutePlan extends Core.Task:
 		match name:
 			"navigate":
 				var target_name = params.get("target", "")
-				var node = Act.ActNavigate.new()
 				if bb.has("locations") and bb["locations"].has(target_name):
 					var raw_target: Vector2 = bb["locations"][target_name]
 					var resolved_target: Vector2 = raw_target
@@ -175,12 +170,13 @@ class ActExecutePlan extends Core.Task:
 						resolved_target = nav_closest
 					var temp_key = "nav_target_" + str(Time.get_ticks_msec()) + "_" + str(randi())
 					bb[temp_key] = resolved_target
-					node.target_key = temp_key
+					return Act.ActNavigate.new(temp_key)
 				elif target_name == "customer":
-					node.target_key = "target_customer"
+					# Construct with the semantic key so customer arrival uses the
+					# table-edge delivery radius instead of ordinary location arrival.
+					return Act.ActNavigate.new("target_customer")
 				else:
 					return null
-				return node
 				
 			"pick":
 				var item = params.get("item", "unknown_item")
@@ -209,29 +205,10 @@ func _ready() -> void:
 	# Configure Navigation Agent
 	agent.set_navigation_map(get_world_2d().navigation_map)
 	agent.navigation_layers = 1
-	agent.avoidance_enabled = true
+	agent.avoidance_enabled = false
 	agent.max_speed = move_speed
-	agent.radius = 10.0
-	# Avoid over-reacting to far-away agents, which can skew local steering.
-	agent.neighbor_distance = 120.0
-	agent.time_horizon = 1.0
 	agent.debug_enabled = false
-	
-	if agent.avoidance_enabled and not agent.velocity_computed.is_connected(_on_agent_velocity_computed):
-		agent.velocity_computed.connect(_on_agent_velocity_computed)
 	await _wait_for_nav_sync(agent.get_navigation_map(), 120)
-
-	# Dynamic RayCast creation for BT Avoidance
-	if not has_node("RayCast2D"):
-		var r = RayCast2D.new()
-		r.name = "RayCast2D"
-		r.enabled = true
-		r.target_position = Vector2(0, 30) # Default
-		r.collision_mask = 1 # World/Physics layer
-		add_child(r)
-		ray = r
-	else:
-		ray = get_node("RayCast2D")
 
 	var help_mgr = _help_manager()
 	if help_mgr:
@@ -298,6 +275,9 @@ func _physics_process(dt: float) -> void:
 func _check_episode_completion() -> void:
 	var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
 	_constraint_input = _collect_constraint_input()
+	# Strong task binding means an item must disappear as soon as its task is no
+	# longer executable, regardless of remaining inventory capacity.
+	_clear_invalid_bound_inventory_items()
 
 	if _trial_stationary_pause:
 		bt_runner.bb["planned_actions"] = []
@@ -349,7 +329,10 @@ func _check_episode_completion() -> void:
 	# If BT reported failure for this step, never advance step state.
 	if bool(bt_runner.bb.get("last_plan_failed", false)):
 		bt_runner.bb["last_plan_failed"] = false
-		_handle_step_plan_failure()
+		bt_runner.bb.erase("help_reason")
+		bt_runner.bb.erase("help_stuck_position")
+		bt_runner.bb.erase("help_evasion_attempts")
+		bt_runner.bb.erase("action_failure_reason")
 		_active_step_started = false
 		return
 
@@ -480,29 +463,12 @@ func _try_acquire_or_activate_robot_work() -> void:
 		return
 	var assigned_tasks := _get_robot_assigned_food_tasks()
 	if inventory != null and inventory.is_full() and not inventory.items.is_empty():
-		if assigned_tasks.is_empty():
-			if _clear_invalid_bound_inventory_items():
-				assigned_tasks = _get_robot_assigned_food_tasks()
-			if inventory != null and inventory.is_full() and not inventory.items.is_empty() and assigned_tasks.is_empty():
-				return
-	if assigned_tasks.is_empty():
-		_try_claim_next_task()
-		return
-	if inventory != null and inventory.is_full() and not inventory.items.is_empty():
+		# A full robot inventory only resumes work through a currently deliverable task.
 		if _try_activate_delivery_task():
 			return
-		if _try_activate_pickup_task():
-			return
-		if _clear_invalid_bound_inventory_items():
-			if _try_activate_delivery_task():
-				return
-			if _try_activate_pickup_task():
-				return
-		if _should_continue_collecting_orders():
-			_try_claim_next_task()
-			return
-		if _try_activate_take_order_task():
-			return
+		return
+	if assigned_tasks.is_empty():
+		_try_claim_next_task()
 		return
 	if _should_continue_collecting_orders():
 		_try_claim_next_task()
@@ -791,7 +757,6 @@ func _plan_current_task_step() -> void:
 	_active_step_started = false
 	var step_key := "%s|%s" % [_active_task_id, _active_task_step]
 	if step_key != _last_debug_step_key:
-		_reset_step_navigation_recovery()
 		_last_debug_step_key = step_key
 		_log_runtime_debug_event("robot_step_changed")
 	if _active_task_step == "":
@@ -955,7 +920,6 @@ func _clear_current_task_runtime() -> void:
 	_help_item_needed = ""
 	_active_help_request_id = ""
 	_last_debug_step_key = ""
-	_reset_step_navigation_recovery()
 	_trial_handoff_armed_task_id = ""
 	_trial_handoff_pending_task_id = ""
 	_trial_handoff_item_needed = ""
@@ -970,36 +934,6 @@ func _resume_robot_after_help_decline() -> void:
 	_waiting_for_help = false
 	if _active_task_id != "":
 		_plan_current_task_step()
-
-func _handle_step_plan_failure() -> void:
-	var failure_reason := str(bt_runner.bb.get("help_reason", "")).strip_edges()
-	if failure_reason == "too_many_evasions":
-		_step_navigation_failure_count += 1
-		if _step_navigation_failure_count >= 2:
-			_set_soft_pass_through_people(true)
-	else:
-		_reset_step_navigation_recovery()
-	bt_runner.bb.erase("help_reason")
-	bt_runner.bb.erase("help_stuck_position")
-	bt_runner.bb.erase("help_evasion_attempts")
-	bt_runner.bb.erase("action_failure_reason")
-
-func _reset_step_navigation_recovery() -> void:
-	_step_navigation_failure_count = 0
-	_set_soft_pass_through_people(false)
-
-func _set_soft_pass_through_people(active: bool) -> void:
-	if _soft_pass_through_people == active:
-		return
-	_soft_pass_through_people = active
-	if agent == null:
-		return
-	agent.avoidance_enabled = not active
-	if not active and not agent.velocity_computed.is_connected(_on_agent_velocity_computed):
-		agent.velocity_computed.connect(_on_agent_velocity_computed)
-
-func should_soft_pass_through_people() -> bool:
-	return _soft_pass_through_people
 
 func _find_inventory_item_index_for_task(task_id: String, item_name: String) -> int:
 	if inventory == null:
@@ -1835,21 +1769,6 @@ func _on_help_request_resolved(request: Dictionary) -> void:
 	var req_id = str(request.get("id", ""))
 	if _active_help_request_id == req_id:
 		_active_help_request_id = ""
-
-func _on_agent_velocity_computed(safe_velocity: Vector2) -> void:
-	if _waiting_for_help:
-		_moving = false
-		velocity = Vector2.ZERO
-		move_and_slide()
-		return
-
-	if safe_velocity.length() < 0.1:
-		_moving = false
-		velocity = Vector2.ZERO
-	else:
-		_moving = true
-		velocity = safe_velocity
-	move_and_slide()
 
 func _update_anim(v: Vector2) -> void:
 	var moving := v.length() > 1.0

@@ -187,11 +187,8 @@ class ActNavigate extends Core.Task:
 		var desired_velocity := Vector2.ZERO
 		if has_valid_path and to_next.length() > 1.0:
 			desired_velocity = to_next.normalized() * actor.move_speed
-		if agent.avoidance_enabled:
-			agent.set_velocity(desired_velocity)
-		else:
-			actor.velocity = desired_velocity
-			actor.move_and_slide()
+		actor.velocity = desired_velocity
+		actor.move_and_slide()
 
 		return Core.Status.RUNNING
 
@@ -201,11 +198,7 @@ class ActNavigate extends Core.Task:
 		agent.path_desired_distance = 12.0
 		agent.target_desired_distance = 10.0
 		agent.max_speed = actor.move_speed
-		var soft_pass := actor != null and actor.has_method("should_soft_pass_through_people") and bool(actor.call("should_soft_pass_through_people"))
-		agent.avoidance_enabled = not soft_pass
-		agent.radius = 10.0
-		agent.neighbor_distance = 120.0
-		agent.time_horizon = 1.0
+		agent.avoidance_enabled = false
 		agent.target_position = target
 
 
@@ -220,9 +213,7 @@ class ActPickItem extends Core.Task:
 			BT_Actions._emit_runtime_debug(actor, "pickup_started", {
 				"item_name": str(bb.get("item_name", "Unknown Item"))
 			})
-			var agent = actor.get_node_or_null("NavigationAgent2D")
-			if agent:
-				agent.set_velocity(Vector2.ZERO)
+			actor.velocity = Vector2.ZERO
 			return Core.Status.RUNNING
 
 		if BT_Actions._gameplay_now_ms(actor) - _start_time < _duration:
@@ -293,9 +284,7 @@ class ActDropItem extends Core.Task:
 			_start_time = BT_Actions._gameplay_now_ms(actor)
 			actor.speak("Delivering order...")
 			BT_Actions._emit_runtime_debug(actor, "delivery_started")
-			var agent = actor.get_node_or_null("NavigationAgent2D")
-			if agent:
-				agent.set_velocity(Vector2.ZERO)
+			actor.velocity = Vector2.ZERO
 			return Core.Status.RUNNING
 
 		if BT_Actions._gameplay_now_ms(actor) - _start_time < _duration:
