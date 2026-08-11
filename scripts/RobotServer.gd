@@ -41,8 +41,7 @@ const DELEGATION_SCENARIO_WORKLOAD_OVERLOAD := "workload_overload"
 const DELEGATION_SCENARIO_DEADLINE_PRESSURE := "deadline_pressure"
 const DELEGATION_SCENARIO_TRIAL_TUTORIAL := "trial_tutorial"
 const CHARGING_MARKER := "RS1"
-const IDLE_WAIT_MARKER := "RG4"
-const TRIAL_WAIT_MARKER := "RB1"
+const ROBOT_BASE_MARKER := "RB1"
 const TRIAL_HANDOFF_WAIT_DISTANCE := 8.0
 const EMERGENCY_RECHARGE_RESUME_LEVEL := 55.0
 const EMERGENCY_HANDOFF_APPROACH_DISTANCE := 120.0
@@ -171,10 +170,6 @@ class ActExecutePlan extends Core.Task:
 					var temp_key = "nav_target_" + str(Time.get_ticks_msec()) + "_" + str(randi())
 					bb[temp_key] = resolved_target
 					return Act.ActNavigate.new(temp_key)
-				elif target_name == "customer":
-					# Construct with the semantic key so customer arrival uses the
-					# table-edge delivery radius instead of ordinary location arrival.
-					return Act.ActNavigate.new("target_customer")
 				else:
 					return null
 				
@@ -499,10 +494,8 @@ func _try_claim_next_task() -> void:
 			else:
 				bt_runner.bb["planned_actions"] = []
 			return
-		if not _is_in_dining_side():
-			var locations: Dictionary = bt_runner.bb.get("locations", {})
-			if locations.has(IDLE_WAIT_MARKER):
-				_plan_navigate_to_location(IDLE_WAIT_MARKER)
+		if not _is_near_robot_base():
+			_plan_navigate_to_location(ROBOT_BASE_MARKER)
 		return
 	# Pending work exists: in conserve/normal we should still serve orders.
 	_idle_charge_cycle_complete = false
@@ -776,30 +769,13 @@ func _plan_current_task_step() -> void:
 			pass
 
 func _plan_take_order_step() -> void:
-	var customer := bt_runner.bb.get("target_customer", null) as Node2D
-	if customer == null:
+	var marker_name := _active_task_service_marker_name()
+	if marker_name == "":
 		return
-
-	var serve_poses = get_tree().get_nodes_in_group("serveposes")
-	var nearest_pose: Node2D = null
-	var min_dist := INF
-	for pose in serve_poses:
-		if not (pose is Node2D):
-			continue
-		var d = pose.global_position.distance_to(customer.global_position)
-		if d < min_dist:
-			min_dist = d
-			nearest_pose = pose
-
-	if nearest_pose:
-		var locations: Dictionary = bt_runner.bb.get("locations", {})
-		if not locations.has(nearest_pose.name):
-			locations[nearest_pose.name] = nearest_pose.global_position
-			bt_runner.bb["locations"] = locations
-		_set_step_plan([
-			{"action": "navigate", "params": {"target": nearest_pose.name}}
-		])
-		speak("I'll take your order now.")
+	_set_step_plan([
+		{"action": "navigate", "params": {"target": marker_name}}
+	])
+	speak("I'll take your order now.")
 
 func _plan_pickup_step() -> void:
 	if _consume_existing_inventory_for_active_pickup():
@@ -844,12 +820,33 @@ func _consume_existing_inventory_for_active_pickup() -> bool:
 	return true
 
 func _plan_deliver_step() -> void:
+	var marker_name := _active_task_service_marker_name()
+	if marker_name == "":
+		return
 	var actions := [
-		{"action": "navigate", "params": {"target": "customer"}},
+		{"action": "navigate", "params": {"target": marker_name}},
 		{"action": "drop", "params": {}}
 	]
 	_set_step_plan(actions)
 	speak("Delivering now.")
+
+func _active_task_service_marker_name() -> String:
+	if _active_task_id == "":
+		return ""
+	var board := _task_board()
+	if board == null or not board.has_method("get_task"):
+		return ""
+	var task: Dictionary = board.get_task(_active_task_id)
+	var payload: Dictionary = task.get("payload", {})
+	var seat := str(payload.get("seat", "")).strip_edges().to_lower()
+	if not seat.begins_with("seat"):
+		push_error("Robot task is missing a valid seat marker: " + _active_task_id)
+		return ""
+	var marker_name := "RG" + seat.substr(4)
+	if not bt_runner.bb.get("locations", {}).has(marker_name):
+		push_error("Robot service marker is missing: " + marker_name)
+		return ""
+	return marker_name
 
 func _on_active_step_finished() -> void:
 	var board = _task_board()
@@ -1457,6 +1454,12 @@ func _is_near_recharge_station() -> bool:
 	# Navigation arrival often stops around 40-50px from exact marker.
 	return global_position.distance_to(station) <= 60.0
 
+func _is_near_robot_base() -> bool:
+	var base = bt_runner.bb.get("locations", {}).get(ROBOT_BASE_MARKER, Vector2.ZERO)
+	if base == Vector2.ZERO:
+		return false
+	return global_position.distance_to(base) <= 60.0
+
 func _battery_is_full_enough() -> bool:
 	return battery_level >= battery_capacity - 0.5
 
@@ -1868,7 +1871,7 @@ func set_trial_stationary_pause(paused: bool) -> void:
 
 func _trial_handoff_wait_position() -> Vector2:
 	var locations: Dictionary = bt_runner.bb.get("locations", {})
-	var marker_pos = locations.get(TRIAL_WAIT_MARKER, null)
+	var marker_pos = locations.get(ROBOT_BASE_MARKER, null)
 	if marker_pos is Vector2:
 		return marker_pos
 	return global_position
@@ -1877,7 +1880,7 @@ func _is_at_trial_handoff_wait_point() -> bool:
 	return global_position.distance_to(_trial_handoff_wait_position()) <= TRIAL_HANDOFF_WAIT_DISTANCE
 
 func _plan_trial_handoff_wait_position() -> void:
-	_plan_navigate_to_location(TRIAL_WAIT_MARKER)
+	_plan_navigate_to_location(ROBOT_BASE_MARKER)
 
 func snap_to_trial_wait_marker_and_pause() -> void:
 	var target := _trial_handoff_wait_position()

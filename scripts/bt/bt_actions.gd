@@ -23,12 +23,7 @@ class ActNavigate extends Core.Task:
 	var _arrival_time: int = 0
 	var _arrival_wait: int = 800
 
-	var _is_customer_target: bool = false
-	var _is_player_target: bool = false
 	const ARRIVAL_DIST_NORMAL := 50.0
-	const ARRIVAL_DIST_CUSTOMER := 250.0
-	const ARRIVAL_DIST_PLAYER := 90.0
-	const ARRIVAL_DIST_STUCK := 300.0
 
 	var _last_pos: Vector2 = Vector2.ZERO
 	var _last_pos_time: int = 0
@@ -40,8 +35,6 @@ class ActNavigate extends Core.Task:
 
 	func _init(key: String = "target_pos"):
 		target_key = key
-		_is_customer_target = (key == "target_customer")
-		_is_player_target = (key == "player_target")
 
 	func tick(bb: Dictionary, actor: Node) -> int:
 		var agent := actor.get_node_or_null("NavigationAgent2D") as NavigationAgent2D
@@ -84,17 +77,8 @@ class ActNavigate extends Core.Task:
 				"robot_target_y": _final_target.y
 			})
 
-		if target_key == "target_customer" or target_key == "player_target":
-			_set_agent_target(agent, actor, _final_target)
-
 		var dist_to_target: float = actor.global_position.distance_to(_final_target)
-		var arrival_threshold: float = ARRIVAL_DIST_NORMAL
-		if _is_customer_target:
-			arrival_threshold = ARRIVAL_DIST_CUSTOMER
-		elif _is_player_target:
-			arrival_threshold = ARRIVAL_DIST_PLAYER
-
-		if dist_to_target <= arrival_threshold:
+		if dist_to_target <= ARRIVAL_DIST_NORMAL:
 			if _arrival_time == 0:
 				_arrival_time = BT_Actions._gameplay_now_ms(actor)
 				actor.velocity = Vector2.ZERO
@@ -116,16 +100,6 @@ class ActNavigate extends Core.Task:
 			if moved_dist < 2.0:
 				_stuck_duration_ms += 200
 				_total_stuck_time_ms += 200
-				if _total_stuck_time_ms > 2000:
-					var close_enough: float = ARRIVAL_DIST_NORMAL
-					if _is_customer_target:
-						close_enough = ARRIVAL_DIST_STUCK
-					elif _is_player_target:
-						close_enough = ARRIVAL_DIST_PLAYER
-					if dist_to_target <= close_enough:
-						actor.velocity = Vector2.ZERO
-						actor.move_and_slide()
-						return Core.Status.SUCCESS
 
 				if _stuck_duration_ms >= 800:
 					_stuck_duration_ms = 0

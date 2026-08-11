@@ -18018,28 +18018,28 @@ position = Vector2(312, -382)
 [node name="RB1" type="Marker2D" parent="LocationMarkers"]
 position = Vector2(-100, -42)
 
-[node name="RG1" type="Marker2D" parent="LocationMarkers" unique_id=1200103891 groups=["serveposes"]]
+[node name="RG2" type="Marker2D" parent="LocationMarkers" unique_id=1200103891]
 position = Vector2(-153, 78)
 
-[node name="RG2" type="Marker2D" parent="LocationMarkers" unique_id=697369371 groups=["serveposes"]]
+[node name="RG5" type="Marker2D" parent="LocationMarkers" unique_id=697369371]
 position = Vector2(407, 237)
 
-[node name="RG3" type="Marker2D" parent="LocationMarkers" unique_id=1293931548 groups=["serveposes"]]
+[node name="RG4" type="Marker2D" parent="LocationMarkers" unique_id=1293931548]
 position = Vector2(-42, 233)
 
-[node name="RG4" type="Marker2D" parent="LocationMarkers" unique_id=1625688190 groups=["serveposes"]]
+[node name="RG3" type="Marker2D" parent="LocationMarkers" unique_id=1625688190]
 position = Vector2(-42, 74)
 
-[node name="RG5" type="Marker2D" parent="LocationMarkers" unique_id=1830778908 groups=["serveposes"]]
+[node name="RG6" type="Marker2D" parent="LocationMarkers" unique_id=1830778908]
 position = Vector2(407, 60)
 
-[node name="RG6" type="Marker2D" parent="LocationMarkers" unique_id=13742502 groups=["serveposes"]]
+[node name="RG1" type="Marker2D" parent="LocationMarkers" unique_id=13742502]
 position = Vector2(-153, 237)
 
-[node name="RG7" type="Marker2D" parent="LocationMarkers" unique_id=1136215750 groups=["serveposes"]]
+[node name="RG7" type="Marker2D" parent="LocationMarkers" unique_id=1136215750]
 position = Vector2(424, -104)
 
-[node name="RG8" type="Marker2D" parent="LocationMarkers" unique_id=1141305820 groups=["serveposes"]]
+[node name="RG8" type="Marker2D" parent="LocationMarkers" unique_id=1141305820]
 position = Vector2(-26, -104)
 
 [node name="hotdog" type="Marker2D" parent="LocationMarkers" unique_id=1798349864 groups=["items"]]
