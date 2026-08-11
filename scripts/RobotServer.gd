@@ -37,6 +37,7 @@ const STEP_DELIVER_AND_SERVE := "DELIVER_AND_SERVE"
 const TASK_STATE_IN_PROGRESS := "in_progress"
 const TASK_STATE_COMPLETED := "completed"
 const TASK_STATE_FAILED := "failed"
+const OVERLOAD_HANDOFF_COOLDOWN_MS := 10_000
 const DELEGATION_SCENARIO_BATTERY_PRESSURE := "battery_pressure"
 const DELEGATION_SCENARIO_WORKLOAD_OVERLOAD := "workload_overload"
 const DELEGATION_SCENARIO_DEADLINE_PRESSURE := "deadline_pressure"
@@ -53,6 +54,7 @@ var _active_task_step: String = ""
 var _active_step_started: bool = false
 var _last_replan_ms: int = 0
 var _pending_overload_handoff_task_id: String = ""
+var _overload_handoff_cooldown_until_ms: int = 0
 
 # ---------- Unified Constraints ----------
 const BATTERY_MODE_NORMAL := "normal"
@@ -560,6 +562,19 @@ func _start_claimed_task(task: Dictionary) -> void:
 func _robot_handoff_threshold_tasks() -> int:
 	return 4
 
+func _overload_handoff_cooldown_active() -> bool:
+	return _gameplay_now_ms() < _overload_handoff_cooldown_until_ms
+
+func _arm_overload_handoff_if_needed() -> void:
+	if _active_task_id == "":
+		return
+	if _overload_handoff_cooldown_active():
+		return
+	var assigned := _get_robot_assigned_food_tasks()
+	if _effective_workload_task_count(assigned) < _robot_handoff_threshold_tasks():
+		return
+	_pending_overload_handoff_task_id = _active_task_id
+
 func _activate_task_context(task: Dictionary) -> bool:
 	_active_task_id = str(task.get("id", ""))
 	_active_task_step = ""
@@ -872,6 +887,7 @@ func _on_active_step_finished() -> void:
 		var customer: Node = bt_runner.bb.get("target_customer", null)
 		if customer != null and customer.has_method("on_food_order_taken"):
 			customer.call("on_food_order_taken")
+		_arm_overload_handoff_if_needed()
 		if _should_continue_collecting_orders():
 			_clear_current_task_runtime()
 			return
@@ -1203,6 +1219,9 @@ func _tick_overload_handoff_delegation() -> bool:
 		return false
 	if _pending_overload_handoff_task_id == "" or _pending_overload_handoff_task_id != _active_task_id:
 		return false
+	if _overload_handoff_cooldown_active():
+		_pending_overload_handoff_task_id = ""
+		return false
 	if _is_task_declined_for_scenario(_active_task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD):
 		# Player refused this request episode; continue task execution.
 		_pending_overload_handoff_task_id = ""
@@ -1257,6 +1276,8 @@ func _tick_overload_handoff_delegation() -> bool:
 		"cooldown_ms": 4000,
 		"urgency": _estimate_help_urgency()
 	})
+	_overload_handoff_cooldown_until_ms = _gameplay_now_ms() + OVERLOAD_HANDOFF_COOLDOWN_MS
+	_pending_overload_handoff_task_id = ""
 	_waiting_for_help = true
 	speak("Task load is high. Please take over this order.")
 	return true
