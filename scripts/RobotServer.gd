@@ -44,6 +44,7 @@ const DELEGATION_SCENARIO_DEADLINE_PRESSURE := "deadline_pressure"
 const DELEGATION_SCENARIO_TRIAL_TUTORIAL := "trial_tutorial"
 const CHARGING_MARKER := "RS1"
 const IDLE_WAIT_MARKER := "RG4"
+const TRIAL_WAIT_MARKER := "RB1"
 const TRIAL_HANDOFF_WAIT_DISTANCE := 8.0
 const EMERGENCY_RECHARGE_RESUME_LEVEL := 55.0
 const EMERGENCY_HANDOFF_APPROACH_DISTANCE := 120.0
@@ -85,7 +86,6 @@ var _trial_handoff_pending_task_id: String = ""
 var _trial_handoff_item_needed: String = ""
 var _trial_stationary_pause: bool = false
 var _trial_handoff_release_requested: bool = false
-var _trial_handoff_wait_position_cached: Vector2 = Vector2.ZERO
 var _last_debug_step_key: String = ""
 var _step_navigation_failure_count: int = 0
 var _soft_pass_through_people: bool = false
@@ -174,7 +174,6 @@ class ActExecutePlan extends Core.Task:
 
 func _ready() -> void:
 	add_to_group("robot")
-	_trial_handoff_wait_position_cached = global_position
 	
 	if not has_node("Inventory"):
 		inventory = InventoryScript.new()
@@ -200,9 +199,6 @@ func _ready() -> void:
 	if agent.avoidance_enabled and not agent.velocity_computed.is_connected(_on_agent_velocity_computed):
 		agent.velocity_computed.connect(_on_agent_velocity_computed)
 	await _wait_for_nav_sync(agent.get_navigation_map(), 120)
-	var nav_map: RID = get_world_2d().navigation_map
-	if nav_map.is_valid():
-		_trial_handoff_wait_position_cached = NavigationServer2D.map_get_closest_point(nav_map, _trial_handoff_wait_position_cached)
 
 	# Dynamic RayCast creation for BT Avoidance
 	if not has_node("RayCast2D"):
@@ -1912,10 +1908,26 @@ func set_trial_stationary_pause(paused: bool) -> void:
 		move_and_slide()
 
 func _trial_handoff_wait_position() -> Vector2:
-	return _trial_handoff_wait_position_cached
+	var locations: Dictionary = bt_runner.bb.get("locations", {})
+	var marker_pos = locations.get(TRIAL_WAIT_MARKER, null)
+	if marker_pos is Vector2:
+		return marker_pos
+	return global_position
 
 func _is_at_trial_handoff_wait_point() -> bool:
 	return global_position.distance_to(_trial_handoff_wait_position()) <= TRIAL_HANDOFF_WAIT_DISTANCE
 
 func _plan_trial_handoff_wait_position() -> void:
-	_plan_navigate_to_position(_trial_handoff_wait_position(), "trial_wait")
+	_plan_navigate_to_location(TRIAL_WAIT_MARKER)
+
+func snap_to_trial_wait_marker_and_pause() -> void:
+	var target := _trial_handoff_wait_position()
+	global_position = target
+	bt_runner.bb["planned_actions"] = []
+	_active_step_started = false
+	_trial_stationary_pause = true
+	if agent != null:
+		agent.target_position = target
+		agent.set_velocity(Vector2.ZERO)
+	velocity = Vector2.ZERO
+	move_and_slide()

@@ -18015,6 +18015,9 @@ position = Vector2(-73, 357)
 [node name="RS1" type="Marker2D" parent="LocationMarkers" unique_id=1480414595 groups=["spawn"]]
 position = Vector2(312, -382)
 
+[node name="RB1" type="Marker2D" parent="LocationMarkers"]
+position = Vector2(-100, -42)
+
 [node name="RG1" type="Marker2D" parent="LocationMarkers" unique_id=1200103891 groups=["serveposes"]]
 position = Vector2(-153, 78)
 

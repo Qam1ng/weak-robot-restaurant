@@ -2632,6 +2632,9 @@ func _finish_trial_session(success: bool) -> void:
 		_trial_timeout_timer.stop()
 	_hide_trial_guide()
 	_reset_trial_world_state()
+	var robot = _trial_robot()
+	if robot != null and robot.has_method("snap_to_trial_wait_marker_and_pause"):
+		robot.call("snap_to_trial_wait_marker_and_pause")
 	_refresh_day_phase_label()
 	call_deferred("_show_trial_completion_prompt", success)
 
