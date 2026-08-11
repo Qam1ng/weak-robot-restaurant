@@ -138,6 +138,7 @@ var _customer_history_page: int = 0
 var _pending_day_notice: int = 0
 var _initial_day_notice_shown: bool = false
 var _formal_session_started: bool = false
+var _participant_profile_logged: bool = false
 var _trial_session_active: bool = false
 var _trial_step: String = ""
 var _trial_customer: Node2D = null
@@ -2046,9 +2047,6 @@ func _show_tipi_result() -> void:
 	var profile = get_node_or_null("/root/PlayerProfile")
 	if profile and profile.has_method("set_tipi"):
 		profile.set_tipi(_tipi_responses.duplicate(true), _tipi_questions.size())
-		var logger = get_node_or_null("/root/EpisodeLogger")
-		if logger and logger.has_method("log_participant_profile") and profile.has_method("get_profile"):
-			logger.log_participant_profile(profile.get_profile())
 	if _survey_nickname_input:
 		_survey_nickname_input.hide()
 
@@ -2089,9 +2087,6 @@ func _finish_survey_and_start() -> void:
 		var profile = get_node_or_null("/root/PlayerProfile")
 		if profile and profile.has_method("set_nickname"):
 			profile.set_nickname(nickname)
-			var logger = get_node_or_null("/root/EpisodeLogger")
-			if logger and logger.has_method("log_participant_profile") and profile.has_method("get_profile"):
-				logger.log_participant_profile(profile.get_profile())
 		_begin_tipi_questions()
 		return
 	survey_panel.hide()
@@ -2656,6 +2651,7 @@ func _show_trial_completion_prompt(success: bool) -> void:
 		_begin_formal_session()
 
 func _begin_formal_session() -> void:
+	_log_participant_profile_for_formal_session()
 	_formal_session_started = true
 	_initial_day_notice_shown = false
 	_pending_day_notice = 1
@@ -2681,6 +2677,18 @@ func _begin_formal_session() -> void:
 		tutorial_toggle_button.show()
 	_refresh_day_phase_label()
 	_show_pending_day_notice()
+
+func _log_participant_profile_for_formal_session() -> void:
+	if _participant_profile_logged:
+		return
+	var profile = get_node_or_null("/root/PlayerProfile")
+	var logger = get_node_or_null("/root/EpisodeLogger")
+	if profile == null or logger == null:
+		return
+	if not profile.has_method("get_profile") or not logger.has_method("log_participant_profile"):
+		return
+	logger.log_participant_profile(profile.get_profile())
+	_participant_profile_logged = true
 
 func _reset_trial_world_state() -> void:
 	_clear_trial_ui_state()
