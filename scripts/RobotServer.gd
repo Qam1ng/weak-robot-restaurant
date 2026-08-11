@@ -100,44 +100,65 @@ func _has_property(obj: Object, prop_name: String) -> bool:
 # Execute actions from "planned_actions" queue one by one
 class ActExecutePlan extends Core.Task:
 	var current_node: Core.Task = null
+	var current_action_signature: String = ""
 	
 	func tick(bb: Dictionary, actor: Node) -> int:
 		if not bb.has("planned_actions") or bb.planned_actions.is_empty():
+			current_node = null
+			current_action_signature = ""
 			return Core.Status.FAILURE
+
+		var action_data = bb.planned_actions[0]
+		var next_signature := _action_signature(action_data)
+		var action_name := str(action_data.get("action", ""))
+		if current_node != null and current_action_signature != next_signature:
+			current_node = null
+			current_action_signature = ""
 			
 		if current_node == null:
-			var action_data = bb.planned_actions[0]
-			var action_name = action_data.get("action")
 			var params = action_data.get("params", {})
 			current_node = _create_action_node(action_name, params, bb, actor)
+			current_action_signature = next_signature
 			var logger = actor.get_node_or_null("/root/EpisodeLogger")
 			if logger:
 				logger.log_event("action_start", {"action": action_name, "params": params})
 			
 			if not current_node:
+				current_action_signature = ""
 				bb.planned_actions.pop_front()
 				return Core.Status.FAILURE
 		
 		var status = current_node.tick(bb, actor)
 		
 		if status == Core.Status.SUCCESS:
-			var completed_action = bb.planned_actions[0].get("action")
 			var logger = actor.get_node_or_null("/root/EpisodeLogger")
 			if logger:
-				logger.log_event("action_complete", {"action": completed_action, "success": true})
+				logger.log_event("action_complete", {"action": action_name, "success": true})
 			
-			bb.planned_actions.pop_front()
+			# Actions may synchronously change the plan through game-state signals.
+			# Only remove the action that was actually ticked, never a replacement plan.
+			if bb.has("planned_actions") and not bb.planned_actions.is_empty():
+				var current_front_signature := _action_signature(bb.planned_actions[0])
+				if current_front_signature == next_signature:
+					bb.planned_actions.pop_front()
 			bb["last_plan_failed"] = false
 			current_node = null
+			current_action_signature = ""
 			return Core.Status.RUNNING 
 			
 		elif status == Core.Status.FAILURE:
 			bb["last_plan_failed"] = true
 			bb.erase("planned_actions")
 			current_node = null
+			current_action_signature = ""
 			return Core.Status.FAILURE
 			
 		return Core.Status.RUNNING
+
+	func _action_signature(action_data: Dictionary) -> String:
+		var action_name := str(action_data.get("action", ""))
+		var params = action_data.get("params", {})
+		return JSON.stringify({"action": action_name, "params": params}, "")
 
 	func _create_action_node(name: String, params: Dictionary, bb: Dictionary, actor: Node) -> Core.Task:
 		var Act = preload("res://scripts/bt/bt_actions.gd")
@@ -227,7 +248,6 @@ func _ready() -> void:
 	
 	bt_runner.root = root
 	bt_runner.bb = {
-		"carrying_item": false,
 		"planned_actions": [], # Queue of {action, params}
 		"last_plan_failed": false,
 		"locations": {} # Will be populated immediately
@@ -944,6 +964,13 @@ func _clear_current_task_runtime() -> void:
 		_workload_declined_task_ids.clear()
 		_deadline_declined_task_ids.clear()
 
+func _resume_robot_after_help_decline() -> void:
+	bt_runner.bb["planned_actions"] = []
+	_active_step_started = false
+	_waiting_for_help = false
+	if _active_task_id != "":
+		_plan_current_task_step()
+
 func _handle_step_plan_failure() -> void:
 	var failure_reason := str(bt_runner.bb.get("help_reason", "")).strip_edges()
 	if failure_reason == "too_many_evasions":
@@ -1024,9 +1051,27 @@ func _take_inventory_item_for_active_task() -> Dictionary:
 		return {}
 	var item: Dictionary = inventory.items.pop_at(idx)
 	inventory.emit_signal("inventory_changed", inventory.items)
-	if inventory.items.is_empty():
-		bt_runner.bb["carrying_item"] = false
 	return item
+
+func _restore_inventory_item_for_active_task(item: Dictionary) -> void:
+	if inventory == null or item.is_empty():
+		return
+	inventory.items.append(item)
+	inventory.emit_signal("inventory_changed", inventory.items)
+
+func _can_complete_active_delivery_after_drop() -> bool:
+	if _active_task_id == "":
+		return false
+	var board := _task_board()
+	if board == null or not board.has_method("get_current_step_name"):
+		return false
+	return str(board.get_current_step_name(_active_task_id)) == STEP_DELIVER_AND_SERVE
+
+func _complete_active_delivery_after_drop() -> bool:
+	if not _can_complete_active_delivery_after_drop():
+		return false
+	var board := _task_board()
+	return board.complete_current_step(_active_task_id, STEP_DELIVER_AND_SERVE)
 
 func _release_robot_food_for_task(task_id: String, _reason: String) -> void:
 	if inventory == null or task_id == "":
@@ -1042,8 +1087,6 @@ func _release_robot_food_for_task(task_id: String, _reason: String) -> void:
 	if changed:
 		inventory.items = kept
 		inventory.emit_signal("inventory_changed", inventory.items)
-		if inventory.items.is_empty():
-			bt_runner.bb["carrying_item"] = false
 
 func _clear_invalid_bound_inventory_items() -> bool:
 	if inventory == null or inventory.items.is_empty():
@@ -1075,8 +1118,6 @@ func _clear_invalid_bound_inventory_items() -> bool:
 		return false
 	inventory.items = kept
 	inventory.emit_signal("inventory_changed", inventory.items)
-	if inventory.items.is_empty():
-		bt_runner.bb["carrying_item"] = false
 	return true
 
 func _invalidate_active_help_request(resolution_path: String) -> void:
@@ -1588,13 +1629,15 @@ func _on_help_request_updated(request: Dictionary) -> void:
 		return
 
 	var req_id = str(request.get("id", ""))
+	# A resolved request may be updated later when its task outcome is attached.
+	# That is logging only, not a second player response.
+	if _active_help_request_id == "" or req_id != _active_help_request_id:
+		return
 	var status = str(request.get("status", ""))
 	var final_response = str(request.get("final_response", ""))
 	var payload: Dictionary = request.get("payload", {})
 	var reason := str(payload.get("reason", ""))
 	var task_id := str(payload.get("task_id", ""))
-	_active_help_request_id = req_id
-
 	if status == "accepted":
 		if task_id != "":
 			_clear_task_declined_suppressions(task_id)
@@ -1611,6 +1654,7 @@ func _on_help_request_updated(request: Dictionary) -> void:
 		elif reason == "battery_emergency":
 			_battery_pressure_declined_until_recharge = true
 		set_waiting_for_help(false, "")
+		_resume_robot_after_help_decline()
 		if _battery_mode == BATTERY_MODE_EMERGENCY and not _recharge_override_active:
 			_activate_recharge_override("Battery critical. Recharging now.")
 
@@ -1706,8 +1750,6 @@ func _transfer_item_to_player_for_handoff(payload: Dictionary) -> String:
 	var task_id := str(payload.get("task_id", ""))
 	var preferred := str(payload.get("item_needed", "")).strip_edges()
 	var idx := _find_inventory_item_index_for_task(task_id, preferred)
-	if idx == -1 and preferred != "":
-		idx = inventory.find_item(preferred)
 	if idx == -1:
 		return "missing_item"
 	if idx < 0 or idx >= inventory.items.size():
@@ -1729,8 +1771,6 @@ func _transfer_item_to_player_for_handoff(payload: Dictionary) -> String:
 		inventory.emit_signal("inventory_changed", inventory.items)
 		return "player_full"
 	inventory.emit_signal("inventory_changed", inventory.items)
-	if inventory.items.is_empty():
-		bt_runner.bb["carrying_item"] = false
 	return "ok"
 
 func _is_task_declined_for_scenario(task_id: String, scenario: String) -> bool:

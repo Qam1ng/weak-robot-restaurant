@@ -272,7 +272,6 @@ class ActPickItem extends Core.Task:
 		restore_timer.start()
 
 		inventory.add_item(item_name, atlas, region, item_meta)
-		bb["carrying_item"] = true
 		actor.speak("Got " + item_name + "!")
 		return Core.Status.SUCCESS
 
@@ -307,6 +306,16 @@ class ActDropItem extends Core.Task:
 			bb["action_failure_reason"] = "missing_inventory"
 			BT_Actions._emit_runtime_debug(actor, "delivery_failed", {"event_reason": "missing_inventory"})
 			return Core.Status.FAILURE
+		if not actor.has_method("_can_complete_active_delivery_after_drop") or not actor.call("_can_complete_active_delivery_after_drop"):
+			bb["action_failure_reason"] = "delivery_state_invalid"
+			BT_Actions._emit_runtime_debug(actor, "delivery_failed", {"event_reason": "delivery_state_invalid"})
+			return Core.Status.FAILURE
+
+		var target_customer = bb.get("target_customer")
+		if not target_customer or not target_customer.has_method("receive_item"):
+			bb["action_failure_reason"] = "customer_missing"
+			BT_Actions._emit_runtime_debug(actor, "delivery_failed", {"event_reason": "customer_missing"})
+			return Core.Status.FAILURE
 
 		var item: Dictionary = {}
 		if actor.has_method("_take_inventory_item_for_active_task"):
@@ -316,12 +325,18 @@ class ActDropItem extends Core.Task:
 		if item.is_empty():
 			push_error("ActDropItem: missing bound item for active delivery task.")
 			return Core.Status.FAILURE
-		bb["carrying_item"] = false
+
+		if not bool(target_customer.receive_item(item)):
+			if actor.has_method("_restore_inventory_item_for_active_task"):
+				actor.call("_restore_inventory_item_for_active_task", item)
+			bb["action_failure_reason"] = "customer_cannot_receive_item"
+			BT_Actions._emit_runtime_debug(actor, "delivery_failed", {"event_reason": "customer_cannot_receive_item"})
+			return Core.Status.FAILURE
+		if not actor.call("_complete_active_delivery_after_drop"):
+			push_error("ActDropItem: delivered item but could not complete active delivery task.")
+			return Core.Status.FAILURE
+
 		var item_name := str(item.get("name", "item"))
 		actor.speak("Here's your " + item_name + "! Enjoy!")
-
-		var target_customer = bb.get("target_customer")
-		if target_customer and target_customer.has_method("receive_item"):
-			target_customer.receive_item(item)
 
 		return Core.Status.SUCCESS

@@ -33,6 +33,8 @@ const DEBUG_EVENT_REASONS := {
 	"inventory_full": true,
 	"item_missing": true,
 	"too_far_from_item": true,
+	"delivery_state_invalid": true,
+	"customer_cannot_receive_item": true,
 	"customer_missing": true,
 	"task_deadline_expired": true,
 	"customer_drink_timeout": true,

@@ -181,29 +181,31 @@ func _ready() -> void:
 	_pick_seat_and_go()
 	_setup_order_bubble()
 
-func receive_item(item: Dictionary) -> void:
+func receive_item(item: Dictionary) -> bool:
 	var item_name := str(item.get("name", "unknown")).strip_edges().to_lower()
-	_receive_service_item(item_name, item)
+	return _receive_service_item(item_name, item)
 
-func receive_drink(item_name: String) -> void:
+func receive_drink(item_name: String) -> bool:
 	var item := {
 		"name": item_name,
 		"atlas": null,
 		"region": Rect2i()
 	}
-	_receive_service_item(item_name, item)
+	return _receive_service_item(item_name, item)
 
-func _receive_service_item(item_name: String, item: Dictionary) -> void:
+func _receive_service_item(item_name: String, item: Dictionary) -> bool:
 	if inventory == null or inventory.is_full():
 		print("[Customer] Cannot receive item, inventory full or missing.")
-		return
-	inventory.add_item(item.get("name", item_name), item.get("atlas"), item.get("region"))
+		return false
+	if not inventory.add_item(item.get("name", item_name), item.get("atlas"), item.get("region")):
+		return false
 	print("[Customer] Received item: ", item_name)
 	if item_name == _drink_item:
 		_has_received_drink = true
 	else:
 		_has_received_food = true
-	_try_begin_eating_if_ready()
+		_try_begin_eating_if_ready()
+	return true
 
 func _try_begin_eating_if_ready() -> void:
 	if not _has_received_food:
