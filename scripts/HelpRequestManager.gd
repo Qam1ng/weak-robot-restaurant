@@ -11,14 +11,12 @@ const TYPE_HANDOFF := "HANDOFF"
 const API_ASSIGN_STRATEGY_URL := "https://us-central1-weak-robot-restaurant-web.cloudfunctions.net/apiAssignStrategy"
 
 const STATUS_PENDING := "pending"
-const STATUS_COOLDOWN := "cooldown"
 const STATUS_ACCEPTED := "accepted"
 const STATUS_RESOLVED := "resolved"
 
 const PERSUASION_ENGINE_PATH := "res://scripts/PersuasionEngine.gd"
 
 var _requests_by_id: Dictionary = {}
-var _request_runtime_by_id: Dictionary = {}
 var _order: Array[String] = []
 var _next_id: int = 1
 var _request_index_in_session: int = 0
@@ -34,7 +32,6 @@ func _persuasion_engine():
 
 func reset_all() -> void:
 	_requests_by_id.clear()
-	_request_runtime_by_id.clear()
 	_order.clear()
 	_next_id = 1
 	_request_index_in_session = 0
@@ -55,24 +52,6 @@ func _ready() -> void:
 		if engine and engine.has_method("get_template_records"):
 			logger.log_delegation_templates(engine.get_template_records())
 
-func _process(_dt: float) -> void:
-	var now_ms := _gameplay_now_ms()
-	for request_id in _order:
-		var req: Dictionary = _requests_by_id.get(request_id, {})
-		if req.is_empty():
-			continue
-		if str(req.get("status", "")) != STATUS_COOLDOWN:
-			continue
-		var runtime := _runtime_for(request_id)
-		if now_ms < int(runtime.get("cooldown_until_ms", 0)):
-			continue
-		req["status"] = STATUS_PENDING
-		runtime["cooldown_until_ms"] = 0
-		_request_runtime_by_id[request_id] = runtime
-		_requests_by_id[request_id] = req
-		_log_help_event("cooldown_expired", req)
-		request_updated.emit(_copy(req))
-
 func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary = {}) -> Dictionary:
 	if robot == null or not is_instance_valid(robot):
 		return {}
@@ -82,7 +61,6 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 	_next_id += 1
 	_request_index_in_session += 1
 
-	var cooldown_ms := int(options.get("cooldown_ms", 4000))
 	var urgency := float(options.get("urgency", 0.5))
 	var copied_payload := payload.duplicate(true)
 	var delegation_scenario := str(copied_payload.get("delegation_scenario", "")).strip_edges()
@@ -121,11 +99,6 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 		"request_index_in_session": _request_index_in_session,
 		"experiment": {},
 		"assignment_pending": true
-	}
-
-	_request_runtime_by_id[request_id] = {
-		"cooldown_ms": cooldown_ms,
-		"cooldown_until_ms": 0
 	}
 
 	var context = _build_context(robot, req, options)
@@ -211,7 +184,6 @@ func respond(request_id: String, response: String) -> Dictionary:
 			req["status"] = STATUS_RESOLVED
 			req["final_response"] = RESPONSE_DECLINE
 			req["resolution_path"] = "declined"
-			_request_runtime_by_id.erase(request_id)
 		_:
 			return _copy(req)
 
@@ -237,7 +209,6 @@ func complete_request(request_id: String, resolution_path: String = "cooperative
 		req["final_response"] = RESPONSE_ACCEPT
 	req["resolution_path"] = resolution_path
 	_requests_by_id[request_id] = req
-	_request_runtime_by_id.erase(request_id)
 
 	var copied := _copy(req)
 	print("[HelpRequest] Completed ", request_id, " path=", resolution_path)
@@ -256,35 +227,12 @@ func cancel_request(request_id: String, resolution_path: String = "invalidated")
 	req["status"] = STATUS_RESOLVED
 	req["resolution_path"] = resolution_path
 	_requests_by_id[request_id] = req
-	_request_runtime_by_id.erase(request_id)
 	var copied := _copy(req)
 	_log_help_event("canceled", req)
 	_log_help_event("resolved", req)
 	request_updated.emit(copied)
 	request_resolved.emit(copied)
 	return copied
-
-func requeue_request(request_id: String, cooldown_ms: int = 1500, resolution_note: String = "retry_pending") -> Dictionary:
-	var req: Dictionary = _requests_by_id.get(request_id, {})
-	if req.is_empty():
-		return {}
-	if str(req.get("status", "")) == STATUS_RESOLVED:
-		return _copy(req)
-	var now_ms := _gameplay_now_ms()
-	req["status"] = STATUS_COOLDOWN
-	var runtime := _runtime_for(request_id)
-	runtime["cooldown_until_ms"] = now_ms + maxi(cooldown_ms, 0)
-	_request_runtime_by_id[request_id] = runtime
-	req["resolution_path"] = resolution_note
-	req["final_response"] = ""
-	req["last_response"] = ""
-	req["response_latency_ms"] = 0
-	_requests_by_id[request_id] = req
-	var copied := _copy(req)
-	_log_help_event("requeued", req, {"resolution_note": resolution_note})
-	request_updated.emit(copied)
-	return copied
-
 
 func _copy(req: Dictionary) -> Dictionary:
 	if req.is_empty():
@@ -567,12 +515,6 @@ func _score_delta_for_outcome(order_kind: String, completed: bool) -> int:
 	if completed:
 		return 1 if order_kind == "drink" else 2
 	return -3 if order_kind == "drink" else -6
-
-func _runtime_for(request_id: String) -> Dictionary:
-	return _request_runtime_by_id.get(request_id, {
-		"cooldown_ms": 4000,
-		"cooldown_until_ms": 0
-	}).duplicate(true)
 
 func _build_system_notice(payload: Dictionary) -> String:
 	var reason := str(payload.get("reason", "")).strip_edges()

@@ -642,7 +642,6 @@ func _task_slack_ms(task: Dictionary) -> int:
 func _deadline_handoff_candidate() -> Dictionary:
 	var tasks := _get_robot_assigned_food_tasks()
 	var best: Dictionary = {}
-	var best_transferable := false
 	var best_slack := INF
 	for task in tasks:
 		var task_id := str(task.get("id", ""))
@@ -652,12 +651,20 @@ func _deadline_handoff_candidate() -> Dictionary:
 		if slack <= 0 or slack > DEADLINE_HANDOFF_TRIGGER_MS:
 			continue
 		var step_name := _task_step_name(task)
-		var transferable := step_name == STEP_DELIVER_AND_SERVE and _inventory_has_item_for_task(task)
-		if best.is_empty() or (transferable and not best_transferable) or (transferable == best_transferable and slack < best_slack):
+		var requires_item_handoff := step_name == STEP_DELIVER_AND_SERVE and _inventory_has_item_for_task(task)
+		if requires_item_handoff and _player_inventory_is_full():
+			continue
+		if best.is_empty() or slack < best_slack:
 			best = task
-			best_transferable = transferable
 			best_slack = slack
 	return best
+
+func _player_inventory_is_full() -> bool:
+	var player := _get_primary_player()
+	if player == null:
+		return false
+	var player_inventory = player.get_node_or_null("Inventory")
+	return player_inventory != null and player_inventory.has_method("is_full") and player_inventory.is_full()
 
 func _task_customer_distance(task: Dictionary) -> float:
 	var payload: Dictionary = task.get("payload", {})
@@ -1130,9 +1137,18 @@ func _tick_emergency_delegation() -> bool:
 			if st == "pending" or st == "accepted":
 				_waiting_for_help = true
 				return true
-			if st == "cooldown":
-				_waiting_for_help = false
-				return false
+
+	var board = _task_board()
+	var item_needed := "item"
+	var slack_ms := int(_constraint_input.get("slack_ms", 0))
+	if board and board.has_method("get_task"):
+		var task: Dictionary = board.get_task(_active_task_id)
+		var payload: Dictionary = task.get("payload", {})
+		item_needed = str(payload.get("food_item", "item"))
+	var handoff_mode := _handoff_mode_for_active_task(item_needed)
+	if handoff_mode == "TAKEOVER_ITEM" and _player_inventory_is_full():
+		_activate_recharge_override("Battery critical. Recharging now.")
+		return true
 
 	# Emergency handoff must be in-person: approach player first, then request/popup.
 	var distance_to_player := global_position.distance_to(player.global_position)
@@ -1159,15 +1175,6 @@ func _tick_emergency_delegation() -> bool:
 			return true
 		return false
 
-	var board = _task_board()
-	var item_needed := "item"
-	var slack_ms := int(_constraint_input.get("slack_ms", 0))
-	if board and board.has_method("get_task"):
-		var task: Dictionary = board.get_task(_active_task_id)
-		var payload: Dictionary = task.get("payload", {})
-		item_needed = str(payload.get("food_item", "item"))
-	var handoff_mode := _handoff_mode_for_active_task(item_needed)
-
 	_ensure_help_request({
 		"handoff_mode": handoff_mode,
 		"task_id": _active_task_id,
@@ -1176,7 +1183,6 @@ func _tick_emergency_delegation() -> bool:
 		"slack_ms": slack_ms,
 		"delegation_scenario": DELEGATION_SCENARIO_BATTERY_PRESSURE
 		}, {
-			"cooldown_ms": 2500,
 			"urgency": 1.0
 		})
 	_waiting_for_help = true
@@ -1209,9 +1215,6 @@ func _tick_overload_handoff_delegation() -> bool:
 			if st == "pending" or st == "accepted":
 				_waiting_for_help = true
 				return true
-			if st == "cooldown":
-				_waiting_for_help = false
-				return false
 
 	var distance_to_player := global_position.distance_to(player.global_position)
 	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
@@ -1241,7 +1244,6 @@ func _tick_overload_handoff_delegation() -> bool:
 		"slack_ms": slack_ms,
 		"delegation_scenario": DELEGATION_SCENARIO_WORKLOAD_OVERLOAD
 	}, {
-		"cooldown_ms": 4000,
 		"urgency": _estimate_help_urgency()
 	})
 	_overload_handoff_cooldown_until_ms = _gameplay_now_ms() + OVERLOAD_HANDOFF_COOLDOWN_MS
@@ -1303,7 +1305,6 @@ func _tick_trial_item_handoff() -> bool:
 		"trial_accept_only": true,
 		"trial_force_prompt": true
 	}, {
-		"cooldown_ms": 100000,
 		"urgency": 1.0
 	})
 	if req.is_empty():
@@ -1338,9 +1339,6 @@ func _tick_deadline_handoff_delegation() -> bool:
 			if st == "pending" or st == "accepted":
 				_waiting_for_help = true
 				return true
-			if st == "cooldown":
-				_waiting_for_help = false
-				return false
 
 	var distance_to_player := global_position.distance_to(player.global_position)
 	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
@@ -1371,7 +1369,6 @@ func _tick_deadline_handoff_delegation() -> bool:
 		"slack_ms": slack_ms,
 		"delegation_scenario": DELEGATION_SCENARIO_DEADLINE_PRESSURE
 	}, {
-		"cooldown_ms": 2500,
 		"urgency": 1.0
 	})
 	_waiting_for_help = true
@@ -1504,7 +1501,7 @@ func _tick_recharge_override(has_plan: bool) -> bool:
 			var req: Dictionary = help_mgr.get_request(_active_help_request_id)
 			if not req.is_empty():
 				var req_status := str(req.get("status", ""))
-				if req_status != "resolved" and req_status != "cooldown":
+				if req_status != "resolved":
 					return true
 		_activate_recharge_override("Battery critical. Recharging now.")
 		return true
@@ -1581,8 +1578,6 @@ func _on_help_request_updated(request: Dictionary) -> void:
 		if reason == "battery_emergency":
 			_battery_pressure_declined_until_recharge = false
 		_apply_handoff_accept(request)
-	elif status == "cooldown":
-		set_waiting_for_help(false, "")
 	elif status == "resolved" and final_response == "decline":
 		if reason == "robot_over_threshold_post_take_order" and task_id != "":
 			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD)
@@ -1607,15 +1602,7 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 
 	if mode == "TAKEOVER_ITEM":
 		var transfer_result := _transfer_item_to_player_for_handoff(payload)
-		if transfer_result == "player_full":
-			var help_mgr_retry = _help_manager()
-			if help_mgr_retry and _active_help_request_id != "" and help_mgr_retry.has_method("requeue_request"):
-				help_mgr_retry.requeue_request(_active_help_request_id, 1800, "player_inventory_full")
-			set_waiting_for_help(false, "")
-			_active_help_request_id = ""
-			speak("Your inventory is full. I still have this item.")
-			return
-		elif transfer_result != "ok":
+		if transfer_result != "ok":
 			mode = "TAKEOVER_TASK"
 
 	var updated: Dictionary = {}

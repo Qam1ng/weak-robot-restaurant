@@ -1735,8 +1735,6 @@ func _on_help_request_updated(request: Dictionary) -> void:
 		if _trial_session_active and rid == _trial_handoff_request_id and _trial_step == "await_handoff_accept":
 			_hide_trial_guide()
 		_remove_help_request_card(rid)
-	elif status == "cooldown":
-		_remove_help_request_card(rid)
 	elif status == "pending":
 		_maybe_append_help_system_notice(request)
 		if _has_help_request_card(rid):
