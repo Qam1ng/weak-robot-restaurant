@@ -43,6 +43,8 @@ func _ready() -> void:
 
 	time_manager.period_changed.connect(_on_period_changed)
 	time_manager.day_changed.connect(_on_day_changed)
+	if time_manager.has_signal("run_day_completed"):
+		time_manager.run_day_completed.connect(_on_run_day_completed)
 	time_manager.time_changed.connect(_on_time_changed)
 
 	print("[GameManager] Ready. Time: %s" % time_manager.get_full_time_string())
@@ -112,6 +114,15 @@ func _on_day_changed(day: int) -> void:
 	print("[GameManager] === DAY %d ===" % day)
 	print("[GameManager] Yesterday served: %d customers" % current_day_customers)
 	current_day_customers = 0
+
+func _on_run_day_completed(day: int) -> void:
+	current_state = GameState.CLOSED
+	if customer_spawner:
+		if customer_spawner.has_method("shutdown_immediately"):
+			customer_spawner.shutdown_immediately()
+		elif customer_spawner.has_method("disable"):
+			customer_spawner.disable()
+	print("[GameManager] Run day completed: %d" % day)
 
 func _on_time_changed(_hour: int, _minute: int) -> void:
 	pass

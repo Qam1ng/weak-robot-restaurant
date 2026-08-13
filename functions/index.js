@@ -21,6 +21,10 @@ const STRATEGIES = [
   "social_proof",
   "scarcity",
 ];
+const SESSION_SOURCES = new Set([
+  "qualtrics",
+  "standalone_test",
+]);
 
 setGlobalOptions({
   maxInstances: 10,
@@ -152,17 +156,16 @@ const RUNTIME_DEBUG_EVENT_TYPES = new Set([
 
 const RUNTIME_DEBUG_EVENT_REASONS = new Set([
   "",
-  "too_many_evasions",
+  "navigation_retry_exhausted",
   "no_navigation_path",
   "stuck_retry",
   "missing_inventory",
   "inventory_full",
   "item_missing",
   "too_far_from_item",
-  "empty_inventory",
+  "delivery_state_invalid",
+  "customer_cannot_receive_item",
   "customer_missing",
-  "task_deadline_expired",
-  "customer_drink_timeout",
 ]);
 
 const RUNTIME_DEBUG_ROBOT_STEPS = new Set([
@@ -263,6 +266,12 @@ async function upsertParticipantLog(sessionId, platform, buildVersion, data) {
   const doc = {
     participant_id: participantId,
     session_id: sanitizeText(data.session_id, sessionId),
+    session_source: sanitizeEnumText(
+        data.session_source,
+        SESSION_SOURCES,
+        "standalone_test",
+    ),
+    qualtrics_id: sanitizeText(data.qualtrics_id, ""),
     nickname: sanitizeText(data.nickname, ""),
     platform,
     build_version: buildVersion,
@@ -286,6 +295,11 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
   const doc = {
     participant_id: sanitizeText(data.participant_id, participantId),
     session_id: sanitizeText(data.session_id, sessionId),
+    session_source: sanitizeEnumText(
+        data.session_source,
+        SESSION_SOURCES,
+        "standalone_test",
+    ),
     nickname: sanitizeText(data.nickname, ""),
     episode_id: sanitizeText(data.episode_id, ""),
     request_id: requestId,
@@ -294,7 +308,6 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
     status: sanitizeText(data.status, ""),
     created_at_ms: asNumber(data.created_at_ms, 0),
     task_id: sanitizeText(data.task_id, ""),
-    order_kind: sanitizeText(data.order_kind, ""),
     item_needed: sanitizeText(data.item_needed, ""),
     reason: sanitizeText(data.reason, ""),
     slack_ms: asNumber(data.slack_ms, 0),
@@ -314,10 +327,8 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
     bridge_template_id: sanitizeText(data.bridge_template_id, ""),
     template_id: sanitizeText(data.template_id, ""),
     utterance: sanitizeText(data.utterance, ""),
-    escalation_count: asNumber(data.escalation_count, 0),
     response: sanitizeText(data.response, ""),
     response_latency_ms: asNumber(data.response_latency_ms, -1),
-    final_response: sanitizeText(data.final_response, ""),
     resolution_path: sanitizeText(data.resolution_path, ""),
     task_completed: asBoolean(data.task_completed, false),
     delivery_actor: sanitizeText(data.delivery_actor, ""),
@@ -357,16 +368,46 @@ async function upsertEpisodeLog(sessionId, participantId, data) {
   const doc = {
     participant_id: sanitizeText(data.participant_id, participantId),
     session_id: sanitizeText(data.session_id, sessionId),
+    session_source: sanitizeEnumText(
+        data.session_source,
+        SESSION_SOURCES,
+        "standalone_test",
+    ),
     episode_id: episodeId,
     timestamp: sanitizeText(data.timestamp, ""),
     success: asBoolean(data.success, false),
-    player_helped: asBoolean(data.player_helped, false),
-    help_item: sanitizeText(data.help_item, ""),
     duration_ms: asNumber(data.duration_ms, 0),
     failure_reason: sanitizeText(data.failure_reason, ""),
   };
   await episodeRef.set(doc, {merge: true});
   return {episode_id: episodeId};
+}
+
+async function upsertGameRunLog(sessionId, participantId, data) {
+  const runId = sanitizeText(data.run_id, sessionId);
+  if (runId === "") {
+    throw new Error("missing_run_id");
+  }
+  const runRef = db.collection("game_runs").doc(runId);
+  const doc = {
+    run_id: runId,
+    participant_id: sanitizeText(data.participant_id, participantId),
+    session_id: sanitizeText(data.session_id, sessionId),
+    session_source: sanitizeEnumText(
+        data.session_source,
+        SESSION_SOURCES,
+        "standalone_test",
+    ),
+    run_outcome: sanitizeEnumText(data.run_outcome, new Set([
+      "win",
+      "end_of_day_loss",
+      "score_threshold_loss",
+    ]), ""),
+    final_score: asNumber(data.final_score, 0),
+    created_at: FieldValue.serverTimestamp(),
+  };
+  await runRef.set(doc, {merge: true});
+  return {run_id: runId};
 }
 
 async function upsertApiFailureLog(sessionId, data) {
@@ -378,6 +419,11 @@ async function upsertApiFailureLog(sessionId, data) {
   const doc = {
     failure_id: failureId,
     session_id: sanitizeText(data.session_id, sessionId),
+    session_source: sanitizeEnumText(
+        data.session_source,
+        SESSION_SOURCES,
+        "standalone_test",
+    ),
     episode_id: sanitizeText(data.episode_id, ""),
     request_id: sanitizeText(data.request_id, ""),
     api_name: sanitizeText(data.api_name, ""),
@@ -401,6 +447,11 @@ async function upsertRuntimeDebugEventLog(sessionId, data) {
   const doc = {
     debug_event_id: debugEventId,
     session_id: sanitizeText(data.session_id, sessionId),
+    session_source: sanitizeEnumText(
+        data.session_source,
+        SESSION_SOURCES,
+        "standalone_test",
+    ),
     episode_id: sanitizeText(data.episode_id, ""),
     request_id: sanitizeText(data.request_id, ""),
     timestamp_ms: asNumber(data.timestamp_ms, 0),
@@ -644,6 +695,9 @@ exports.apiLog = onRequest(async (req, res) => {
         break;
       case "episode_upsert":
         result = await upsertEpisodeLog(sessionId, participantId, data);
+        break;
+      case "game_run_upsert":
+        result = await upsertGameRunLog(sessionId, participantId, data);
         break;
       case "template_upsert":
         result = await upsertDelegationTemplate(data);

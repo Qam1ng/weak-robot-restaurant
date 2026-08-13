@@ -23,12 +23,7 @@ class ActNavigate extends Core.Task:
 	var _arrival_time: int = 0
 	var _arrival_wait: int = 800
 
-	var _is_customer_target: bool = false
-	var _is_player_target: bool = false
 	const ARRIVAL_DIST_NORMAL := 50.0
-	const ARRIVAL_DIST_CUSTOMER := 250.0
-	const ARRIVAL_DIST_PLAYER := 90.0
-	const ARRIVAL_DIST_STUCK := 300.0
 
 	var _last_pos: Vector2 = Vector2.ZERO
 	var _last_pos_time: int = 0
@@ -40,8 +35,6 @@ class ActNavigate extends Core.Task:
 
 	func _init(key: String = "target_pos"):
 		target_key = key
-		_is_customer_target = (key == "target_customer")
-		_is_player_target = (key == "player_target")
 
 	func tick(bb: Dictionary, actor: Node) -> int:
 		var agent := actor.get_node_or_null("NavigationAgent2D") as NavigationAgent2D
@@ -84,17 +77,8 @@ class ActNavigate extends Core.Task:
 				"robot_target_y": _final_target.y
 			})
 
-		if target_key == "target_customer" or target_key == "player_target":
-			_set_agent_target(agent, actor, _final_target)
-
 		var dist_to_target: float = actor.global_position.distance_to(_final_target)
-		var arrival_threshold: float = ARRIVAL_DIST_NORMAL
-		if _is_customer_target:
-			arrival_threshold = ARRIVAL_DIST_CUSTOMER
-		elif _is_player_target:
-			arrival_threshold = ARRIVAL_DIST_PLAYER
-
-		if dist_to_target <= arrival_threshold:
+		if dist_to_target <= ARRIVAL_DIST_NORMAL:
 			if _arrival_time == 0:
 				_arrival_time = BT_Actions._gameplay_now_ms(actor)
 				actor.velocity = Vector2.ZERO
@@ -116,16 +100,6 @@ class ActNavigate extends Core.Task:
 			if moved_dist < 2.0:
 				_stuck_duration_ms += 200
 				_total_stuck_time_ms += 200
-				if _total_stuck_time_ms > 2000:
-					var close_enough: float = ARRIVAL_DIST_NORMAL
-					if _is_customer_target:
-						close_enough = ARRIVAL_DIST_STUCK
-					elif _is_player_target:
-						close_enough = ARRIVAL_DIST_PLAYER
-					if dist_to_target <= close_enough:
-						actor.velocity = Vector2.ZERO
-						actor.move_and_slide()
-						return Core.Status.SUCCESS
 
 				if _stuck_duration_ms >= 800:
 					_stuck_duration_ms = 0
@@ -144,12 +118,9 @@ class ActNavigate extends Core.Task:
 					})
 
 				if _retry_count >= MAX_RETRY_ATTEMPTS or _total_stuck_time_ms >= STUCK_TIMEOUT_MS:
-					bb["help_reason"] = "too_many_evasions"
-					bb["help_stuck_position"] = actor.global_position
-					bb["help_evasion_attempts"] = _retry_count
 					print("[ActNavigate][Fail] from=", actor.global_position, " to=", _final_target, " retries=", _retry_count, " stuck_ms=", _total_stuck_time_ms, " path_points=", server_path.size())
 					BT_Actions._emit_runtime_debug(actor, "navigation_failed", {
-						"event_reason": "too_many_evasions" if server_path.size() >= 2 else "no_navigation_path",
+						"event_reason": "navigation_retry_exhausted" if server_path.size() >= 2 else "no_navigation_path",
 						"robot_target_x": _final_target.x,
 						"robot_target_y": _final_target.y,
 						"has_navigation_path": server_path.size() >= 2,
@@ -187,11 +158,8 @@ class ActNavigate extends Core.Task:
 		var desired_velocity := Vector2.ZERO
 		if has_valid_path and to_next.length() > 1.0:
 			desired_velocity = to_next.normalized() * actor.move_speed
-		if agent.avoidance_enabled:
-			agent.set_velocity(desired_velocity)
-		else:
-			actor.velocity = desired_velocity
-			actor.move_and_slide()
+		actor.velocity = desired_velocity
+		actor.move_and_slide()
 
 		return Core.Status.RUNNING
 
@@ -201,11 +169,7 @@ class ActNavigate extends Core.Task:
 		agent.path_desired_distance = 12.0
 		agent.target_desired_distance = 10.0
 		agent.max_speed = actor.move_speed
-		var soft_pass := actor != null and actor.has_method("should_soft_pass_through_people") and bool(actor.call("should_soft_pass_through_people"))
-		agent.avoidance_enabled = not soft_pass
-		agent.radius = 10.0
-		agent.neighbor_distance = 120.0
-		agent.time_horizon = 1.0
+		agent.avoidance_enabled = false
 		agent.target_position = target
 
 
@@ -217,12 +181,8 @@ class ActPickItem extends Core.Task:
 		if _start_time == 0:
 			_start_time = BT_Actions._gameplay_now_ms(actor)
 			actor.speak("Picking up...")
-			BT_Actions._emit_runtime_debug(actor, "pickup_started", {
-				"item_name": str(bb.get("item_name", "Unknown Item"))
-			})
-			var agent = actor.get_node_or_null("NavigationAgent2D")
-			if agent:
-				agent.set_velocity(Vector2.ZERO)
+			BT_Actions._emit_runtime_debug(actor, "pickup_started")
+			actor.velocity = Vector2.ZERO
 			return Core.Status.RUNNING
 
 		if BT_Actions._gameplay_now_ms(actor) - _start_time < _duration:
@@ -233,7 +193,7 @@ class ActPickItem extends Core.Task:
 			var target_pos: Vector2 = bb["locations"][item_name]
 			if actor.global_position.distance_to(target_pos) > 150.0:
 				actor.speak("I'm too far away!")
-				BT_Actions._emit_runtime_debug(actor, "pickup_failed", {"event_reason": "too_far_from_item", "item_name": item_name})
+				BT_Actions._emit_runtime_debug(actor, "pickup_failed", {"event_reason": "too_far_from_item"})
 				return Core.Status.FAILURE
 
 		var inventory = actor.get_node_or_null("Inventory")
@@ -243,13 +203,13 @@ class ActPickItem extends Core.Task:
 		if inventory.is_full():
 			if actor.has_method("_handle_pickup_inventory_full"):
 				actor.call("_handle_pickup_inventory_full", item_name)
-			BT_Actions._emit_runtime_debug(actor, "pickup_failed", {"event_reason": "inventory_full", "item_name": item_name})
+			BT_Actions._emit_runtime_debug(actor, "pickup_failed", {"event_reason": "inventory_full"})
 			return Core.Status.FAILURE
 
 		var item_node = _find_item_in_scene(actor, item_name)
 		if not item_node:
 			actor.speak("I can't find " + item_name + " right now.")
-			BT_Actions._emit_runtime_debug(actor, "pickup_failed", {"event_reason": "item_missing", "item_name": item_name})
+			BT_Actions._emit_runtime_debug(actor, "pickup_failed", {"event_reason": "item_missing"})
 			return Core.Status.FAILURE
 
 		var atlas: Texture2D = null
@@ -272,7 +232,6 @@ class ActPickItem extends Core.Task:
 		restore_timer.start()
 
 		inventory.add_item(item_name, atlas, region, item_meta)
-		bb["carrying_item"] = true
 		actor.speak("Got " + item_name + "!")
 		return Core.Status.SUCCESS
 
@@ -294,9 +253,7 @@ class ActDropItem extends Core.Task:
 			_start_time = BT_Actions._gameplay_now_ms(actor)
 			actor.speak("Delivering order...")
 			BT_Actions._emit_runtime_debug(actor, "delivery_started")
-			var agent = actor.get_node_or_null("NavigationAgent2D")
-			if agent:
-				agent.set_velocity(Vector2.ZERO)
+			actor.velocity = Vector2.ZERO
 			return Core.Status.RUNNING
 
 		if BT_Actions._gameplay_now_ms(actor) - _start_time < _duration:
@@ -307,6 +264,16 @@ class ActDropItem extends Core.Task:
 			bb["action_failure_reason"] = "missing_inventory"
 			BT_Actions._emit_runtime_debug(actor, "delivery_failed", {"event_reason": "missing_inventory"})
 			return Core.Status.FAILURE
+		if not actor.has_method("_can_complete_active_delivery_after_drop") or not actor.call("_can_complete_active_delivery_after_drop"):
+			bb["action_failure_reason"] = "delivery_state_invalid"
+			BT_Actions._emit_runtime_debug(actor, "delivery_failed", {"event_reason": "delivery_state_invalid"})
+			return Core.Status.FAILURE
+
+		var target_customer = bb.get("target_customer")
+		if not target_customer or not target_customer.has_method("receive_item"):
+			bb["action_failure_reason"] = "customer_missing"
+			BT_Actions._emit_runtime_debug(actor, "delivery_failed", {"event_reason": "customer_missing"})
+			return Core.Status.FAILURE
 
 		var item: Dictionary = {}
 		if actor.has_method("_take_inventory_item_for_active_task"):
@@ -314,17 +281,20 @@ class ActDropItem extends Core.Task:
 		else:
 			item = inventory.remove_last()
 		if item.is_empty():
-			actor.speak("Nothing to deliver!")
-			bb["action_failure_reason"] = "empty_inventory"
-			BT_Actions._emit_runtime_debug(actor, "delivery_failed", {"event_reason": "empty_inventory"})
+			push_error("ActDropItem: missing bound item for active delivery task.")
 			return Core.Status.FAILURE
 
-		bb["carrying_item"] = false
+		if not bool(target_customer.receive_item(item)):
+			if actor.has_method("_restore_inventory_item_for_active_task"):
+				actor.call("_restore_inventory_item_for_active_task", item)
+			bb["action_failure_reason"] = "customer_cannot_receive_item"
+			BT_Actions._emit_runtime_debug(actor, "delivery_failed", {"event_reason": "customer_cannot_receive_item"})
+			return Core.Status.FAILURE
+		if not actor.call("_complete_active_delivery_after_drop"):
+			push_error("ActDropItem: delivered item but could not complete active delivery task.")
+			return Core.Status.FAILURE
+
 		var item_name := str(item.get("name", "item"))
 		actor.speak("Here's your " + item_name + "! Enjoy!")
-
-		var target_customer = bb.get("target_customer")
-		if target_customer and target_customer.has_method("receive_item"):
-			target_customer.receive_item(item)
 
 		return Core.Status.SUCCESS

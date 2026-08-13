@@ -70,6 +70,7 @@ func _physics_process(_dt: float) -> void:
 	var vx: float = Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
 	var vy: float = Input.get_action_strength("move_down")  - Input.get_action_strength("move_up")
 	var v: Vector2 = Vector2(vx, vy)
+	_auto_close_inventory_portal_if_moving(v)
 
 	if v.length() > 0.0:
 		velocity = v.normalized() * speed
@@ -80,6 +81,13 @@ func _physics_process(_dt: float) -> void:
 	_update_animation(v)
 	_auto_close_kitchen_pick_popup_if_left_zone()
 	_expire_stale_inventory_items()
+
+func _auto_close_inventory_portal_if_moving(input_dir: Vector2) -> void:
+	if input_dir.is_zero_approx():
+		return
+	var hud := _get_hud()
+	if hud and hud.has_method("is_inventory_portal_visible") and bool(hud.call("is_inventory_portal_visible")):
+		hud.call("hide_inventory_portal")
 
 func _update_animation(input_dir: Vector2) -> void:
 	var moving: bool = input_dir.length() > 0.0

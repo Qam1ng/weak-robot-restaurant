@@ -8,6 +8,8 @@ var _episode_active: bool = false
 var _episode_start_time: int = 0
 var _episode_counter: int = 0
 var _participant_id: String = ""
+var _qualtrics_id: String = ""
+var _session_source: String = "standalone_test"
 var _delegation_templates_logged := false
 var _remote_failure_counter: int = 0
 var _runtime_debug_counter: int = 0
@@ -26,17 +28,16 @@ const DEBUG_EVENT_TYPES := {
 
 const DEBUG_EVENT_REASONS := {
 	"": true,
-	"too_many_evasions": true,
+	"navigation_retry_exhausted": true,
 	"no_navigation_path": true,
 	"stuck_retry": true,
 	"missing_inventory": true,
 	"inventory_full": true,
 	"item_missing": true,
 	"too_far_from_item": true,
-	"empty_inventory": true,
+	"delivery_state_invalid": true,
+	"customer_cannot_receive_item": true,
 	"customer_missing": true,
-	"task_deadline_expired": true,
-	"customer_drink_timeout": true,
 }
 
 const DEBUG_ROBOT_STEPS := {
@@ -61,6 +62,7 @@ const HELP_DIR = "user://data/help_requests/"
 const HELP_JSONL_FILE = "user://data/help_requests/help_requests.jsonl"
 const REPLAY_DIR = "user://data/replay/"
 const REPLAY_JSONL_FILE = "user://data/replay/replay_events.jsonl"
+const PERSUASION_ENGINE_PATH := "res://scripts/PersuasionEngine.gd"
 
 var _session_id: String = ""
 const API_LOG_URL := "https://us-central1-weak-robot-restaurant-web.cloudfunctions.net/apiLog"
@@ -71,6 +73,9 @@ signal episode_ended(episode_data: Dictionary)
 func _ready() -> void:
 	_session_id = _generate_session_id()
 	_participant_id = _session_id
+	_qualtrics_id = _read_qualtrics_id_from_url()
+	_session_source = "qualtrics" if _qualtrics_id != "" else "standalone_test"
+	_log_initial_delegation_templates()
 	if _should_write_local_files():
 		# Ensure data directory exists
 		DirAccess.make_dir_recursive_absolute(DATA_DIR.replace("user://", OS.get_user_data_dir() + "/"))
@@ -86,7 +91,7 @@ func _ensure_csv_header() -> void:
 	if not FileAccess.file_exists(csv_path):
 		var file = FileAccess.open(csv_path, FileAccess.WRITE)
 		if file:
-			file.store_line("episode_id,timestamp,success,player_helped,help_item,duration_ms,failure_reason")
+			file.store_line("episode_id,timestamp,success,duration_ms,failure_reason")
 			file.close()
 
 # ==================== Public API ====================
@@ -110,9 +115,7 @@ func start_episode(_food_item: String, _customer_seat: String, _customer_pos: Ve
 
 		"outcome": {
 			"success": false,
-			"failure_reason": null,
-			"player_helped": false,
-			"help_item": null
+			"failure_reason": null
 		}
 	}
 	
@@ -121,19 +124,6 @@ func start_episode(_food_item: String, _customer_seat: String, _customer_pos: Ve
 	print("[EpisodeLogger] Started episode: ", episode_id)
 	episode_started.emit(episode_id)
 	return episode_id
-
-func log_event(event_type: String, data: Dictionary = {}) -> void:
-	if not _episode_active:
-		return
-
-	match event_type:
-		"player_help":
-			_current_episode["outcome"]["player_helped"] = true
-			if data.has("item_given"):
-				_current_episode["outcome"]["help_item"] = data["item_given"]
-
-func log_position(pos: Vector2) -> void:
-	pass
 
 func end_episode(success: bool, failure_reason: String = "") -> Dictionary:
 	if not _episode_active:
@@ -156,21 +146,19 @@ func end_episode(success: bool, failure_reason: String = "") -> Dictionary:
 	_post_remote_log("episode_upsert", {
 		"participant_id": _participant_id,
 		"session_id": _session_id,
+		"session_source": _session_source,
 		"episode_id": _current_episode.get("episode_id", ""),
 		"timestamp": _current_episode.get("timestamp_start", ""),
 		"success": success,
-		"help_item": str(_current_episode.get("outcome", {}).get("help_item", "")),
 		"failure_reason": failure_reason,
-		"duration_ms": duration_ms,
-		"player_helped": bool(_current_episode.get("outcome", {}).get("player_helped", false))
+		"duration_ms": duration_ms
 	})
 	
 	var result = _current_episode.duplicate(true)
 	
 	print("[EpisodeLogger] Ended episode: ", _current_episode["episode_id"], 
 		  " | Success: ", success, 
-		  " | Duration: ", duration_ms, "ms",
-		  " | Player helped: ", _current_episode["outcome"]["player_helped"])
+		  " | Duration: ", duration_ms, "ms")
 	
 	episode_ended.emit(result)
 	
@@ -196,6 +184,8 @@ func log_participant_profile(profile: Dictionary) -> void:
 	var payload := {
 		"participant_id": _participant_id,
 		"session_id": _session_id,
+		"session_source": _session_source,
+		"qualtrics_id": _qualtrics_id,
 		"nickname": str(profile.get("nickname", "")),
 		"tipi_responses": profile.get("tipi_responses", {}),
 		"tipi_scores": profile.get("tipi_scores", {}),
@@ -203,12 +193,24 @@ func log_participant_profile(profile: Dictionary) -> void:
 	}
 	_post_remote_log("participant_upsert", payload)
 
+func log_game_run(run_outcome: String, final_score: int) -> void:
+	var payload := {
+		"run_id": _session_id,
+		"participant_id": _participant_id,
+		"session_id": _session_id,
+		"session_source": _session_source,
+		"run_outcome": run_outcome,
+		"final_score": final_score
+	}
+	_post_remote_log("game_run_upsert", payload)
+
 func log_api_failure(api_name: String, event_type: String, http_status: int, error_code: String, error_message: String, request_id: String = "", episode_id: String = "", client_timestamp_ms: int = -1) -> void:
 	var failure_id := "fail_%s_%04d" % [_session_id, _remote_failure_counter]
 	_remote_failure_counter += 1
 	var payload := {
 		"failure_id": failure_id,
 		"session_id": _session_id,
+		"session_source": _session_source,
 		"episode_id": episode_id if episode_id != "" else get_current_episode_id(),
 		"request_id": request_id,
 		"api_name": api_name,
@@ -228,6 +230,7 @@ func log_runtime_debug_event(event_type: String, data: Dictionary = {}) -> void:
 	var payload := {
 		"debug_event_id": "dbg_%s_%05d" % [_session_id, _runtime_debug_counter],
 		"session_id": _session_id,
+		"session_source": _session_source,
 		"episode_id": str(data.get("episode_id", get_current_episode_id())),
 		"request_id": str(data.get("request_id", "")),
 		"timestamp_ms": int(data.get("timestamp_ms", _gameplay_now_ms())),
@@ -267,7 +270,12 @@ func log_delegation_templates(templates: Array[Dictionary]) -> void:
 		})
 	_delegation_templates_logged = true
 
-func log_help_request_event(_event_type: String, request: Dictionary, _extra: Dictionary = {}) -> void:
+func _log_initial_delegation_templates() -> void:
+	var engine = load(PERSUASION_ENGINE_PATH)
+	if engine and engine.has_method("get_template_records"):
+		log_delegation_templates(engine.get_template_records())
+
+func log_help_request_event(request: Dictionary) -> void:
 	if request.is_empty():
 		return
 	var payload: Dictionary = request.get("payload", {})
@@ -280,6 +288,7 @@ func log_help_request_event(_event_type: String, request: Dictionary, _extra: Di
 	var record := {
 		"participant_id": _participant_id,
 		"session_id": _session_id,
+		"session_source": _session_source,
 		"nickname": str(request.get("nickname", "")),
 		"episode_id": get_current_episode_id(),
 		"request_id": str(request.get("id", "")),
@@ -288,7 +297,6 @@ func log_help_request_event(_event_type: String, request: Dictionary, _extra: Di
 		"status": str(request.get("status", "")),
 		"created_at_ms": int(request.get("created_at_ms", 0)),
 		"task_id": str(payload.get("task_id", "")),
-		"order_kind": str(payload.get("order_kind", "")),
 		"item_needed": str(payload.get("item_needed", "")),
 		"reason": str(payload.get("reason", "")),
 		"slack_ms": int(payload.get("slack_ms", 0)),
@@ -310,8 +318,6 @@ func log_help_request_event(_event_type: String, request: Dictionary, _extra: Di
 		"utterance": str(request.get("utterance", "")),
 		"response": str(request.get("last_response", "")),
 		"response_latency_ms": int(request.get("response_latency_ms", -1)),
-		"escalation_count": int(request.get("escalation_count", 0)),
-		"final_response": str(request.get("final_response", "")),
 		"resolution_path": str(request.get("resolution_path", "")),
 		"task_completed": bool(request.get("task_completed", false)),
 		"delivery_actor": str(request.get("delivery_actor", "")),
@@ -371,7 +377,7 @@ func _append_csv() -> void:
 		# Create new file with header
 		file = FileAccess.open(csv_path, FileAccess.WRITE)
 		if file:
-			file.store_line("episode_id,timestamp,success,player_helped,help_item,duration_ms,failure_reason")
+			file.store_line("episode_id,timestamp,success,duration_ms,failure_reason")
 	
 	if file:
 		file.seek_end()
@@ -382,8 +388,6 @@ func _append_csv() -> void:
 			ep.get("episode_id", ""),
 			ep.get("timestamp_start", ""),
 			str(outcome.get("success", false)).to_lower(),
-			str(outcome.get("player_helped", false)).to_lower(),
-			str(outcome.get("help_item", "")),
 			str(ep.get("duration_ms", 0)),
 			str(outcome.get("failure_reason", ""))
 		]
@@ -425,6 +429,12 @@ func _generate_session_id() -> String:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 	return "sess_%s_%06d" % [stamp, rng.randi_range(0, 999999)]
+
+func _read_qualtrics_id_from_url() -> String:
+	if not OS.has_feature("web"):
+		return ""
+	var value = JavaScriptBridge.eval("new URLSearchParams(window.location.search).get('qualtrics_id') || ''", true)
+	return str(value).strip_edges().left(256)
 
 func _post_remote_log(event_type: String, payload: Dictionary = {}, allow_failure_capture: bool = true) -> void:
 	if not _should_post_remote_logs():

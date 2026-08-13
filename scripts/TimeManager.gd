@@ -7,6 +7,7 @@ class_name TimeManager
 signal time_changed(hour: int, minute: int)
 signal period_changed(new_period: String, is_peak: bool)
 signal day_changed(day: int)
+signal run_day_completed(day: int)
 
 
 
@@ -19,6 +20,7 @@ signal day_changed(day: int)
 @export var start_hour: int = 6
 
 @export var start_minute: int = 0
+@export var stop_after_single_day: bool = true
 
 
 enum Period { MORNING, LUNCH, AFTERNOON, DINNER, NIGHT }
@@ -107,6 +109,12 @@ func _advance_time(minutes: int) -> void:
 			current_hour = 0
 
 	if current_hour == start_hour and current_minute == start_minute:
+		if stop_after_single_day:
+			_paused = true
+			_accumulated_game_minutes = 0.0
+			run_day_completed.emit(current_day)
+			print("[TimeManager] Run day completed: %d" % current_day)
+			return
 		current_day += 1
 		day_changed.emit(current_day)
 		print("[TimeManager] New day: %d" % current_day)
@@ -137,7 +145,7 @@ func _update_period() -> void:
 				break
 
 
-	is_open = current_period != Period.NIGHT
+	is_open = true
 
 
 	if old_period != current_period or old_is_peak != is_peak_time:
@@ -186,6 +194,13 @@ func skip_to_next_period() -> void:
 
 	var next = next_periods.get(current_period, [start_hour, start_minute])
 
+
+	if current_period == Period.NIGHT and stop_after_single_day:
+		_paused = true
+		_accumulated_game_minutes = 0.0
+		run_day_completed.emit(current_day)
+		print("[TimeManager] Run day completed: %d" % current_day)
+		return
 
 	if current_period == Period.NIGHT:
 		current_day += 1

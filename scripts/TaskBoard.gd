@@ -539,8 +539,3 @@ func _log_task_failure(task: Dictionary) -> void:
 			"state": str(task.get("state", "")),
 			"payload": task.get("payload", {})
 		})
-	if logger.has_method("log_event"):
-		logger.log_event("task_failed", {
-			"task_id": str(task.get("id", "")),
-			"reason": str(task.get("failure_reason", ""))
-		})

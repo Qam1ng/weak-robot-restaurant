@@ -6,9 +6,7 @@ class_name RobotServer
 @export var move_speed: float = 100.0
 @onready var agent: NavigationAgent2D = $NavigationAgent2D
 @onready var anim: AnimatedSprite2D   = $AnimatedSprite2D
-@onready var ray: RayCast2D = null # Created in _ready
 
-var _moving: bool = false
 var _last_dir: Vector2 = Vector2.DOWN
 
 # ---------- BT ----------
@@ -23,7 +21,6 @@ var inventory: Inventory
 
 # ---------- Interaction ----------
 var _waiting_for_help: bool = false
-var _help_item_needed: String = ""
 
 # ---------- Episode Tracking ----------
 var _episode_active: bool = false
@@ -37,22 +34,24 @@ const STEP_DELIVER_AND_SERVE := "DELIVER_AND_SERVE"
 const TASK_STATE_IN_PROGRESS := "in_progress"
 const TASK_STATE_COMPLETED := "completed"
 const TASK_STATE_FAILED := "failed"
+const OVERLOAD_HANDOFF_COOLDOWN_MS := 15_000
 const DELEGATION_SCENARIO_BATTERY_PRESSURE := "battery_pressure"
 const DELEGATION_SCENARIO_WORKLOAD_OVERLOAD := "workload_overload"
 const DELEGATION_SCENARIO_DEADLINE_PRESSURE := "deadline_pressure"
 const DELEGATION_SCENARIO_TRIAL_TUTORIAL := "trial_tutorial"
 const CHARGING_MARKER := "RS1"
-const IDLE_WAIT_MARKER := "RG4"
+const ROBOT_BASE_MARKER := "RB1"
+const TRIAL_HANDOFF_WAIT_DISTANCE := 8.0
 const EMERGENCY_RECHARGE_RESUME_LEVEL := 55.0
 const EMERGENCY_HANDOFF_APPROACH_DISTANCE := 120.0
-const DEADLINE_HANDOFF_TRIGGER_MS := 55_000
-const ORPHAN_FOOD_ITEM_TTL_MS := 45_000
+const DEADLINE_HANDOFF_TRIGGER_MS := 45_000
 const PLAYER_ITEM_TTL_MS := 120_000
 var _active_task_id: String = ""
 var _active_task_step: String = ""
 var _active_step_started: bool = false
 var _last_replan_ms: int = 0
 var _pending_overload_handoff_task_id: String = ""
+var _overload_handoff_cooldown_until_ms: int = 0
 
 # ---------- Unified Constraints ----------
 const BATTERY_MODE_NORMAL := "normal"
@@ -82,9 +81,8 @@ var _trial_handoff_armed_task_id: String = ""
 var _trial_handoff_pending_task_id: String = ""
 var _trial_handoff_item_needed: String = ""
 var _trial_stationary_pause: bool = false
+var _trial_handoff_release_requested: bool = false
 var _last_debug_step_key: String = ""
-var _step_navigation_failure_count: int = 0
-var _soft_pass_through_people: bool = false
 
 func _has_property(obj: Object, prop_name: String) -> bool:
 	for p in obj.get_property_list():
@@ -96,51 +94,64 @@ func _has_property(obj: Object, prop_name: String) -> bool:
 # Execute actions from "planned_actions" queue one by one
 class ActExecutePlan extends Core.Task:
 	var current_node: Core.Task = null
+	var current_action_signature: String = ""
 	
 	func tick(bb: Dictionary, actor: Node) -> int:
 		if not bb.has("planned_actions") or bb.planned_actions.is_empty():
+			current_node = null
+			current_action_signature = ""
 			return Core.Status.FAILURE
+
+		var action_data = bb.planned_actions[0]
+		var next_signature := _action_signature(action_data)
+		var action_name := str(action_data.get("action", ""))
+		if current_node != null and current_action_signature != next_signature:
+			current_node = null
+			current_action_signature = ""
 			
 		if current_node == null:
-			var action_data = bb.planned_actions[0]
-			var action_name = action_data.get("action")
 			var params = action_data.get("params", {})
 			current_node = _create_action_node(action_name, params, bb, actor)
-			var logger = actor.get_node_or_null("/root/EpisodeLogger")
-			if logger:
-				logger.log_event("action_start", {"action": action_name, "params": params})
+			current_action_signature = next_signature
 			
 			if not current_node:
+				current_action_signature = ""
 				bb.planned_actions.pop_front()
 				return Core.Status.FAILURE
 		
 		var status = current_node.tick(bb, actor)
 		
 		if status == Core.Status.SUCCESS:
-			var completed_action = bb.planned_actions[0].get("action")
-			var logger = actor.get_node_or_null("/root/EpisodeLogger")
-			if logger:
-				logger.log_event("action_complete", {"action": completed_action, "success": true})
-			
-			bb.planned_actions.pop_front()
+			# Actions may synchronously change the plan through game-state signals.
+			# Only remove the action that was actually ticked, never a replacement plan.
+			if bb.has("planned_actions") and not bb.planned_actions.is_empty():
+				var current_front_signature := _action_signature(bb.planned_actions[0])
+				if current_front_signature == next_signature:
+					bb.planned_actions.pop_front()
 			bb["last_plan_failed"] = false
 			current_node = null
+			current_action_signature = ""
 			return Core.Status.RUNNING 
 			
 		elif status == Core.Status.FAILURE:
 			bb["last_plan_failed"] = true
 			bb.erase("planned_actions")
 			current_node = null
+			current_action_signature = ""
 			return Core.Status.FAILURE
 			
 		return Core.Status.RUNNING
+
+	func _action_signature(action_data: Dictionary) -> String:
+		var action_name := str(action_data.get("action", ""))
+		var params = action_data.get("params", {})
+		return JSON.stringify({"action": action_name, "params": params}, "")
 
 	func _create_action_node(name: String, params: Dictionary, bb: Dictionary, actor: Node) -> Core.Task:
 		var Act = preload("res://scripts/bt/bt_actions.gd")
 		match name:
 			"navigate":
 				var target_name = params.get("target", "")
-				var node = Act.ActNavigate.new()
 				if bb.has("locations") and bb["locations"].has(target_name):
 					var raw_target: Vector2 = bb["locations"][target_name]
 					var resolved_target: Vector2 = raw_target
@@ -150,12 +161,9 @@ class ActExecutePlan extends Core.Task:
 						resolved_target = nav_closest
 					var temp_key = "nav_target_" + str(Time.get_ticks_msec()) + "_" + str(randi())
 					bb[temp_key] = resolved_target
-					node.target_key = temp_key
-				elif target_name == "customer":
-					node.target_key = "target_customer"
+					return Act.ActNavigate.new(temp_key)
 				else:
 					return null
-				return node
 				
 			"pick":
 				var item = params.get("item", "unknown_item")
@@ -184,29 +192,10 @@ func _ready() -> void:
 	# Configure Navigation Agent
 	agent.set_navigation_map(get_world_2d().navigation_map)
 	agent.navigation_layers = 1
-	agent.avoidance_enabled = true
+	agent.avoidance_enabled = false
 	agent.max_speed = move_speed
-	agent.radius = 10.0
-	# Avoid over-reacting to far-away agents, which can skew local steering.
-	agent.neighbor_distance = 120.0
-	agent.time_horizon = 1.0
 	agent.debug_enabled = false
-	
-	if agent.avoidance_enabled and not agent.velocity_computed.is_connected(_on_agent_velocity_computed):
-		agent.velocity_computed.connect(_on_agent_velocity_computed)
 	await _wait_for_nav_sync(agent.get_navigation_map(), 120)
-
-	# Dynamic RayCast creation for BT Avoidance
-	if not has_node("RayCast2D"):
-		var r = RayCast2D.new()
-		r.name = "RayCast2D"
-		r.enabled = true
-		r.target_position = Vector2(0, 30) # Default
-		r.collision_mask = 1 # World/Physics layer
-		add_child(r)
-		ray = r
-	else:
-		ray = get_node("RayCast2D")
 
 	var help_mgr = _help_manager()
 	if help_mgr:
@@ -223,7 +212,6 @@ func _ready() -> void:
 	
 	bt_runner.root = root
 	bt_runner.bb = {
-		"carrying_item": false,
 		"planned_actions": [], # Queue of {action, params}
 		"last_plan_failed": false,
 		"locations": {} # Will be populated immediately
@@ -259,26 +247,26 @@ func _discover_locations():
 
 func _physics_process(dt: float) -> void:
 	_update_battery_and_mode(dt)
-	_expire_orphaned_food_inventory()
 
 	# Animation logic: based on current real velocity, not path preview
 	_update_anim(velocity)
 	
-	# Episode position tracking
-	if _episode_active:
-		var logger = get_node_or_null("/root/EpisodeLogger")
-		if logger:
-			logger.log_position(global_position)
-
 	_check_episode_completion()
 
 func _check_episode_completion() -> void:
 	var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
 	_constraint_input = _collect_constraint_input()
+	# Strong task binding means an item must disappear as soon as its task is no
+	# longer executable, regardless of remaining inventory capacity.
+	_clear_invalid_bound_inventory_items()
 
 	if _trial_stationary_pause:
 		bt_runner.bb["planned_actions"] = []
+		if agent != null:
+			agent.target_position = global_position
+			agent.set_velocity(Vector2.ZERO)
 		velocity = Vector2.ZERO
+		move_and_slide()
 		return
 
 	# No active current task: select the next robot job from the claimed queue,
@@ -322,7 +310,7 @@ func _check_episode_completion() -> void:
 	# If BT reported failure for this step, never advance step state.
 	if bool(bt_runner.bb.get("last_plan_failed", false)):
 		bt_runner.bb["last_plan_failed"] = false
-		_handle_step_plan_failure()
+		bt_runner.bb.erase("action_failure_reason")
 		_active_step_started = false
 		return
 
@@ -453,29 +441,12 @@ func _try_acquire_or_activate_robot_work() -> void:
 		return
 	var assigned_tasks := _get_robot_assigned_food_tasks()
 	if inventory != null and inventory.is_full() and not inventory.items.is_empty():
-		if assigned_tasks.is_empty():
-			if _clear_invalid_bound_inventory_items():
-				assigned_tasks = _get_robot_assigned_food_tasks()
-			if inventory != null and inventory.is_full() and not inventory.items.is_empty() and assigned_tasks.is_empty():
-				return
-	if assigned_tasks.is_empty():
-		_try_claim_next_task()
-		return
-	if inventory != null and inventory.is_full() and not inventory.items.is_empty():
+		# A full robot inventory only resumes work through a currently deliverable task.
 		if _try_activate_delivery_task():
 			return
-		if _try_activate_pickup_task():
-			return
-		if _clear_invalid_bound_inventory_items():
-			if _try_activate_delivery_task():
-				return
-			if _try_activate_pickup_task():
-				return
-		if _should_continue_collecting_orders():
-			_try_claim_next_task()
-			return
-		if _try_activate_take_order_task():
-			return
+		return
+	if assigned_tasks.is_empty():
+		_try_claim_next_task()
 		return
 	if _should_continue_collecting_orders():
 		_try_claim_next_task()
@@ -506,10 +477,8 @@ func _try_claim_next_task() -> void:
 			else:
 				bt_runner.bb["planned_actions"] = []
 			return
-		if not _is_in_dining_side():
-			var locations: Dictionary = bt_runner.bb.get("locations", {})
-			if locations.has(IDLE_WAIT_MARKER):
-				_plan_navigate_to_location(IDLE_WAIT_MARKER)
+		if not _is_near_robot_base():
+			_plan_navigate_to_location(ROBOT_BASE_MARKER)
 		return
 	# Pending work exists: in conserve/normal we should still serve orders.
 	_idle_charge_cycle_complete = false
@@ -550,6 +519,19 @@ func _start_claimed_task(task: Dictionary) -> void:
 
 func _robot_handoff_threshold_tasks() -> int:
 	return 4
+
+func _overload_handoff_cooldown_active() -> bool:
+	return _gameplay_now_ms() < _overload_handoff_cooldown_until_ms
+
+func _arm_overload_handoff_if_needed() -> void:
+	if _active_task_id == "":
+		return
+	if _overload_handoff_cooldown_active():
+		return
+	var assigned := _get_robot_assigned_food_tasks()
+	if _effective_workload_task_count(assigned) < _robot_handoff_threshold_tasks():
+		return
+	_pending_overload_handoff_task_id = _active_task_id
 
 func _activate_task_context(task: Dictionary) -> bool:
 	_active_task_id = str(task.get("id", ""))
@@ -643,7 +625,6 @@ func _task_slack_ms(task: Dictionary) -> int:
 func _deadline_handoff_candidate() -> Dictionary:
 	var tasks := _get_robot_assigned_food_tasks()
 	var best: Dictionary = {}
-	var best_transferable := false
 	var best_slack := INF
 	for task in tasks:
 		var task_id := str(task.get("id", ""))
@@ -653,12 +634,20 @@ func _deadline_handoff_candidate() -> Dictionary:
 		if slack <= 0 or slack > DEADLINE_HANDOFF_TRIGGER_MS:
 			continue
 		var step_name := _task_step_name(task)
-		var transferable := step_name == STEP_DELIVER_AND_SERVE and _inventory_has_item_for_task(task)
-		if best.is_empty() or (transferable and not best_transferable) or (transferable == best_transferable and slack < best_slack):
+		var requires_item_handoff := step_name == STEP_DELIVER_AND_SERVE and _inventory_has_item_for_task(task)
+		if requires_item_handoff and _player_inventory_is_full():
+			continue
+		if best.is_empty() or slack < best_slack:
 			best = task
-			best_transferable = transferable
 			best_slack = slack
 	return best
+
+func _player_inventory_is_full() -> bool:
+	var player := _get_primary_player()
+	if player == null:
+		return false
+	var player_inventory = player.get_node_or_null("Inventory")
+	return player_inventory != null and player_inventory.has_method("is_full") and player_inventory.is_full()
 
 func _task_customer_distance(task: Dictionary) -> float:
 	var payload: Dictionary = task.get("payload", {})
@@ -674,7 +663,7 @@ func _inventory_has_item_for_task(task: Dictionary) -> bool:
 	var item_name := str(payload.get("food_item", "")).strip_edges()
 	if item_name == "":
 		return false
-	return _find_inventory_item_index_for_task(str(task.get("id", "")), item_name, true) != -1
+	return _find_inventory_item_index_for_task(str(task.get("id", "")), item_name) != -1
 
 func _try_activate_take_order_task() -> bool:
 	var tasks := _get_robot_assigned_food_tasks()
@@ -751,7 +740,6 @@ func _plan_current_task_step() -> void:
 	_active_step_started = false
 	var step_key := "%s|%s" % [_active_task_id, _active_task_step]
 	if step_key != _last_debug_step_key:
-		_reset_step_navigation_recovery()
 		_last_debug_step_key = step_key
 		_log_runtime_debug_event("robot_step_changed")
 	if _active_task_step == "":
@@ -771,30 +759,13 @@ func _plan_current_task_step() -> void:
 			pass
 
 func _plan_take_order_step() -> void:
-	var customer := bt_runner.bb.get("target_customer", null) as Node2D
-	if customer == null:
+	var marker_name := _active_task_service_marker_name()
+	if marker_name == "":
 		return
-
-	var serve_poses = get_tree().get_nodes_in_group("serveposes")
-	var nearest_pose: Node2D = null
-	var min_dist := INF
-	for pose in serve_poses:
-		if not (pose is Node2D):
-			continue
-		var d = pose.global_position.distance_to(customer.global_position)
-		if d < min_dist:
-			min_dist = d
-			nearest_pose = pose
-
-	if nearest_pose:
-		var locations: Dictionary = bt_runner.bb.get("locations", {})
-		if not locations.has(nearest_pose.name):
-			locations[nearest_pose.name] = nearest_pose.global_position
-			bt_runner.bb["locations"] = locations
-		_set_step_plan([
-			{"action": "navigate", "params": {"target": nearest_pose.name}}
-		])
-		speak("I'll take your order now.")
+	_set_step_plan([
+		{"action": "navigate", "params": {"target": marker_name}}
+	])
+	speak("I'll take your order now.")
 
 func _plan_pickup_step() -> void:
 	if _consume_existing_inventory_for_active_pickup():
@@ -839,15 +810,33 @@ func _consume_existing_inventory_for_active_pickup() -> bool:
 	return true
 
 func _plan_deliver_step() -> void:
-	if not _inventory_has_item_for_active_task():
-		if _recover_missing_delivery_item():
-			return
+	var marker_name := _active_task_service_marker_name()
+	if marker_name == "":
+		return
 	var actions := [
-		{"action": "navigate", "params": {"target": "customer"}},
+		{"action": "navigate", "params": {"target": marker_name}},
 		{"action": "drop", "params": {}}
 	]
 	_set_step_plan(actions)
 	speak("Delivering now.")
+
+func _active_task_service_marker_name() -> String:
+	if _active_task_id == "":
+		return ""
+	var board := _task_board()
+	if board == null or not board.has_method("get_task"):
+		return ""
+	var task: Dictionary = board.get_task(_active_task_id)
+	var payload: Dictionary = task.get("payload", {})
+	var seat := str(payload.get("seat", "")).strip_edges().to_lower()
+	if not seat.begins_with("seat"):
+		push_error("Robot task is missing a valid seat marker: " + _active_task_id)
+		return ""
+	var marker_name := "RG" + seat.substr(4)
+	if not bt_runner.bb.get("locations", {}).has(marker_name):
+		push_error("Robot service marker is missing: " + marker_name)
+		return ""
+	return marker_name
 
 func _on_active_step_finished() -> void:
 	var board = _task_board()
@@ -866,6 +855,7 @@ func _on_active_step_finished() -> void:
 		var customer: Node = bt_runner.bb.get("target_customer", null)
 		if customer != null and customer.has_method("on_food_order_taken"):
 			customer.call("on_food_order_taken")
+		_arm_overload_handoff_if_needed()
 		if _should_continue_collecting_orders():
 			_clear_current_task_runtime()
 			return
@@ -876,9 +866,8 @@ func _on_active_step_finished() -> void:
 			_active_task_step = STEP_DELIVER_AND_SERVE
 			_trial_handoff_pending_task_id = _active_task_id
 			_trial_handoff_item_needed = _current_food_item.strip_edges().to_lower()
-			_trial_stationary_pause = true
-			bt_runner.bb["planned_actions"] = []
-			velocity = Vector2.ZERO
+			_trial_handoff_release_requested = false
+			_plan_trial_handoff_wait_position()
 			_active_step_started = false
 			return
 	if expected_step == STEP_PICKUP_FROM_KITCHEN and inventory != null and not inventory.is_full():
@@ -915,86 +904,24 @@ func _clear_current_task_runtime() -> void:
 	bt_runner.bb["last_plan_failed"] = false
 	bt_runner.bb["planned_actions"] = []
 	_waiting_for_help = false
-	_help_item_needed = ""
 	_active_help_request_id = ""
 	_last_debug_step_key = ""
-	_reset_step_navigation_recovery()
 	_trial_handoff_armed_task_id = ""
 	_trial_handoff_pending_task_id = ""
 	_trial_handoff_item_needed = ""
+	_trial_handoff_release_requested = false
 	if _get_robot_assigned_food_tasks().is_empty():
 		_workload_declined_task_ids.clear()
 		_deadline_declined_task_ids.clear()
 
-func _handle_step_plan_failure() -> void:
-	var failure_reason := str(bt_runner.bb.get("help_reason", "")).strip_edges()
-	var action_failure_reason := str(bt_runner.bb.get("action_failure_reason", "")).strip_edges()
-	if action_failure_reason == "empty_inventory" and _active_task_step == STEP_DELIVER_AND_SERVE:
-		if _recover_missing_delivery_item():
-			bt_runner.bb.erase("action_failure_reason")
-			bt_runner.bb.erase("help_reason")
-			bt_runner.bb.erase("help_stuck_position")
-			bt_runner.bb.erase("help_evasion_attempts")
-			return
-	if failure_reason == "too_many_evasions":
-		_step_navigation_failure_count += 1
-		if _step_navigation_failure_count >= 2:
-			_set_soft_pass_through_people(true)
-	else:
-		_reset_step_navigation_recovery()
-	bt_runner.bb.erase("help_reason")
-	bt_runner.bb.erase("help_stuck_position")
-	bt_runner.bb.erase("help_evasion_attempts")
-	bt_runner.bb.erase("action_failure_reason")
-
-func _reset_step_navigation_recovery() -> void:
-	_step_navigation_failure_count = 0
-	_set_soft_pass_through_people(false)
-
-func _set_soft_pass_through_people(active: bool) -> void:
-	if _soft_pass_through_people == active:
-		return
-	_soft_pass_through_people = active
-	if agent == null:
-		return
-	agent.avoidance_enabled = not active
-	if not active and not agent.velocity_computed.is_connected(_on_agent_velocity_computed):
-		agent.velocity_computed.connect(_on_agent_velocity_computed)
-
-func should_soft_pass_through_people() -> bool:
-	return _soft_pass_through_people
-
-func _inventory_has_item_for_active_task() -> bool:
-	if _active_task_id == "":
-		return false
-	var board := _task_board()
-	if board == null or not board.has_method("get_task"):
-		return false
-	var task: Dictionary = board.get_task(_active_task_id)
-	if task.is_empty():
-		return false
-	return _inventory_has_item_for_task(task)
-
-func _recover_missing_delivery_item() -> bool:
-	if _active_task_id == "":
-		return false
-	var board := _task_board()
-	if board == null or not board.has_method("reset_task_to_step"):
-		return false
-	if not board.reset_task_to_step(_active_task_id, STEP_PICKUP_FROM_KITCHEN):
-		return false
-	_active_step_started = false
+func _resume_robot_after_help_decline() -> void:
 	bt_runner.bb["planned_actions"] = []
-	bt_runner.bb["last_plan_failed"] = false
-	bt_runner.bb.erase("action_failure_reason")
-	bt_runner.bb.erase("help_reason")
-	bt_runner.bb.erase("help_stuck_position")
-	bt_runner.bb.erase("help_evasion_attempts")
-	_last_replan_ms = 0
-	_plan_current_task_step()
-	return true
+	_active_step_started = false
+	_waiting_for_help = false
+	if _active_task_id != "":
+		_plan_current_task_step()
 
-func _find_inventory_item_index_for_task(task_id: String, item_name: String, allow_reusable: bool) -> int:
+func _find_inventory_item_index_for_task(task_id: String, item_name: String) -> int:
 	if inventory == null:
 		return -1
 	var wanted := item_name.strip_edges().to_lower()
@@ -1006,23 +933,14 @@ func _find_inventory_item_index_for_task(task_id: String, item_name: String, all
 			continue
 		if str(entry.get("task_id", "")) == task_id:
 			return i
-	if not allow_reusable:
-		return -1
-	for i in range(inventory.items.size()):
-		var entry: Dictionary = inventory.items[i]
-		if str(entry.get("name", "")).to_lower() != wanted:
-			continue
-		if str(entry.get("task_id", "")) == "":
-			return i
 	return -1
 
 func _reserve_inventory_item_for_task(task_id: String, item_name: String) -> bool:
-	var idx := _find_inventory_item_index_for_task(task_id, item_name, true)
+	var idx := _find_inventory_item_index_for_task(task_id, item_name)
 	if idx == -1:
 		return false
 	var entry: Dictionary = inventory.items[idx]
 	entry["task_id"] = task_id
-	entry["orphaned_at_ms"] = 0
 	inventory.items[idx] = entry
 	inventory.emit_signal("inventory_changed", inventory.items)
 	return true
@@ -1037,7 +955,6 @@ func _pickup_item_meta(item_name: String) -> Dictionary:
 		return {}
 	return {
 		"task_id": _active_task_id,
-		"orphaned_at_ms": 0
 	}
 
 func _take_inventory_item_for_active_task() -> Dictionary:
@@ -1049,41 +966,41 @@ func _take_inventory_item_for_active_task() -> Dictionary:
 	var item_name := str(payload.get("food_item", "")).strip_edges().to_lower()
 	if item_name == "":
 		item_name = _current_food_item.strip_edges().to_lower()
-	var idx := _find_inventory_item_index_for_task(_active_task_id, item_name, false)
+	var idx := _find_inventory_item_index_for_task(_active_task_id, item_name)
 	if idx == -1:
 		return {}
 	var item: Dictionary = inventory.items.pop_at(idx)
 	inventory.emit_signal("inventory_changed", inventory.items)
-	if inventory.items.is_empty():
-		bt_runner.bb["carrying_item"] = false
 	return item
+
+func _restore_inventory_item_for_active_task(item: Dictionary) -> void:
+	if inventory == null or item.is_empty():
+		return
+	inventory.items.append(item)
+	inventory.emit_signal("inventory_changed", inventory.items)
+
+func _can_complete_active_delivery_after_drop() -> bool:
+	if _active_task_id == "":
+		return false
+	var board := _task_board()
+	if board == null or not board.has_method("get_current_step_name"):
+		return false
+	return str(board.get_current_step_name(_active_task_id)) == STEP_DELIVER_AND_SERVE
+
+func _complete_active_delivery_after_drop() -> bool:
+	if not _can_complete_active_delivery_after_drop():
+		return false
+	var board := _task_board()
+	return board.complete_current_step(_active_task_id, STEP_DELIVER_AND_SERVE)
 
 func _release_robot_food_for_task(task_id: String, _reason: String) -> void:
 	if inventory == null or task_id == "":
 		return
-	var now_ms := _gameplay_now_ms()
-	var changed := false
-	for i in range(inventory.items.size()):
-		var entry: Dictionary = inventory.items[i]
-		if str(entry.get("task_id", "")) != task_id:
-			continue
-		entry["task_id"] = ""
-		entry["orphaned_at_ms"] = now_ms
-		inventory.items[i] = entry
-		changed = true
-	if changed:
-		inventory.emit_signal("inventory_changed", inventory.items)
-
-func _expire_orphaned_food_inventory() -> void:
-	if inventory == null or inventory.items.is_empty():
-		return
-	var now_ms := _gameplay_now_ms()
 	var kept: Array = []
 	var changed := false
 	for raw_entry in inventory.items:
 		var entry: Dictionary = raw_entry
-		var orphaned_at_ms := int(entry.get("orphaned_at_ms", 0))
-		if orphaned_at_ms > 0 and now_ms - orphaned_at_ms >= ORPHAN_FOOD_ITEM_TTL_MS:
+		if str(entry.get("task_id", "")) == task_id:
 			changed = true
 			continue
 		kept.append(entry)
@@ -1103,7 +1020,7 @@ func _clear_invalid_bound_inventory_items() -> bool:
 		var entry: Dictionary = raw_entry
 		var task_id := str(entry.get("task_id", ""))
 		if task_id == "":
-			kept.append(entry)
+			changed = true
 			continue
 		var task: Dictionary = board.get_task(task_id)
 		if task.is_empty():
@@ -1121,8 +1038,6 @@ func _clear_invalid_bound_inventory_items() -> bool:
 		return false
 	inventory.items = kept
 	inventory.emit_signal("inventory_changed", inventory.items)
-	if inventory.items.is_empty():
-		bt_runner.bb["carrying_item"] = false
 	return true
 
 func _invalidate_active_help_request(resolution_path: String) -> void:
@@ -1131,11 +1046,6 @@ func _invalidate_active_help_request(resolution_path: String) -> void:
 	var help_mgr = _help_manager()
 	if help_mgr == null:
 		return
-	var req: Dictionary = help_mgr.get_request(_active_help_request_id) if help_mgr.has_method("get_request") else {}
-	if not req.is_empty() and str(req.get("status", "")) == "cooldown":
-		if help_mgr.has_method("resolve_later_not_retriggered"):
-			help_mgr.resolve_later_not_retriggered(_active_help_request_id)
-			return
 	if help_mgr.has_method("cancel_request"):
 		help_mgr.cancel_request(_active_help_request_id, resolution_path)
 
@@ -1209,9 +1119,18 @@ func _tick_emergency_delegation() -> bool:
 			if st == "pending" or st == "accepted":
 				_waiting_for_help = true
 				return true
-			if st == "cooldown":
-				_waiting_for_help = false
-				return false
+
+	var board = _task_board()
+	var item_needed := "item"
+	var slack_ms := int(_constraint_input.get("slack_ms", 0))
+	if board and board.has_method("get_task"):
+		var task: Dictionary = board.get_task(_active_task_id)
+		var payload: Dictionary = task.get("payload", {})
+		item_needed = str(payload.get("food_item", "item"))
+	var handoff_mode := _handoff_mode_for_active_task(item_needed)
+	if handoff_mode == "TAKEOVER_ITEM" and _player_inventory_is_full():
+		_activate_recharge_override("Battery critical. Recharging now.")
+		return true
 
 	# Emergency handoff must be in-person: approach player first, then request/popup.
 	var distance_to_player := global_position.distance_to(player.global_position)
@@ -1238,15 +1157,6 @@ func _tick_emergency_delegation() -> bool:
 			return true
 		return false
 
-	var board = _task_board()
-	var item_needed := "item"
-	var slack_ms := int(_constraint_input.get("slack_ms", 0))
-	if board and board.has_method("get_task"):
-		var task: Dictionary = board.get_task(_active_task_id)
-		var payload: Dictionary = task.get("payload", {})
-		item_needed = str(payload.get("food_item", "item"))
-	var handoff_mode := _handoff_mode_for_active_task(item_needed)
-
 	_ensure_help_request({
 		"handoff_mode": handoff_mode,
 		"task_id": _active_task_id,
@@ -1255,8 +1165,6 @@ func _tick_emergency_delegation() -> bool:
 		"slack_ms": slack_ms,
 		"delegation_scenario": DELEGATION_SCENARIO_BATTERY_PRESSURE
 		}, {
-			"cooldown_ms": 2500,
-			"max_escalation": 2,
 			"urgency": 1.0
 		})
 	_waiting_for_help = true
@@ -1266,6 +1174,9 @@ func _tick_overload_handoff_delegation() -> bool:
 	if _active_task_id == "":
 		return false
 	if _pending_overload_handoff_task_id == "" or _pending_overload_handoff_task_id != _active_task_id:
+		return false
+	if _overload_handoff_cooldown_active():
+		_pending_overload_handoff_task_id = ""
 		return false
 	if _is_task_declined_for_scenario(_active_task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD):
 		# Player refused this request episode; continue task execution.
@@ -1286,9 +1197,6 @@ func _tick_overload_handoff_delegation() -> bool:
 			if st == "pending" or st == "accepted":
 				_waiting_for_help = true
 				return true
-			if st == "cooldown":
-				_waiting_for_help = false
-				return false
 
 	var distance_to_player := global_position.distance_to(player.global_position)
 	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
@@ -1318,10 +1226,10 @@ func _tick_overload_handoff_delegation() -> bool:
 		"slack_ms": slack_ms,
 		"delegation_scenario": DELEGATION_SCENARIO_WORKLOAD_OVERLOAD
 	}, {
-		"cooldown_ms": 4000,
-		"max_escalation": 2,
 		"urgency": _estimate_help_urgency()
 	})
+	_overload_handoff_cooldown_until_ms = _gameplay_now_ms() + OVERLOAD_HANDOFF_COOLDOWN_MS
+	_pending_overload_handoff_task_id = ""
 	_waiting_for_help = true
 	speak("Task load is high. Please take over this order.")
 	return true
@@ -1329,6 +1237,18 @@ func _tick_overload_handoff_delegation() -> bool:
 func _tick_trial_item_handoff() -> bool:
 	if _active_task_id == "" or _trial_handoff_pending_task_id == "" or _trial_handoff_pending_task_id != _active_task_id:
 		return false
+
+	if not _trial_handoff_release_requested:
+		if not _is_at_trial_handoff_wait_point():
+			var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
+			if not has_plan:
+				_plan_trial_handoff_wait_position()
+		else:
+			_trial_stationary_pause = true
+			bt_runner.bb["planned_actions"] = []
+			velocity = Vector2.ZERO
+		_waiting_for_help = false
+		return true
 
 	var help_mgr = _help_manager()
 	if help_mgr == null:
@@ -1367,8 +1287,6 @@ func _tick_trial_item_handoff() -> bool:
 		"trial_accept_only": true,
 		"trial_force_prompt": true
 	}, {
-		"cooldown_ms": 100000,
-		"max_escalation": 99,
 		"urgency": 1.0
 	})
 	if req.is_empty():
@@ -1403,9 +1321,6 @@ func _tick_deadline_handoff_delegation() -> bool:
 			if st == "pending" or st == "accepted":
 				_waiting_for_help = true
 				return true
-			if st == "cooldown":
-				_waiting_for_help = false
-				return false
 
 	var distance_to_player := global_position.distance_to(player.global_position)
 	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
@@ -1436,8 +1351,6 @@ func _tick_deadline_handoff_delegation() -> bool:
 		"slack_ms": slack_ms,
 		"delegation_scenario": DELEGATION_SCENARIO_DEADLINE_PRESSURE
 	}, {
-		"cooldown_ms": 2500,
-		"max_escalation": 2,
 		"urgency": 1.0
 	})
 	_waiting_for_help = true
@@ -1449,14 +1362,7 @@ func _handle_pickup_inventory_full(_item_name: String) -> bool:
 		return false
 	if _waiting_for_help:
 		return true
-	if _try_activate_delivery_task():
-		return true
-	if _consume_existing_inventory_for_active_pickup():
-		return true
-	_clear_invalid_bound_inventory_items()
-	speak("Inventory full. Reordering tasks.")
-	_clear_current_task_runtime()
-	return true
+	return _try_activate_delivery_task()
 
 func _handoff_mode_for_active_task(item_name: String) -> String:
 	var effective_step := _active_task_step
@@ -1527,6 +1433,12 @@ func _is_near_recharge_station() -> bool:
 	# Navigation arrival often stops around 40-50px from exact marker.
 	return global_position.distance_to(station) <= 60.0
 
+func _is_near_robot_base() -> bool:
+	var base = bt_runner.bb.get("locations", {}).get(ROBOT_BASE_MARKER, Vector2.ZERO)
+	if base == Vector2.ZERO:
+		return false
+	return global_position.distance_to(base) <= 60.0
+
 func _battery_is_full_enough() -> bool:
 	return battery_level >= battery_capacity - 0.5
 
@@ -1571,10 +1483,7 @@ func _tick_recharge_override(has_plan: bool) -> bool:
 			var req: Dictionary = help_mgr.get_request(_active_help_request_id)
 			if not req.is_empty():
 				var req_status := str(req.get("status", ""))
-				if req_status == "cooldown":
-					if help_mgr.has_method("resolve_later_not_retriggered"):
-						help_mgr.resolve_later_not_retriggered(_active_help_request_id)
-				elif req_status != "resolved":
+				if req_status != "resolved":
 					return true
 		_activate_recharge_override("Battery critical. Recharging now.")
 		return true
@@ -1636,39 +1545,35 @@ func _on_help_request_updated(request: Dictionary) -> void:
 		return
 
 	var req_id = str(request.get("id", ""))
+	# A resolved request may be updated later when its task outcome is attached.
+	# That is logging only, not a second player response.
+	if _active_help_request_id == "" or req_id != _active_help_request_id:
+		return
 	var status = str(request.get("status", ""))
-	var final_response = str(request.get("final_response", ""))
+	var response = str(request.get("last_response", ""))
 	var payload: Dictionary = request.get("payload", {})
 	var reason := str(payload.get("reason", ""))
 	var task_id := str(payload.get("task_id", ""))
-	_active_help_request_id = req_id
-
 	if status == "accepted":
 		if task_id != "":
 			_clear_task_declined_suppressions(task_id)
 		if reason == "battery_emergency":
 			_battery_pressure_declined_until_recharge = false
 		_apply_handoff_accept(request)
-	elif status == "cooldown":
-		set_waiting_for_help(false, "")
-	elif status == "resolved" and final_response == "decline":
+	elif status == "resolved" and response == "decline":
 		if reason == "robot_over_threshold_post_take_order" and task_id != "":
 			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD)
 		elif reason == "deadline_critical" and task_id != "":
 			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE)
 		elif reason == "battery_emergency":
 			_battery_pressure_declined_until_recharge = true
-		set_waiting_for_help(false, "")
-		if _battery_mode == BATTERY_MODE_EMERGENCY and not _recharge_override_active:
+		_waiting_for_help = false
+		# A decline must never resume the interrupted task while battery is in an
+		# emergency state, regardless of which scenario produced the request.
+		if _battery_mode == BATTERY_MODE_EMERGENCY:
 			_activate_recharge_override("Battery critical. Recharging now.")
-	elif status == "resolved" and str(request.get("resolution_path", "")) == "later_not_retriggered":
-		if reason == "deadline_critical" and task_id != "":
-			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE)
-		elif reason == "battery_emergency":
-			_battery_pressure_declined_until_recharge = true
-		set_waiting_for_help(false, "")
-		if _battery_mode == BATTERY_MODE_EMERGENCY and not _recharge_override_active:
-			_activate_recharge_override("Battery critical. Recharging now.")
+			return
+		_resume_robot_after_help_decline()
 
 func _apply_handoff_accept(request: Dictionary) -> void:
 	var payload: Dictionary = request.get("payload", {})
@@ -1682,15 +1587,7 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 
 	if mode == "TAKEOVER_ITEM":
 		var transfer_result := _transfer_item_to_player_for_handoff(payload)
-		if transfer_result == "player_full":
-			var help_mgr_retry = _help_manager()
-			if help_mgr_retry and _active_help_request_id != "" and help_mgr_retry.has_method("requeue_request"):
-				help_mgr_retry.requeue_request(_active_help_request_id, 1800, "player_inventory_full")
-			set_waiting_for_help(false, "")
-			_active_help_request_id = ""
-			speak("Your inventory is full. I still have this item.")
-			return
-		elif transfer_result != "ok":
+		if transfer_result != "ok":
 			mode = "TAKEOVER_TASK"
 
 	var updated: Dictionary = {}
@@ -1726,7 +1623,7 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 		_active_step_started = false
 		_active_help_request_id = accepted_request_id
 
-	set_waiting_for_help(false, "")
+	_waiting_for_help = false
 	speak("Task handoff accepted. You take over this order.")
 	var players := get_tree().get_nodes_in_group("player")
 	if not players.is_empty():
@@ -1761,9 +1658,7 @@ func _transfer_item_to_player_for_handoff(payload: Dictionary) -> String:
 		return "player_unavailable"
 	var task_id := str(payload.get("task_id", ""))
 	var preferred := str(payload.get("item_needed", "")).strip_edges()
-	var idx := _find_inventory_item_index_for_task(task_id, preferred, true)
-	if idx == -1 and preferred != "":
-		idx = inventory.find_item(preferred)
+	var idx := _find_inventory_item_index_for_task(task_id, preferred)
 	if idx == -1:
 		return "missing_item"
 	if idx < 0 or idx >= inventory.items.size():
@@ -1785,8 +1680,6 @@ func _transfer_item_to_player_for_handoff(payload: Dictionary) -> String:
 		inventory.emit_signal("inventory_changed", inventory.items)
 		return "player_full"
 	inventory.emit_signal("inventory_changed", inventory.items)
-	if inventory.items.is_empty():
-		bt_runner.bb["carrying_item"] = false
 	return "ok"
 
 func _is_task_declined_for_scenario(task_id: String, scenario: String) -> bool:
@@ -1840,7 +1733,7 @@ func _effective_workload_task_count(tasks: Array[Dictionary]) -> int:
 func _has_transferable_item_for_task(task_id: String, item_name: String) -> bool:
 	if inventory == null:
 		return false
-	return _find_inventory_item_index_for_task(task_id, item_name, false) != -1
+	return _find_inventory_item_index_for_task(task_id, item_name) != -1
 
 func _on_help_request_resolved(request: Dictionary) -> void:
 	if request.is_empty():
@@ -1851,21 +1744,6 @@ func _on_help_request_resolved(request: Dictionary) -> void:
 	var req_id = str(request.get("id", ""))
 	if _active_help_request_id == req_id:
 		_active_help_request_id = ""
-
-func _on_agent_velocity_computed(safe_velocity: Vector2) -> void:
-	if _waiting_for_help:
-		_moving = false
-		velocity = Vector2.ZERO
-		move_and_slide()
-		return
-
-	if safe_velocity.length() < 0.1:
-		_moving = false
-		velocity = Vector2.ZERO
-	else:
-		_moving = true
-		velocity = safe_velocity
-	move_and_slide()
 
 func _update_anim(v: Vector2) -> void:
 	var moving := v.length() > 1.0
@@ -1927,22 +1805,13 @@ func _on_directed_utterance_generated(request_id: String, utterance: String, _me
 func needs_help() -> bool:
 	return _waiting_for_help
 
-func set_waiting_for_help(waiting: bool, item_name: String):
-	# Legacy compatibility shim: stuck/pick-fail no longer creates player-facing
-	# handoff requests. Calls that try to enter this state now collapse to a clear.
-	_waiting_for_help = waiting
-	_help_item_needed = item_name
-	if not waiting:
-		return
-
-	_waiting_for_help = false
-
 func start_trial_task_handoff(task_id: String, item_name: String) -> void:
 	_trial_handoff_armed_task_id = task_id
 	if _trial_handoff_pending_task_id == "":
 		_trial_handoff_pending_task_id = task_id
 	if _trial_handoff_item_needed == "":
 		_trial_handoff_item_needed = item_name
+	_trial_handoff_release_requested = true
 	_trial_stationary_pause = false
 	_waiting_for_help = false
 	bt_runner.bb["planned_actions"] = []
@@ -1956,4 +1825,33 @@ func set_trial_stationary_pause(paused: bool) -> void:
 	_trial_stationary_pause = paused
 	if paused:
 		bt_runner.bb["planned_actions"] = []
+		if agent != null:
+			agent.target_position = global_position
+			agent.set_velocity(Vector2.ZERO)
 		velocity = Vector2.ZERO
+		move_and_slide()
+
+func _trial_handoff_wait_position() -> Vector2:
+	var locations: Dictionary = bt_runner.bb.get("locations", {})
+	var marker_pos = locations.get(ROBOT_BASE_MARKER, null)
+	if marker_pos is Vector2:
+		return marker_pos
+	return global_position
+
+func _is_at_trial_handoff_wait_point() -> bool:
+	return global_position.distance_to(_trial_handoff_wait_position()) <= TRIAL_HANDOFF_WAIT_DISTANCE
+
+func _plan_trial_handoff_wait_position() -> void:
+	_plan_navigate_to_location(ROBOT_BASE_MARKER)
+
+func snap_to_trial_wait_marker_and_pause() -> void:
+	var target := _trial_handoff_wait_position()
+	global_position = target
+	bt_runner.bb["planned_actions"] = []
+	_active_step_started = false
+	_trial_stationary_pause = true
+	if agent != null:
+		agent.target_position = target
+		agent.set_velocity(Vector2.ZERO)
+	velocity = Vector2.ZERO
+	move_and_slide()
