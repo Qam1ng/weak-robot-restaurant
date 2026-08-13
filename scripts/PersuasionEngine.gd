@@ -122,11 +122,11 @@ static func build_assignment_buckets(context: Dictionary) -> Dictionary:
 		"battery_mode_bucket": battery_mode_bucket
 	}
 
-static func render_request_dialogue(strategy: String, payload: Dictionary, escalation_count: int, nickname: String = "") -> Dictionary:
+static func render_request_dialogue(strategy: String, payload: Dictionary, nickname: String = "") -> Dictionary:
 	_ensure_rng_seeded()
 	var opener_entry := _random_template_entry(OPENER_LIBRARY)
 	var bridge_entry := _random_template_entry(BRIDGE_LIBRARY)
-	var delegation_render := pick_template(strategy, payload, escalation_count)
+	var delegation_render := pick_template(strategy, payload)
 	var opener_text := _format_opener_with_nickname(str(opener_entry.get("template_text", "")), nickname)
 	return {
 		"opener_template_id": str(opener_entry.get("template_id", "")),
@@ -137,11 +137,10 @@ static func render_request_dialogue(strategy: String, payload: Dictionary, escal
 		"bridge_reply_text": BRIDGE_REPLY_TEXT,
 		"template_id": str(delegation_render.get("template_id", "")),
 		"template_text": str(delegation_render.get("template_text", "")),
-		"utterance": str(delegation_render.get("utterance", "")),
-		"escalation": delegation_render.get("escalation", {})
+		"utterance": str(delegation_render.get("utterance", ""))
 	}
 
-static func pick_template(strategy: String, payload: Dictionary, escalation_count: int) -> Dictionary:
+static func pick_template(strategy: String, payload: Dictionary) -> Dictionary:
 	_ensure_rng_seeded()
 	var item := str(payload.get("item_needed", "item")).strip_edges()
 	if item == "":
@@ -151,21 +150,14 @@ static func pick_template(strategy: String, payload: Dictionary, escalation_coun
 		return {
 			"template_id": "",
 			"template_text": "",
-			"utterance": "Please take over the %s order now." % item,
-			"escalation": build_escalation(escalation_count)
+			"utterance": "Please take over the %s order now." % item
 		}
 	var entry: Dictionary = _random_template_entry(entries)
 	var base_text := str(entry.get("template_text", "")).replace("{item}", item)
-	var escalation := build_escalation(escalation_count)
-	var utterance := base_text
-	var prefix := str(escalation.get("prefix", "")).strip_edges()
-	if prefix != "":
-		utterance = "%s %s" % [prefix, base_text]
 	return {
 		"template_id": str(entry.get("template_id", "")),
 		"template_text": str(entry.get("template_text", "")),
-		"utterance": utterance,
-		"escalation": escalation
+		"utterance": base_text
 	}
 
 static func get_template_records() -> Array[Dictionary]:
@@ -197,19 +189,6 @@ static func get_template_records() -> Array[Dictionary]:
 				"template_text": str(entry.get("template_text", ""))
 			})
 	return records
-
-static func build_escalation(escalation_count: int) -> Dictionary:
-	if escalation_count <= 0:
-		return {}
-	if escalation_count >= 2:
-		return {
-			"count": escalation_count,
-			"prefix": "This is my final request."
-		}
-	return {
-		"count": escalation_count,
-		"prefix": "Following up on my previous request."
-	}
 
 static func _assignment_key_from_buckets(buckets: Dictionary) -> String:
 	return "urgency:%s|busyness:%s|player_active_tasks:%s|battery:%s" % [

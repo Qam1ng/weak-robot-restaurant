@@ -134,6 +134,7 @@ const SURVEY_MODE_TIPI := "tipi"
 const SURVEY_MODE_RESULT := "result"
 var _score_game_over: bool = false
 var _run_end_active: bool = false
+var _game_run_logged: bool = false
 var _tutorial_started: bool = false
 var _customer_history_page: int = 0
 var _pending_day_notice: int = 0
@@ -784,11 +785,13 @@ func _on_run_day_completed_notice(day: int) -> void:
 	if day <= 0 or not _formal_session_started:
 		return
 	if _score >= SCORE_WIN_THRESHOLD:
+		_log_game_run_once("win")
 		_show_run_end_prompt(
 			"You Win",
 			"Great work! You made it through Day %d with a score of %d." % [day, _score]
 		)
 	else:
+		_log_game_run_once("end_of_day_loss")
 		_show_run_end_prompt(
 			"Game Over",
 			"So close. Day %d is over, and you finished with %d, just short of making it through." % [day, _score]
@@ -903,10 +906,19 @@ func _check_score_game_over() -> void:
 	if _score > SCORE_FAIL_THRESHOLD:
 		return
 	_score_game_over = true
+	_log_game_run_once("score_threshold_loss")
 	_show_run_end_prompt(
 		"Game Over",
 		"Unfortunately, the restaurant fell too far behind. Your score reached %d." % _score
 	)
+
+func _log_game_run_once(run_outcome: String) -> void:
+	if _game_run_logged or not _formal_session_started:
+		return
+	var logger = get_node_or_null("/root/EpisodeLogger")
+	if logger and logger.has_method("log_game_run"):
+		logger.log_game_run(run_outcome, _score)
+		_game_run_logged = true
 
 func _show_run_end_prompt(title: String, body: String) -> void:
 	if _run_end_active:
@@ -2662,6 +2674,7 @@ func _begin_formal_session() -> void:
 	_pending_day_notice = 1
 	_run_end_active = false
 	_score_game_over = false
+	_game_run_logged = false
 	var robot = _trial_robot()
 	if robot != null and robot.has_method("set_trial_stationary_pause"):
 		robot.call("set_trial_stationary_pause", false)
@@ -2726,13 +2739,13 @@ func _reset_trial_world_state() -> void:
 		if robot.has_method("_clear_current_task_runtime"):
 			robot.call("_clear_current_task_runtime")
 		robot.set("_waiting_for_help", false)
-		robot.set("_help_item_needed", "")
 		robot.set("_active_help_request_id", "")
 	_score = 0
 	_success_count = 0
 	_failed_count = 0
 	_score_game_over = false
 	_run_end_active = false
+	_game_run_logged = false
 	_customer_history_page = 0
 	_last_player_live_task_ids.clear()
 	_refresh_score_label()

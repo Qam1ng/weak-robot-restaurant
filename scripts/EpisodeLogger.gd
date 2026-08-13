@@ -26,7 +26,7 @@ const DEBUG_EVENT_TYPES := {
 
 const DEBUG_EVENT_REASONS := {
 	"": true,
-	"too_many_evasions": true,
+	"navigation_retry_exhausted": true,
 	"no_navigation_path": true,
 	"stuck_retry": true,
 	"missing_inventory": true,
@@ -36,8 +36,6 @@ const DEBUG_EVENT_REASONS := {
 	"delivery_state_invalid": true,
 	"customer_cannot_receive_item": true,
 	"customer_missing": true,
-	"task_deadline_expired": true,
-	"customer_drink_timeout": true,
 }
 
 const DEBUG_ROBOT_STEPS := {
@@ -87,7 +85,7 @@ func _ensure_csv_header() -> void:
 	if not FileAccess.file_exists(csv_path):
 		var file = FileAccess.open(csv_path, FileAccess.WRITE)
 		if file:
-			file.store_line("episode_id,timestamp,success,player_helped,help_item,duration_ms,failure_reason")
+			file.store_line("episode_id,timestamp,success,duration_ms,failure_reason")
 			file.close()
 
 # ==================== Public API ====================
@@ -111,9 +109,7 @@ func start_episode(_food_item: String, _customer_seat: String, _customer_pos: Ve
 
 		"outcome": {
 			"success": false,
-			"failure_reason": null,
-			"player_helped": false,
-			"help_item": null
+			"failure_reason": null
 		}
 	}
 	
@@ -122,19 +118,6 @@ func start_episode(_food_item: String, _customer_seat: String, _customer_pos: Ve
 	print("[EpisodeLogger] Started episode: ", episode_id)
 	episode_started.emit(episode_id)
 	return episode_id
-
-func log_event(event_type: String, data: Dictionary = {}) -> void:
-	if not _episode_active:
-		return
-
-	match event_type:
-		"player_help":
-			_current_episode["outcome"]["player_helped"] = true
-			if data.has("item_given"):
-				_current_episode["outcome"]["help_item"] = data["item_given"]
-
-func log_position(pos: Vector2) -> void:
-	pass
 
 func end_episode(success: bool, failure_reason: String = "") -> Dictionary:
 	if not _episode_active:
@@ -160,18 +143,15 @@ func end_episode(success: bool, failure_reason: String = "") -> Dictionary:
 		"episode_id": _current_episode.get("episode_id", ""),
 		"timestamp": _current_episode.get("timestamp_start", ""),
 		"success": success,
-		"help_item": str(_current_episode.get("outcome", {}).get("help_item", "")),
 		"failure_reason": failure_reason,
-		"duration_ms": duration_ms,
-		"player_helped": bool(_current_episode.get("outcome", {}).get("player_helped", false))
+		"duration_ms": duration_ms
 	})
 	
 	var result = _current_episode.duplicate(true)
 	
 	print("[EpisodeLogger] Ended episode: ", _current_episode["episode_id"], 
 		  " | Success: ", success, 
-		  " | Duration: ", duration_ms, "ms",
-		  " | Player helped: ", _current_episode["outcome"]["player_helped"])
+		  " | Duration: ", duration_ms, "ms")
 	
 	episode_ended.emit(result)
 	
@@ -203,6 +183,16 @@ func log_participant_profile(profile: Dictionary) -> void:
 		"question_count": int(profile.get("question_count", 0))
 	}
 	_post_remote_log("participant_upsert", payload)
+
+func log_game_run(run_outcome: String, final_score: int) -> void:
+	var payload := {
+		"run_id": _session_id,
+		"participant_id": _participant_id,
+		"session_id": _session_id,
+		"run_outcome": run_outcome,
+		"final_score": final_score
+	}
+	_post_remote_log("game_run_upsert", payload)
 
 func log_api_failure(api_name: String, event_type: String, http_status: int, error_code: String, error_message: String, request_id: String = "", episode_id: String = "", client_timestamp_ms: int = -1) -> void:
 	var failure_id := "fail_%s_%04d" % [_session_id, _remote_failure_counter]
@@ -268,7 +258,7 @@ func log_delegation_templates(templates: Array[Dictionary]) -> void:
 		})
 	_delegation_templates_logged = true
 
-func log_help_request_event(_event_type: String, request: Dictionary, _extra: Dictionary = {}) -> void:
+func log_help_request_event(request: Dictionary) -> void:
 	if request.is_empty():
 		return
 	var payload: Dictionary = request.get("payload", {})
@@ -289,7 +279,6 @@ func log_help_request_event(_event_type: String, request: Dictionary, _extra: Di
 		"status": str(request.get("status", "")),
 		"created_at_ms": int(request.get("created_at_ms", 0)),
 		"task_id": str(payload.get("task_id", "")),
-		"order_kind": str(payload.get("order_kind", "")),
 		"item_needed": str(payload.get("item_needed", "")),
 		"reason": str(payload.get("reason", "")),
 		"slack_ms": int(payload.get("slack_ms", 0)),
@@ -311,8 +300,6 @@ func log_help_request_event(_event_type: String, request: Dictionary, _extra: Di
 		"utterance": str(request.get("utterance", "")),
 		"response": str(request.get("last_response", "")),
 		"response_latency_ms": int(request.get("response_latency_ms", -1)),
-		"escalation_count": int(request.get("escalation_count", 0)),
-		"final_response": str(request.get("final_response", "")),
 		"resolution_path": str(request.get("resolution_path", "")),
 		"task_completed": bool(request.get("task_completed", false)),
 		"delivery_actor": str(request.get("delivery_actor", "")),
@@ -372,7 +359,7 @@ func _append_csv() -> void:
 		# Create new file with header
 		file = FileAccess.open(csv_path, FileAccess.WRITE)
 		if file:
-			file.store_line("episode_id,timestamp,success,player_helped,help_item,duration_ms,failure_reason")
+			file.store_line("episode_id,timestamp,success,duration_ms,failure_reason")
 	
 	if file:
 		file.seek_end()
@@ -383,8 +370,6 @@ func _append_csv() -> void:
 			ep.get("episode_id", ""),
 			ep.get("timestamp_start", ""),
 			str(outcome.get("success", false)).to_lower(),
-			str(outcome.get("player_helped", false)).to_lower(),
-			str(outcome.get("help_item", "")),
 			str(ep.get("duration_ms", 0)),
 			str(outcome.get("failure_reason", ""))
 		]

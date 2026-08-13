@@ -21,7 +21,6 @@ var inventory: Inventory
 
 # ---------- Interaction ----------
 var _waiting_for_help: bool = false
-var _help_item_needed: String = ""
 
 # ---------- Episode Tracking ----------
 var _episode_active: bool = false
@@ -114,9 +113,6 @@ class ActExecutePlan extends Core.Task:
 			var params = action_data.get("params", {})
 			current_node = _create_action_node(action_name, params, bb, actor)
 			current_action_signature = next_signature
-			var logger = actor.get_node_or_null("/root/EpisodeLogger")
-			if logger:
-				logger.log_event("action_start", {"action": action_name, "params": params})
 			
 			if not current_node:
 				current_action_signature = ""
@@ -126,10 +122,6 @@ class ActExecutePlan extends Core.Task:
 		var status = current_node.tick(bb, actor)
 		
 		if status == Core.Status.SUCCESS:
-			var logger = actor.get_node_or_null("/root/EpisodeLogger")
-			if logger:
-				logger.log_event("action_complete", {"action": action_name, "success": true})
-			
 			# Actions may synchronously change the plan through game-state signals.
 			# Only remove the action that was actually ticked, never a replacement plan.
 			if bb.has("planned_actions") and not bb.planned_actions.is_empty():
@@ -259,12 +251,6 @@ func _physics_process(dt: float) -> void:
 	# Animation logic: based on current real velocity, not path preview
 	_update_anim(velocity)
 	
-	# Episode position tracking
-	if _episode_active:
-		var logger = get_node_or_null("/root/EpisodeLogger")
-		if logger:
-			logger.log_position(global_position)
-
 	_check_episode_completion()
 
 func _check_episode_completion() -> void:
@@ -324,9 +310,6 @@ func _check_episode_completion() -> void:
 	# If BT reported failure for this step, never advance step state.
 	if bool(bt_runner.bb.get("last_plan_failed", false)):
 		bt_runner.bb["last_plan_failed"] = false
-		bt_runner.bb.erase("help_reason")
-		bt_runner.bb.erase("help_stuck_position")
-		bt_runner.bb.erase("help_evasion_attempts")
 		bt_runner.bb.erase("action_failure_reason")
 		_active_step_started = false
 		return
@@ -921,7 +904,6 @@ func _clear_current_task_runtime() -> void:
 	bt_runner.bb["last_plan_failed"] = false
 	bt_runner.bb["planned_actions"] = []
 	_waiting_for_help = false
-	_help_item_needed = ""
 	_active_help_request_id = ""
 	_last_debug_step_key = ""
 	_trial_handoff_armed_task_id = ""
@@ -1568,7 +1550,7 @@ func _on_help_request_updated(request: Dictionary) -> void:
 	if _active_help_request_id == "" or req_id != _active_help_request_id:
 		return
 	var status = str(request.get("status", ""))
-	var final_response = str(request.get("final_response", ""))
+	var response = str(request.get("last_response", ""))
 	var payload: Dictionary = request.get("payload", {})
 	var reason := str(payload.get("reason", ""))
 	var task_id := str(payload.get("task_id", ""))
@@ -1578,14 +1560,14 @@ func _on_help_request_updated(request: Dictionary) -> void:
 		if reason == "battery_emergency":
 			_battery_pressure_declined_until_recharge = false
 		_apply_handoff_accept(request)
-	elif status == "resolved" and final_response == "decline":
+	elif status == "resolved" and response == "decline":
 		if reason == "robot_over_threshold_post_take_order" and task_id != "":
 			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD)
 		elif reason == "deadline_critical" and task_id != "":
 			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE)
 		elif reason == "battery_emergency":
 			_battery_pressure_declined_until_recharge = true
-		set_waiting_for_help(false, "")
+		_waiting_for_help = false
 		# A decline must never resume the interrupted task while battery is in an
 		# emergency state, regardless of which scenario produced the request.
 		if _battery_mode == BATTERY_MODE_EMERGENCY:
@@ -1641,7 +1623,7 @@ func _apply_handoff_accept(request: Dictionary) -> void:
 		_active_step_started = false
 		_active_help_request_id = accepted_request_id
 
-	set_waiting_for_help(false, "")
+	_waiting_for_help = false
 	speak("Task handoff accepted. You take over this order.")
 	var players := get_tree().get_nodes_in_group("player")
 	if not players.is_empty():
@@ -1822,16 +1804,6 @@ func _on_directed_utterance_generated(request_id: String, utterance: String, _me
 # ---------- Interaction Interface ----------
 func needs_help() -> bool:
 	return _waiting_for_help
-
-func set_waiting_for_help(waiting: bool, item_name: String):
-	# Legacy compatibility shim: stuck/pick-fail no longer creates player-facing
-	# handoff requests. Calls that try to enter this state now collapse to a clear.
-	_waiting_for_help = waiting
-	_help_item_needed = item_name
-	if not waiting:
-		return
-
-	_waiting_for_help = false
 
 func start_trial_task_handoff(task_id: String, item_name: String) -> void:
 	_trial_handoff_armed_task_id = task_id

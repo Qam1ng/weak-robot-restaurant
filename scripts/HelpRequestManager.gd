@@ -72,10 +72,7 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 		"payload": copied_payload,
 		"created_at_ms": now_ms,
 		"last_prompt_ms": 0,
-		"escalation_count": 0,
-		"escalation": {},
 		"urgency": urgency,
-		"final_response": "",
 		"resolution_path": "",
 		"context_snapshot": {},
 		"strategy": "",
@@ -97,19 +94,12 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 		"score_delta": 0,
 		"delegation_scenario": delegation_scenario,
 		"request_index_in_session": _request_index_in_session,
-		"experiment": {},
 		"assignment_pending": true
 	}
 
 	var context = _build_context(robot, req, options)
 	req["context_snapshot"] = context
 	req["nickname"] = str(context.get("personality", {}).get("nickname", "")).strip_edges()
-	var exp = _experiment_config()
-	var exp_snapshot := {}
-	if exp and exp.has_method("get_snapshot"):
-		exp_snapshot = exp.get_snapshot()
-	req["experiment"] = exp_snapshot
-
 	var engine = _persuasion_engine()
 	if engine and engine.has_method("build_assignment_buckets"):
 		req["assignment_buckets"] = engine.build_assignment_buckets(context)
@@ -160,7 +150,7 @@ func mark_prompted(request_id: String) -> void:
 		return
 	req["last_prompt_ms"] = _gameplay_now_ms()
 	_requests_by_id[request_id] = req
-	_log_help_event("prompted", req)
+	_log_help_event(req)
 	request_updated.emit(_copy(req))
 
 func respond(request_id: String, response: String) -> Dictionary:
@@ -179,10 +169,8 @@ func respond(request_id: String, response: String) -> Dictionary:
 	match response:
 		RESPONSE_ACCEPT:
 			req["status"] = STATUS_ACCEPTED
-			req["final_response"] = RESPONSE_ACCEPT
 		RESPONSE_DECLINE:
 			req["status"] = STATUS_RESOLVED
-			req["final_response"] = RESPONSE_DECLINE
 			req["resolution_path"] = "declined"
 		_:
 			return _copy(req)
@@ -190,10 +178,9 @@ func respond(request_id: String, response: String) -> Dictionary:
 	_requests_by_id[request_id] = req
 	var copied := _copy(req)
 	print("[HelpRequest] Response ", response, " -> ", request_id, " status=", copied.get("status", ""))
-	_log_help_event("responded", req, {"response": response})
+	_log_help_event(req)
 	request_updated.emit(copied)
 	if str(req.get("status", "")) == STATUS_RESOLVED:
-		_log_help_event("resolved", req)
 		request_resolved.emit(copied)
 	return copied
 
@@ -205,15 +192,14 @@ func complete_request(request_id: String, resolution_path: String = "cooperative
 		return _copy(req)
 
 	req["status"] = STATUS_RESOLVED
-	if str(req.get("final_response", "")) == "":
-		req["final_response"] = RESPONSE_ACCEPT
+	if str(req.get("last_response", "")) == "":
+		req["last_response"] = RESPONSE_ACCEPT
 	req["resolution_path"] = resolution_path
 	_requests_by_id[request_id] = req
 
 	var copied := _copy(req)
 	print("[HelpRequest] Completed ", request_id, " path=", resolution_path)
-	_log_help_event("completed", req)
-	_log_help_event("resolved", req)
+	_log_help_event(req)
 	request_updated.emit(copied)
 	request_resolved.emit(copied)
 	return copied
@@ -228,8 +214,7 @@ func cancel_request(request_id: String, resolution_path: String = "invalidated")
 	req["resolution_path"] = resolution_path
 	_requests_by_id[request_id] = req
 	var copied := _copy(req)
-	_log_help_event("canceled", req)
-	_log_help_event("resolved", req)
+	_log_help_event(req)
 	request_updated.emit(copied)
 	request_resolved.emit(copied)
 	return copied
@@ -359,7 +344,7 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 	req["assignment_pending"] = false
 	_requests_by_id[request_id] = req
 	print("[HelpRequest] Created ", request_id)
-	_log_help_event("created", req)
+	_log_help_event(req)
 	var copied := _copy(req)
 	request_created.emit(copied)
 
@@ -371,7 +356,6 @@ func _refresh_request_surface(req: Dictionary) -> void:
 		rendered = engine.render_request_dialogue(
 			str(req.get("strategy", authority_strategy)),
 			req.get("payload", {}),
-			int(req.get("escalation_count", 0)),
 			str(req.get("nickname", ""))
 		)
 	req["opener_template_id"] = str(rendered.get("opener_template_id", ""))
@@ -382,7 +366,6 @@ func _refresh_request_surface(req: Dictionary) -> void:
 	req["bridge_reply_text"] = str(rendered.get("bridge_reply_text", ""))
 	req["template_id"] = str(rendered.get("template_id", ""))
 	req["utterance"] = str(rendered.get("utterance", ""))
-	req["escalation"] = rendered.get("escalation", {})
 
 func _should_use_backend_assignment() -> bool:
 	return OS.has_feature("web")
@@ -459,14 +442,14 @@ func _episode_logger() -> Node:
 func _experiment_config() -> Node:
 	return get_node_or_null("/root/ExperimentConfig")
 
-func _log_help_event(event_type: String, req: Dictionary, extra: Dictionary = {}) -> void:
+func _log_help_event(req: Dictionary) -> void:
 	var logger = _episode_logger()
 	if logger == null or not logger.has_method("log_help_request_event"):
 		return
 	var exp = _experiment_config()
 	if exp and exp.has_method("is_help_logging_enabled") and not bool(exp.is_help_logging_enabled()):
 		return
-	logger.log_help_request_event(event_type, req, extra)
+	logger.log_help_request_event(req)
 
 func _on_task_completed(task: Dictionary) -> void:
 	_attach_task_outcome(task, true)
@@ -494,10 +477,7 @@ func _attach_task_outcome(task: Dictionary, completed: bool) -> void:
 	req["customer_timed_out"] = (not completed) and (failure_reason == "task_deadline_expired" or failure_reason == "customer_drink_timeout")
 	req["score_delta"] = _score_delta_for_outcome(order_kind, completed)
 	_requests_by_id[request_id] = req
-	_log_help_event("task_outcome_attached", req, {
-		"task_id": task_id,
-		"completed": completed
-	})
+	_log_help_event(req)
 	request_updated.emit(_copy(req))
 
 func _latest_request_id_for_task(task_id: String) -> String:

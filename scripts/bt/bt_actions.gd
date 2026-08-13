@@ -118,12 +118,9 @@ class ActNavigate extends Core.Task:
 					})
 
 				if _retry_count >= MAX_RETRY_ATTEMPTS or _total_stuck_time_ms >= STUCK_TIMEOUT_MS:
-					bb["help_reason"] = "too_many_evasions"
-					bb["help_stuck_position"] = actor.global_position
-					bb["help_evasion_attempts"] = _retry_count
 					print("[ActNavigate][Fail] from=", actor.global_position, " to=", _final_target, " retries=", _retry_count, " stuck_ms=", _total_stuck_time_ms, " path_points=", server_path.size())
 					BT_Actions._emit_runtime_debug(actor, "navigation_failed", {
-						"event_reason": "too_many_evasions" if server_path.size() >= 2 else "no_navigation_path",
+						"event_reason": "navigation_retry_exhausted" if server_path.size() >= 2 else "no_navigation_path",
 						"robot_target_x": _final_target.x,
 						"robot_target_y": _final_target.y,
 						"has_navigation_path": server_path.size() >= 2,
@@ -184,9 +181,7 @@ class ActPickItem extends Core.Task:
 		if _start_time == 0:
 			_start_time = BT_Actions._gameplay_now_ms(actor)
 			actor.speak("Picking up...")
-			BT_Actions._emit_runtime_debug(actor, "pickup_started", {
-				"item_name": str(bb.get("item_name", "Unknown Item"))
-			})
+			BT_Actions._emit_runtime_debug(actor, "pickup_started")
 			actor.velocity = Vector2.ZERO
 			return Core.Status.RUNNING
 
@@ -198,7 +193,7 @@ class ActPickItem extends Core.Task:
 			var target_pos: Vector2 = bb["locations"][item_name]
 			if actor.global_position.distance_to(target_pos) > 150.0:
 				actor.speak("I'm too far away!")
-				BT_Actions._emit_runtime_debug(actor, "pickup_failed", {"event_reason": "too_far_from_item", "item_name": item_name})
+				BT_Actions._emit_runtime_debug(actor, "pickup_failed", {"event_reason": "too_far_from_item"})
 				return Core.Status.FAILURE
 
 		var inventory = actor.get_node_or_null("Inventory")
@@ -208,13 +203,13 @@ class ActPickItem extends Core.Task:
 		if inventory.is_full():
 			if actor.has_method("_handle_pickup_inventory_full"):
 				actor.call("_handle_pickup_inventory_full", item_name)
-			BT_Actions._emit_runtime_debug(actor, "pickup_failed", {"event_reason": "inventory_full", "item_name": item_name})
+			BT_Actions._emit_runtime_debug(actor, "pickup_failed", {"event_reason": "inventory_full"})
 			return Core.Status.FAILURE
 
 		var item_node = _find_item_in_scene(actor, item_name)
 		if not item_node:
 			actor.speak("I can't find " + item_name + " right now.")
-			BT_Actions._emit_runtime_debug(actor, "pickup_failed", {"event_reason": "item_missing", "item_name": item_name})
+			BT_Actions._emit_runtime_debug(actor, "pickup_failed", {"event_reason": "item_missing"})
 			return Core.Status.FAILURE
 
 		var atlas: Texture2D = null
