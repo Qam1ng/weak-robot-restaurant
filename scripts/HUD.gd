@@ -122,6 +122,7 @@ const SCORE_PER_FAILURE := -6
 const SCORE_PER_DRINK_SUCCESS := 1
 const SCORE_PER_DRINK_FAILURE := -3
 const SCORE_FAIL_THRESHOLD := -30
+const SCORE_WIN_THRESHOLD := 0
 const SURVEY_PANEL_BASE_SIZE := Vector2(580.0, 300.0)
 const SURVEY_PANEL_RESULT_HEIGHT := 220.0
 const SURVEY_PANEL_MARGIN := 24.0
@@ -782,10 +783,16 @@ func _on_day_changed_notice(day: int) -> void:
 func _on_run_day_completed_notice(day: int) -> void:
 	if day <= 0 or not _formal_session_started:
 		return
-	_show_run_end_prompt(
-		"Shift Complete",
-		"Day %d is complete.\nYou kept the score above %d and finished the shift." % [day, SCORE_FAIL_THRESHOLD]
-	)
+	if _score >= SCORE_WIN_THRESHOLD:
+		_show_run_end_prompt(
+			"You Win",
+			"Great work! You made it through Day %d with a score of %d." % [day, _score]
+		)
+	else:
+		_show_run_end_prompt(
+			"Game Over",
+			"So close. Day %d is over, and you finished with %d, just short of making it through." % [day, _score]
+		)
 
 func _on_task_created(task: Dictionary) -> void:
 	var payload: Dictionary = task.get("payload", {})
@@ -898,7 +905,7 @@ func _check_score_game_over() -> void:
 	_score_game_over = true
 	_show_run_end_prompt(
 		"Game Over",
-		"Score reached %d (threshold %d).\nShift failed." % [_score, SCORE_FAIL_THRESHOLD]
+		"Unfortunately, the restaurant fell too far behind. Your score reached %d." % _score
 	)
 
 func _show_run_end_prompt(title: String, body: String) -> void:
