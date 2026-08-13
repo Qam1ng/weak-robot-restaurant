@@ -62,6 +62,7 @@ const HELP_DIR = "user://data/help_requests/"
 const HELP_JSONL_FILE = "user://data/help_requests/help_requests.jsonl"
 const REPLAY_DIR = "user://data/replay/"
 const REPLAY_JSONL_FILE = "user://data/replay/replay_events.jsonl"
+const PERSUASION_ENGINE_PATH := "res://scripts/PersuasionEngine.gd"
 
 var _session_id: String = ""
 const API_LOG_URL := "https://us-central1-weak-robot-restaurant-web.cloudfunctions.net/apiLog"
@@ -74,6 +75,7 @@ func _ready() -> void:
 	_participant_id = _session_id
 	_qualtrics_id = _read_qualtrics_id_from_url()
 	_session_source = "qualtrics" if _qualtrics_id != "" else "standalone_test"
+	_log_initial_delegation_templates()
 	if _should_write_local_files():
 		# Ensure data directory exists
 		DirAccess.make_dir_recursive_absolute(DATA_DIR.replace("user://", OS.get_user_data_dir() + "/"))
@@ -267,6 +269,11 @@ func log_delegation_templates(templates: Array[Dictionary]) -> void:
 			"template_text": str(template.get("template_text", ""))
 		})
 	_delegation_templates_logged = true
+
+func _log_initial_delegation_templates() -> void:
+	var engine = load(PERSUASION_ENGINE_PATH)
+	if engine and engine.has_method("get_template_records"):
+		log_delegation_templates(engine.get_template_records())
 
 func log_help_request_event(request: Dictionary) -> void:
 	if request.is_empty():

@@ -46,12 +46,6 @@ func _ready() -> void:
 			board.task_completed.connect(_on_task_completed)
 		if board.has_signal("task_failed") and not board.task_failed.is_connected(_on_task_failed):
 			board.task_failed.connect(_on_task_failed)
-	var logger = _episode_logger()
-	if logger and logger.has_method("log_delegation_templates"):
-		var engine = _persuasion_engine()
-		if engine and engine.has_method("get_template_records"):
-			logger.log_delegation_templates(engine.get_template_records())
-
 func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary = {}) -> Dictionary:
 	if robot == null or not is_instance_valid(robot):
 		return {}
