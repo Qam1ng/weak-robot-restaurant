@@ -21,6 +21,10 @@ const STRATEGIES = [
   "social_proof",
   "scarcity",
 ];
+const SESSION_SOURCES = new Set([
+  "qualtrics",
+  "standalone_test",
+]);
 
 setGlobalOptions({
   maxInstances: 10,
@@ -262,6 +266,12 @@ async function upsertParticipantLog(sessionId, platform, buildVersion, data) {
   const doc = {
     participant_id: participantId,
     session_id: sanitizeText(data.session_id, sessionId),
+    session_source: sanitizeEnumText(
+        data.session_source,
+        SESSION_SOURCES,
+        "standalone_test",
+    ),
+    qualtrics_id: sanitizeText(data.qualtrics_id, ""),
     nickname: sanitizeText(data.nickname, ""),
     platform,
     build_version: buildVersion,
@@ -285,6 +295,11 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
   const doc = {
     participant_id: sanitizeText(data.participant_id, participantId),
     session_id: sanitizeText(data.session_id, sessionId),
+    session_source: sanitizeEnumText(
+        data.session_source,
+        SESSION_SOURCES,
+        "standalone_test",
+    ),
     nickname: sanitizeText(data.nickname, ""),
     episode_id: sanitizeText(data.episode_id, ""),
     request_id: requestId,
@@ -353,6 +368,11 @@ async function upsertEpisodeLog(sessionId, participantId, data) {
   const doc = {
     participant_id: sanitizeText(data.participant_id, participantId),
     session_id: sanitizeText(data.session_id, sessionId),
+    session_source: sanitizeEnumText(
+        data.session_source,
+        SESSION_SOURCES,
+        "standalone_test",
+    ),
     episode_id: episodeId,
     timestamp: sanitizeText(data.timestamp, ""),
     success: asBoolean(data.success, false),
@@ -373,6 +393,11 @@ async function upsertGameRunLog(sessionId, participantId, data) {
     run_id: runId,
     participant_id: sanitizeText(data.participant_id, participantId),
     session_id: sanitizeText(data.session_id, sessionId),
+    session_source: sanitizeEnumText(
+        data.session_source,
+        SESSION_SOURCES,
+        "standalone_test",
+    ),
     run_outcome: sanitizeEnumText(data.run_outcome, new Set([
       "win",
       "end_of_day_loss",
@@ -394,6 +419,11 @@ async function upsertApiFailureLog(sessionId, data) {
   const doc = {
     failure_id: failureId,
     session_id: sanitizeText(data.session_id, sessionId),
+    session_source: sanitizeEnumText(
+        data.session_source,
+        SESSION_SOURCES,
+        "standalone_test",
+    ),
     episode_id: sanitizeText(data.episode_id, ""),
     request_id: sanitizeText(data.request_id, ""),
     api_name: sanitizeText(data.api_name, ""),
@@ -417,6 +447,11 @@ async function upsertRuntimeDebugEventLog(sessionId, data) {
   const doc = {
     debug_event_id: debugEventId,
     session_id: sanitizeText(data.session_id, sessionId),
+    session_source: sanitizeEnumText(
+        data.session_source,
+        SESSION_SOURCES,
+        "standalone_test",
+    ),
     episode_id: sanitizeText(data.episode_id, ""),
     request_id: sanitizeText(data.request_id, ""),
     timestamp_ms: asNumber(data.timestamp_ms, 0),

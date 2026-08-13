@@ -8,6 +8,8 @@ var _episode_active: bool = false
 var _episode_start_time: int = 0
 var _episode_counter: int = 0
 var _participant_id: String = ""
+var _qualtrics_id: String = ""
+var _session_source: String = "standalone_test"
 var _delegation_templates_logged := false
 var _remote_failure_counter: int = 0
 var _runtime_debug_counter: int = 0
@@ -70,6 +72,8 @@ signal episode_ended(episode_data: Dictionary)
 func _ready() -> void:
 	_session_id = _generate_session_id()
 	_participant_id = _session_id
+	_qualtrics_id = _read_qualtrics_id_from_url()
+	_session_source = "qualtrics" if _qualtrics_id != "" else "standalone_test"
 	if _should_write_local_files():
 		# Ensure data directory exists
 		DirAccess.make_dir_recursive_absolute(DATA_DIR.replace("user://", OS.get_user_data_dir() + "/"))
@@ -140,6 +144,7 @@ func end_episode(success: bool, failure_reason: String = "") -> Dictionary:
 	_post_remote_log("episode_upsert", {
 		"participant_id": _participant_id,
 		"session_id": _session_id,
+		"session_source": _session_source,
 		"episode_id": _current_episode.get("episode_id", ""),
 		"timestamp": _current_episode.get("timestamp_start", ""),
 		"success": success,
@@ -177,6 +182,8 @@ func log_participant_profile(profile: Dictionary) -> void:
 	var payload := {
 		"participant_id": _participant_id,
 		"session_id": _session_id,
+		"session_source": _session_source,
+		"qualtrics_id": _qualtrics_id,
 		"nickname": str(profile.get("nickname", "")),
 		"tipi_responses": profile.get("tipi_responses", {}),
 		"tipi_scores": profile.get("tipi_scores", {}),
@@ -189,6 +196,7 @@ func log_game_run(run_outcome: String, final_score: int) -> void:
 		"run_id": _session_id,
 		"participant_id": _participant_id,
 		"session_id": _session_id,
+		"session_source": _session_source,
 		"run_outcome": run_outcome,
 		"final_score": final_score
 	}
@@ -200,6 +208,7 @@ func log_api_failure(api_name: String, event_type: String, http_status: int, err
 	var payload := {
 		"failure_id": failure_id,
 		"session_id": _session_id,
+		"session_source": _session_source,
 		"episode_id": episode_id if episode_id != "" else get_current_episode_id(),
 		"request_id": request_id,
 		"api_name": api_name,
@@ -219,6 +228,7 @@ func log_runtime_debug_event(event_type: String, data: Dictionary = {}) -> void:
 	var payload := {
 		"debug_event_id": "dbg_%s_%05d" % [_session_id, _runtime_debug_counter],
 		"session_id": _session_id,
+		"session_source": _session_source,
 		"episode_id": str(data.get("episode_id", get_current_episode_id())),
 		"request_id": str(data.get("request_id", "")),
 		"timestamp_ms": int(data.get("timestamp_ms", _gameplay_now_ms())),
@@ -271,6 +281,7 @@ func log_help_request_event(request: Dictionary) -> void:
 	var record := {
 		"participant_id": _participant_id,
 		"session_id": _session_id,
+		"session_source": _session_source,
 		"nickname": str(request.get("nickname", "")),
 		"episode_id": get_current_episode_id(),
 		"request_id": str(request.get("id", "")),
@@ -411,6 +422,12 @@ func _generate_session_id() -> String:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 	return "sess_%s_%06d" % [stamp, rng.randi_range(0, 999999)]
+
+func _read_qualtrics_id_from_url() -> String:
+	if not OS.has_feature("web"):
+		return ""
+	var value = JavaScriptBridge.eval("new URLSearchParams(window.location.search).get('qualtrics_id') || ''", true)
+	return str(value).strip_edges().left(256)
 
 func _post_remote_log(event_type: String, payload: Dictionary = {}, allow_failure_capture: bool = true) -> void:
 	if not _should_post_remote_logs():
