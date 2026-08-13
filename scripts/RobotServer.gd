@@ -1586,9 +1586,12 @@ func _on_help_request_updated(request: Dictionary) -> void:
 		elif reason == "battery_emergency":
 			_battery_pressure_declined_until_recharge = true
 		set_waiting_for_help(false, "")
-		_resume_robot_after_help_decline()
-		if _battery_mode == BATTERY_MODE_EMERGENCY and not _recharge_override_active:
+		# A decline must never resume the interrupted task while battery is in an
+		# emergency state, regardless of which scenario produced the request.
+		if _battery_mode == BATTERY_MODE_EMERGENCY:
 			_activate_recharge_override("Battery critical. Recharging now.")
+			return
+		_resume_robot_after_help_decline()
 
 func _apply_handoff_accept(request: Dictionary) -> void:
 	var payload: Dictionary = request.get("payload", {})
