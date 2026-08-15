@@ -150,6 +150,7 @@ var _trial_handoff_task_id: String = ""
 var _trial_handoff_request_id: String = ""
 var _trial_delete_item_uid: int = 0
 var _trial_delete_item_name: String = ""
+var _trial_drink_pickup_area_confirmed: bool = false
 var _trial_timeout_timer: Timer = null
 var _trial_guide_layer: Control = null
 var _trial_guide_dim: ColorRect = null
@@ -161,7 +162,10 @@ var _trial_guide_focus: PanelContainer = null
 var _trial_guide_arrow: TextureRect = null
 var _trial_guide_arrow_direction: String = "→"
 var _trial_guide_message_panel: PanelContainer = null
+var _trial_guide_message_box: VBoxContainer = null
 var _trial_guide_message_label: RichTextLabel = null
+var _trial_guide_continue_button: Button = null
+var _trial_guide_continue_callback: Callable = Callable()
 var _trial_guide_target: Dictionary = {}
 var _player_inventory_holding_label: Label = null
 var _player_inventory_item_labels_by_name: Dictionary = {}
@@ -2406,7 +2410,7 @@ func _setup_trial_guide_ui() -> void:
 	_trial_guide_layer.add_child(_trial_guide_arrow)
 
 	_trial_guide_message_panel = PanelContainer.new()
-	_trial_guide_message_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trial_guide_message_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	var message_style := StyleBoxFlat.new()
 	message_style.bg_color = Color(0.08, 0.11, 0.16, 0.94)
 	message_style.border_width_left = 2
@@ -2432,7 +2436,23 @@ func _setup_trial_guide_ui() -> void:
 	_trial_guide_message_label.selection_enabled = false
 	_trial_guide_message_label.add_theme_font_size_override("normal_font_size", TRIAL_GUIDE_BODY_FONT_SIZE)
 	_trial_guide_message_label.custom_minimum_size = Vector2(TRIAL_GUIDE_MESSAGE_MIN_WIDTH, 0.0)
-	_trial_guide_message_panel.add_child(_trial_guide_message_label)
+	_trial_guide_message_box = VBoxContainer.new()
+	_trial_guide_message_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trial_guide_message_box.add_theme_constant_override("separation", 12)
+	_trial_guide_message_panel.add_child(_trial_guide_message_box)
+	_trial_guide_message_box.add_child(_trial_guide_message_label)
+
+	var button_row := HBoxContainer.new()
+	button_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_trial_guide_message_box.add_child(button_row)
+
+	_trial_guide_continue_button = Button.new()
+	_trial_guide_continue_button.custom_minimum_size = Vector2(132.0, 40.0)
+	_trial_guide_continue_button.add_theme_font_size_override("font_size", 18)
+	_trial_guide_continue_button.pressed.connect(_on_trial_guide_continue_pressed)
+	_apply_button_theme(_trial_guide_continue_button, "neutral")
+	button_row.add_child(_trial_guide_continue_button)
 
 func _trial_wait(seconds: float) -> bool:
 	if seconds <= 0.0:
@@ -2514,8 +2534,23 @@ func _show_trial_guide_for_drink_request() -> void:
 	)
 
 func _show_trial_guide_for_drink_pickup() -> void:
+	if _trial_drink_pickup_area_confirmed:
+		_show_trial_guide_for_drink_pickup_action()
+		return
 	_show_trial_guide(
-		"Next, go to the drink cabinet and press [b]E[/b]. Select the requested drink to pick it up.",
+		"Here's the pickup area: drinks are on the left, and food is on the right. You may use the food counter later if the robot asks for your help.",
+		_pickup_area_trial_target(),
+		"↓",
+		"Got it.",
+		Callable(self, "_show_trial_guide_for_drink_pickup_action")
+	)
+
+func _show_trial_guide_for_drink_pickup_action() -> void:
+	if not _trial_session_active or _trial_step != "await_pickup":
+		return
+	_trial_drink_pickup_area_confirmed = true
+	_show_trial_guide(
+		"Now go to the drink cabinet on the left and press [b]E[/b]. Select the requested drink to pick it up.",
 		_drink_cabinet_trial_target(),
 		"↓"
 	)
@@ -2730,6 +2765,7 @@ func _reset_trial_world_state() -> void:
 	_trial_handoff_request_id = ""
 	_trial_delete_item_uid = 0
 	_trial_delete_item_name = ""
+	_trial_drink_pickup_area_confirmed = false
 	_clear_actor_inventory("player")
 	_clear_actor_inventory("robot")
 	var robot = _trial_robot()
@@ -2903,10 +2939,11 @@ func _trial_handoff_prompt_target() -> Dictionary:
 		return {}
 	return {"type": "control", "id": card.get_instance_id()}
 
-func _show_trial_guide(text: String, target: Dictionary, arrow: String = "↓") -> void:
+func _show_trial_guide(text: String, target: Dictionary, arrow: String = "↓", continue_text: String = "", continue_callback: Callable = Callable()) -> void:
 	if _trial_guide_layer == null or _trial_guide_message_label == null:
 		return
 	_trial_guide_target = target.duplicate(true)
+	_trial_guide_continue_callback = continue_callback
 	_trial_guide_layer.visible = true
 	_trial_guide_message_label.clear()
 	if text.strip_edges() == "":
@@ -2914,6 +2951,9 @@ func _show_trial_guide(text: String, target: Dictionary, arrow: String = "↓") 
 	else:
 		_trial_guide_message_panel.visible = true
 		_trial_guide_message_label.append_text(text)
+	if _trial_guide_continue_button:
+		_trial_guide_continue_button.text = continue_text
+		_trial_guide_continue_button.visible = not continue_text.strip_edges().is_empty() and continue_callback.is_valid()
 	if _trial_guide_arrow:
 		_trial_guide_arrow.visible = arrow.strip_edges() != ""
 	if arrow.strip_edges() != "":
@@ -2938,8 +2978,18 @@ func _set_trial_guide_arrow_direction(arrow: String) -> void:
 
 func _hide_trial_guide() -> void:
 	_trial_guide_target.clear()
+	_trial_guide_continue_callback = Callable()
+	if _trial_guide_continue_button:
+		_trial_guide_continue_button.visible = false
 	if _trial_guide_layer:
 		_trial_guide_layer.visible = false
+
+func _on_trial_guide_continue_pressed() -> void:
+	if not _trial_guide_continue_callback.is_valid():
+		return
+	var callback := _trial_guide_continue_callback
+	_trial_guide_continue_callback = Callable()
+	callback.call()
 
 func _update_trial_guide_overlay() -> void:
 	if _trial_guide_layer == null or not _trial_guide_layer.visible:
@@ -3081,7 +3131,10 @@ func _world_to_screen(world_pos: Vector2) -> Vector2:
 	return get_viewport().get_canvas_transform() * world_pos
 
 func _drink_cabinet_trial_target() -> Dictionary:
-	return {"type": "world_rect", "center": Vector2(-208.0, -358.0), "size": Vector2(246.0, 130.0)}
+	return {"type": "world_rect", "center": Vector2(-325.0, -358.0), "size": Vector2(72.0, 128.0)}
+
+func _pickup_area_trial_target() -> Dictionary:
+	return {"type": "world_rect", "center": Vector2(-208.0, -358.0), "size": Vector2(246.0, 130.0), "message_min_width": 290.0}
 
 func _player_holding_bar_trial_target() -> Dictionary:
 	var players := get_tree().get_nodes_in_group("player")
