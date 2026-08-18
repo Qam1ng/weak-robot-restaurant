@@ -17,6 +17,7 @@ signal customer_left(customer: Node)
 @export var force_drink_order: bool = false
 @export var preset_food_item: String = ""
 @export var preset_drink_item: String = ""
+@export var defer_drink_order_until_released: bool = false
 const MIN_PATIENCE_SECONDS := 90.0
 const DRINK_CHOICES := ["cola", "tea", "coffee"]
 const PLAYER_DELIVERY_FEEDBACK_BUBBLE_SHOW_SEC := 0.8
@@ -680,6 +681,16 @@ func _notify_player(text: String) -> void:
 		hud.call("show_quick_notice", text)
 
 func on_food_order_taken() -> void:
+	if defer_drink_order_until_released:
+		_refresh_order_bubble()
+		return
+	_activate_drink_order_if_needed(true)
+	_refresh_order_bubble()
+
+func release_deferred_drink_order() -> void:
+	if not defer_drink_order_until_released:
+		return
+	defer_drink_order_until_released = false
 	_activate_drink_order_if_needed(true)
 	_refresh_order_bubble()
 

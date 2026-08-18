@@ -807,7 +807,7 @@ func _on_task_created(task: Dictionary) -> void:
 		var order_kind := str(payload.get("order_kind", "food"))
 		if order_kind == "food" and _trial_step == "await_food_order":
 			_trial_food_task_id = str(task.get("id", ""))
-			_trial_step = "await_drink_order"
+			_trial_step = "await_robot_ready"
 		elif order_kind == "drink":
 			_trial_drink_task_id = str(task.get("id", ""))
 			_show_trial_guide_for_drink_request()
@@ -2480,6 +2480,7 @@ func _start_trial_session() -> void:
 	_trial_session_active = true
 	_trial_step = "intro"
 	_trial_drink_task_id = ""
+	_connect_trial_robot_signals()
 	_refresh_day_phase_label()
 	_reset_trial_world_state()
 	_set_trial_player_input_locked(true)
@@ -2561,7 +2562,6 @@ func _begin_trial_order_demo() -> void:
 	if not _trial_session_active or _trial_step != "static_customer_orders":
 		return
 	_hide_trial_guide()
-	_set_trial_player_input_locked(false)
 	_spawn_trial_customer()
 	_trial_step = "await_food_order"
 	if _trial_timeout_timer:
@@ -2573,6 +2573,7 @@ func _spawn_trial_customer() -> void:
 	var customer = TrialCustomerScene.instantiate()
 	customer.preset_food_item = "pizza"
 	customer.preset_drink_item = "coffee"
+	customer.defer_drink_order_until_released = true
 	customer.start_delay_sec = 0.2
 	var current_scene = get_tree().current_scene
 	if current_scene == null:
@@ -2589,6 +2590,32 @@ func _show_trial_guide_for_drink_request() -> void:
 		{"type": "world_customer", "id": _trial_customer.get_instance_id(), "size": Vector2(104.0, 150.0), "offset": Vector2(0.0, -24.0)},
 		"↓"
 	)
+
+func _on_trial_handoff_wait_ready(task_id: String) -> void:
+	if not _trial_session_active or _trial_step != "await_robot_ready" or task_id != _trial_food_task_id:
+		return
+	var robot = _trial_robot()
+	if robot == null or not (robot is Node2D):
+		return
+	_show_trial_guide(
+		"The robot has picked up the food. Next, you will handle the customer's drink order.",
+		{"type": "world_rect", "center": (robot as Node2D).global_position, "size": Vector2(96.0, 128.0), "offset": Vector2(0.0, -20.0)},
+		"↓",
+		"Next",
+		Callable(self, "_begin_trial_drink_demo")
+	)
+
+func _begin_trial_drink_demo() -> void:
+	if not _trial_session_active or _trial_step != "await_robot_ready":
+		return
+	if _trial_customer == null or not is_instance_valid(_trial_customer):
+		call_deferred("_finish_trial_session", false)
+		return
+	_hide_trial_guide()
+	_trial_step = "await_drink_order"
+	_set_trial_player_input_locked(false)
+	if _trial_customer.has_method("release_deferred_drink_order"):
+		_trial_customer.call("release_deferred_drink_order")
 
 func _show_trial_guide_for_drink_pickup() -> void:
 	if _trial_drink_pickup_area_confirmed:
@@ -2886,6 +2913,13 @@ func _trial_robot() -> Node:
 	if robots.is_empty():
 		return null
 	return robots[0]
+
+func _connect_trial_robot_signals() -> void:
+	var robot = _trial_robot()
+	if robot == null or not robot.has_signal("trial_handoff_wait_ready"):
+		return
+	if not robot.is_connected("trial_handoff_wait_ready", Callable(self, "_on_trial_handoff_wait_ready")):
+		robot.connect("trial_handoff_wait_ready", Callable(self, "_on_trial_handoff_wait_ready"))
 
 func _trial_item_visual(item_name: String) -> Dictionary:
 	var items_root = get_tree().get_root().find_child("InteractiveItems", true, false)
