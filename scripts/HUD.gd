@@ -2313,6 +2313,13 @@ func _clear_player_input_state() -> void:
 			Input.action_release(action)
 	Input.flush_buffered_events()
 
+func _set_trial_player_input_locked(locked: bool) -> void:
+	for player in get_tree().get_nodes_in_group("player"):
+		if player and player.has_method("set_input_locked"):
+			player.call("set_input_locked", locked)
+	if not locked:
+		_clear_player_input_state()
+
 func _spotlight_tutorial_toggle() -> void:
 	if tutorial_toggle_button == null or not tutorial_toggle_button.visible:
 		return
@@ -2475,6 +2482,7 @@ func _start_trial_session() -> void:
 	_trial_drink_task_id = ""
 	_refresh_day_phase_label()
 	_reset_trial_world_state()
+	_set_trial_player_input_locked(true)
 	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
 	if time_mgr and time_mgr.has_method("pause"):
 		time_mgr.pause()
@@ -2483,8 +2491,6 @@ func _start_trial_session() -> void:
 		var spawner = game_mgr.get_customer_spawner()
 		if spawner and spawner.has_method("disable"):
 			spawner.disable()
-	if _trial_timeout_timer:
-		_trial_timeout_timer.start(TRIAL_SESSION_MAX_SEC)
 	call_deferred("_run_trial_intro")
 
 func _run_trial_intro() -> void:
@@ -2495,13 +2501,71 @@ func _run_trial_intro() -> void:
 	if not _trial_session_active:
 		return
 	_show_player_dialogue_overlay("System", "You are now entering the trial session.", "system")
-	if not await _trial_wait(1.0):
+	if not await _trial_wait(PLAYER_DIALOGUE_OVERLAY_SHOW_SEC + 0.1):
 		return
 	if not _trial_session_active:
 		return
+	_trial_step = "static_system_panel"
+	_show_trial_guide_for_system_panel()
+
+func _show_trial_guide_for_system_panel() -> void:
+	if not _trial_session_active or _trial_step != "static_system_panel":
+		return
+	_show_trial_guide(
+		"This panel keeps track of the current service period, score, items being held, and tasks assigned to you and the robot.",
+		{"type": "control", "id": inventory_panel.get_instance_id()},
+		"→",
+		"Next",
+		Callable(self, "_show_trial_guide_for_dialogue_panel")
+	)
+
+func _show_trial_guide_for_dialogue_panel() -> void:
+	if not _trial_session_active or _trial_step != "static_system_panel":
+		return
+	_trial_step = "static_dialogue_panel"
+	_show_trial_guide(
+		"This panel records what customers, you, and the robot say during service.",
+		{"type": "control", "id": dialogue_panel.get_instance_id()},
+		"←",
+		"Next",
+		Callable(self, "_show_trial_guide_for_customer_orders")
+	)
+
+func _show_trial_guide_for_customer_orders() -> void:
+	if not _trial_session_active or _trial_step != "static_dialogue_panel":
+		return
+	_trial_step = "static_order_history"
+	_set_customer_tab(CUSTOMER_TAB_HISTORY)
+	_show_trial_guide(
+		"History keeps a record of completed and failed orders, including their score changes.",
+		{"type": "control", "id": customer_panel.get_instance_id(), "prefer_below": true, "message_offset_y": -25.0},
+		"←",
+		"Next",
+		Callable(self, "_show_trial_guide_for_live_orders")
+	)
+
+func _show_trial_guide_for_live_orders() -> void:
+	if not _trial_session_active or _trial_step != "static_order_history":
+		return
+	_trial_step = "static_customer_orders"
+	_set_customer_tab(CUSTOMER_TAB_LIVE)
+	_show_trial_guide(
+		"Live shows all active orders. In this trial, the robot handles food orders and you handle drink orders; assigned tasks appear in the System Panel.",
+		{"type": "control", "id": customer_panel.get_instance_id(), "prefer_below": true, "message_offset_y": -25.0},
+		"←",
+		"Next",
+		Callable(self, "_begin_trial_order_demo")
+	)
+
+func _begin_trial_order_demo() -> void:
+	if not _trial_session_active or _trial_step != "static_customer_orders":
+		return
+	_hide_trial_guide()
+	_set_trial_player_input_locked(false)
 	_spawn_trial_customer()
 	_trial_step = "await_food_order"
-	_show_trial_guide_for_customer_orders()
+	if _trial_timeout_timer:
+		_trial_timeout_timer.start(TRIAL_SESSION_MAX_SEC)
 
 func _spawn_trial_customer() -> void:
 	if _trial_customer != null and is_instance_valid(_trial_customer):
@@ -2518,13 +2582,6 @@ func _spawn_trial_customer() -> void:
 	if spawn_marker != null and spawn_marker is Node2D:
 		customer.global_position = (spawn_marker as Node2D).global_position
 	_trial_customer = customer as Node2D
-
-func _show_trial_guide_for_customer_orders() -> void:
-	_show_trial_guide(
-		"The robot will handle the food order first, and you will handle the drink order.",
-		{"type": "control", "id": customer_panel.get_instance_id(), "prefer_below": true, "message_offset_y": -25.0},
-		"→"
-	)
 
 func _show_trial_guide_for_drink_request() -> void:
 	_show_trial_guide(
@@ -2703,6 +2760,7 @@ func _show_trial_completion_prompt(success: bool) -> void:
 		_begin_formal_session()
 
 func _begin_formal_session() -> void:
+	_set_trial_player_input_locked(false)
 	_log_participant_profile_for_formal_session()
 	_formal_session_started = true
 	_initial_day_notice_shown = false
