@@ -458,6 +458,9 @@ func _physics_process(dt: float) -> void:
 			_stuck_timer = 0.0
 		_last_pos = global_position
 		if _stuck_timer >= ENTERING_STUCK_TIMEOUT_SEC:
+			if global_position.distance_to(_final_target) <= ARRIVAL_DIST_STUCK:
+				_on_reached()
+				return
 			_stuck_timer = 0.0
 			_path_initialized = false
 			_target_set = false
