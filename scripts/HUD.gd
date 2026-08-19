@@ -170,7 +170,9 @@ var _trial_guide_target: Dictionary = {}
 var _player_inventory_holding_label: Label = null
 var _player_inventory_item_labels_by_name: Dictionary = {}
 const CUSTOMER_HISTORY_PAGE_SIZE := 5
-const TRIAL_SESSION_MAX_SEC := 100.0
+const TRIAL_SESSION_MAX_SEC := 210.0
+const TRIAL_FOOD_TASK_WINDOW_MS := 180_000
+const TRIAL_DRINK_TASK_WINDOW_MS := 90_000
 const TRIAL_GUIDE_FOCUS_BORDER := Color(1.0, 0.93, 0.62, 1.0)
 const TRIAL_GUIDE_ARROW_TEXTURE := preload("res://assets/icons/orders/right-arrow.png")
 const TRIAL_GUIDE_ARROW_SIZE := Vector2(24.0, 24.0)
@@ -2574,6 +2576,8 @@ func _spawn_trial_customer() -> void:
 	customer.preset_food_item = "pizza"
 	customer.preset_drink_item = "coffee"
 	customer.defer_drink_order_until_released = true
+	customer.food_task_window_ms = TRIAL_FOOD_TASK_WINDOW_MS
+	customer.drink_task_window_ms = TRIAL_DRINK_TASK_WINDOW_MS
 	customer.start_delay_sec = 0.2
 	var current_scene = get_tree().current_scene
 	if current_scene == null:
@@ -2587,7 +2591,7 @@ func _spawn_trial_customer() -> void:
 func _show_trial_guide_for_drink_request() -> void:
 	_show_trial_guide(
 		"The customer is now requesting a drink. Walk to the customer and press [b]E[/b] to take the drink order.",
-		{"type": "world_customer", "id": _trial_customer.get_instance_id(), "size": Vector2(104.0, 150.0), "offset": Vector2(0.0, -24.0)},
+		{"type": "world_customer", "id": _trial_customer.get_instance_id(), "size": Vector2(104.0, 150.0), "offset": Vector2(0.0, -24.0), "message_min_width": 340.0},
 		"↓"
 	)
 
@@ -2773,18 +2777,14 @@ func _on_trial_timeout() -> void:
 	_finish_trial_session(false)
 
 func _show_trial_completion_prompt(success: bool) -> void:
-	if success:
-		_popup_mode = POPUP_MODE_TRIAL_COMPLETE
-		_show_player_dialogue_prompt(
-			"System",
-			"Congratulations. You have successfully completed the trial session. Are you ready to begin the formal session?\n",
-			["Start Game"],
-			false
-		)
-	else:
-		_show_player_dialogue_overlay("System", "The trial session has ended. The formal session will start now.", "system")
-		await _trial_wait(PLAYER_DIALOGUE_OVERLAY_SHOW_SEC + 0.1)
-		_begin_formal_session()
+	_popup_mode = POPUP_MODE_TRIAL_COMPLETE
+	var body := "Congratulations. You have successfully completed the trial session. Are you ready to begin the formal session?\n" if success else "The trial session has ended. In the formal session, keep an eye on order timers and complete tasks before they expire."
+	_show_player_dialogue_prompt(
+		"System",
+		body,
+		["Start Game"],
+		false
+	)
 
 func _begin_formal_session() -> void:
 	_set_trial_player_input_locked(false)

@@ -50,6 +50,8 @@ var _drink_item: String = ""
 var _drink_required: bool = false
 var _drink_order_activated: bool = false
 var _drink_timeout_handled: bool = false
+var food_task_window_ms: int = 0
+var drink_task_window_ms: int = 0
 var _order_bubble_root: Node2D = null
 var _order_bubble_panel: PanelContainer = null
 var _order_bubble_icon: TextureRect = null
@@ -569,6 +571,12 @@ func _post_taskboard_request() -> void:
 		return
 	print("[Customer] Task created: ", task.get("id", "unknown"), " | state=", task.get("state", "unknown"))
 	_refresh_order_bubble()
+
+func get_food_task_window_ms() -> int:
+	return food_task_window_ms
+
+func get_drink_task_window_ms() -> int:
+	return drink_task_window_ms
 
 func _gameplay_now_ms() -> int:
 	var game_mgr = get_node_or_null("/root/GameManager")
