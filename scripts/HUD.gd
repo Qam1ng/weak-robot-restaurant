@@ -54,6 +54,8 @@ var dialogue_list: VBoxContainer
 var dialogue_log: RichTextLabel
 var customer_panel: PanelContainer
 var customer_panel_list: VBoxContainer
+var session_progress_panel: PanelContainer
+var session_progress_bar: ProgressBar
 var tutorial_panel: PanelContainer
 var tutorial_body: RichTextLabel
 var tutorial_start_button: Button
@@ -101,9 +103,16 @@ const CUSTOMER_TAB_LIVE := "live"
 const CUSTOMER_TAB_HISTORY := "history"
 const SIDE_PANEL_MARGIN := 20.0
 const GAMEPLAY_REFERENCE_HEIGHT := 720.0
-const GAMEPLAY_TOP_OFFSET := -60.0
+const GAMEPLAY_VERTICAL_SHIFT := 30.0
+const GAMEPLAY_TOP_OFFSET := -30.0 + GAMEPLAY_VERTICAL_SHIFT
 const GAMEPLAY_BAND_WIDTH := 760.0
 const GAMEPLAY_SIDE_GAP := 24.0
+const SESSION_PROGRESS_PANEL_WIDTH := 560.0
+const SESSION_PROGRESS_PANEL_HEIGHT := 62.0
+const SESSION_PROGRESS_BAR_WIDTH := 520.0
+const SESSION_PROGRESS_TOP_MARGIN := 8.0 + GAMEPLAY_VERTICAL_SHIFT
+const SESSION_PROGRESS_TRIAL_SHARE := 0.10
+const SESSION_PROGRESS_FORMAL_MINUTES := 18.0 * 60.0
 const SYSTEM_PANEL_X_OFFSET := 40.0
 const SYSTEM_PANEL_WIDTH_REDUCTION := 28.0
 const PLAYER_DIALOGUE_OVERLAY_Y_OFFSET := 4.0
@@ -167,6 +176,7 @@ var _trial_handoff_request_id: String = ""
 var _trial_delete_item_uid: int = 0
 var _trial_delete_item_name: String = ""
 var _trial_drink_pickup_area_confirmed: bool = false
+var _session_progress: float = 0.0
 var _trial_timeout_timer: Timer = null
 var _trial_guide_layer: Control = null
 var _trial_guide_dim: ColorRect = null
@@ -224,6 +234,7 @@ func _ready() -> void:
 	_setup_inventory_portal_ui()
 	_setup_dialogue_feed_ui()
 	_setup_customer_orders_ui()
+	_setup_session_progress_ui()
 	_setup_player_dialogue_overlay_ui()
 	_setup_tutorial_ui()
 	_setup_survey_input_ui()
@@ -251,6 +262,107 @@ func _connect_viewport_resize() -> void:
 func _on_viewport_size_changed() -> void:
 	_recenter_survey_panel()
 	_update_gameplay_panel_layout()
+
+func _setup_session_progress_ui() -> void:
+	session_progress_panel = PanelContainer.new()
+	session_progress_panel.name = "SessionProgressPanel"
+	session_progress_panel.visible = false
+	session_progress_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(session_progress_panel)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.06, 0.09, 0.96)
+	style.border_width_left = 1
+	style.border_width_top = 1
+	style.border_width_right = 1
+	style.border_width_bottom = 1
+	style.border_color = Color(0.74, 0.58, 0.20, 0.62)
+	style.corner_radius_top_left = 9
+	style.corner_radius_top_right = 9
+	style.corner_radius_bottom_right = 9
+	style.corner_radius_bottom_left = 9
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	session_progress_panel.add_theme_stylebox_override("panel", style)
+	session_progress_panel.custom_minimum_size = Vector2(SESSION_PROGRESS_PANEL_WIDTH, SESSION_PROGRESS_PANEL_HEIGHT)
+
+	var content := Control.new()
+	content.custom_minimum_size = Vector2(SESSION_PROGRESS_BAR_WIDTH, 44.0)
+	session_progress_panel.add_child(content)
+
+	session_progress_bar = ProgressBar.new()
+	session_progress_bar.show_percentage = false
+	session_progress_bar.min_value = 0.0
+	session_progress_bar.max_value = 100.0
+	session_progress_bar.custom_minimum_size = Vector2(SESSION_PROGRESS_BAR_WIDTH, 8.0)
+	session_progress_bar.position = Vector2(0.0, 27.0)
+	var track_style := StyleBoxFlat.new()
+	track_style.bg_color = Color(0.13, 0.16, 0.21, 0.95)
+	track_style.corner_radius_top_left = 4
+	track_style.corner_radius_top_right = 4
+	track_style.corner_radius_bottom_right = 4
+	track_style.corner_radius_bottom_left = 4
+	var fill_style := StyleBoxFlat.new()
+	fill_style.bg_color = Color(0.74, 0.58, 0.20, 0.98)
+	fill_style.corner_radius_top_left = 4
+	fill_style.corner_radius_top_right = 4
+	fill_style.corner_radius_bottom_right = 4
+	fill_style.corner_radius_bottom_left = 4
+	session_progress_bar.add_theme_stylebox_override("background", track_style)
+	session_progress_bar.add_theme_stylebox_override("fill", fill_style)
+	content.add_child(session_progress_bar)
+	_add_session_progress_anchors(content)
+	_set_session_progress(0.0)
+
+func _add_session_progress_anchors(container: Control) -> void:
+	var anchors := [
+		{"label": "Trial", "progress": 0.0},
+		{"label": "Morning", "progress": 0.10},
+		{"label": "Lunch", "progress": 0.30},
+		{"label": "Afternoon", "progress": 0.50},
+		{"label": "Dinner", "progress": 0.65},
+		{"label": "Night", "progress": 0.95},
+	]
+	for anchor in anchors:
+		var progress := float(anchor.get("progress", 0.0))
+		var x := progress * SESSION_PROGRESS_BAR_WIDTH
+		var tick := ColorRect.new()
+		tick.color = Color(0.76, 0.95, 1.0, 0.50)
+		tick.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tick.position = Vector2(roundf(x), 24.0)
+		tick.size = Vector2(1.0, 14.0)
+		container.add_child(tick)
+
+		var label := Label.new()
+		label.text = str(anchor.get("label", ""))
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		label.add_theme_font_size_override("font_size", 10)
+		label.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 0.88))
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var label_width := minf(72.0, SESSION_PROGRESS_BAR_WIDTH - x)
+		label.position = Vector2(roundf(x), 0.0)
+		label.size = Vector2(label_width, 18.0)
+		container.add_child(label)
+
+func _set_session_progress(value: float) -> void:
+	_session_progress = clampf(value, 0.0, 1.0)
+	if session_progress_bar:
+		session_progress_bar.value = _session_progress * 100.0
+
+func _refresh_formal_session_progress() -> void:
+	if not _formal_session_started:
+		return
+	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
+	if time_mgr == null:
+		return
+	var clock_minutes := int(time_mgr.get("current_hour")) * 60 + int(time_mgr.get("current_minute"))
+	var elapsed_minutes := float(clock_minutes - 6 * 60)
+	if clock_minutes < 6 * 60:
+		elapsed_minutes += 24.0 * 60.0
+	var day_progress := clampf(elapsed_minutes / SESSION_PROGRESS_FORMAL_MINUTES, 0.0, 1.0)
+	_set_session_progress(SESSION_PROGRESS_TRIAL_SHARE + (1.0 - SESSION_PROGRESS_TRIAL_SHARE) * day_progress)
 
 func _recenter_survey_panel() -> void:
 	if survey_panel == null:
@@ -788,6 +900,7 @@ func _refresh_day_phase_label(_hour: int = -1, _minute: int = -1) -> void:
 	var day := int(time_mgr.get("current_day"))
 	var period := str(time_mgr.call("get_period_name")).capitalize()
 	day_phase_label.text = "Day %d | %s" % [maxi(day, 1), period]
+	_refresh_formal_session_progress()
 
 func _on_period_changed_label(_period_name: String, _is_peak: bool) -> void:
 	_refresh_day_phase_label()
@@ -809,6 +922,7 @@ func _on_day_changed_notice(day: int) -> void:
 func _on_run_day_completed_notice(day: int) -> void:
 	if day <= 0 or not _formal_session_started:
 		return
+	_set_session_progress(1.0)
 	if _score >= SCORE_WIN_THRESHOLD:
 		_log_game_run_once("win")
 		_show_run_end_prompt(
@@ -1150,6 +1264,13 @@ func _update_gameplay_panel_layout() -> void:
 		view_size.x - SIDE_PANEL_MARGIN - dialogue_panel_w,
 		center_x + GAMEPLAY_BAND_WIDTH * 0.5 + GAMEPLAY_SIDE_GAP
 	)
+	if session_progress_panel:
+		var progress_size := Vector2(SESSION_PROGRESS_PANEL_WIDTH, SESSION_PROGRESS_PANEL_HEIGHT)
+		session_progress_panel.size = progress_size
+		session_progress_panel.position = Vector2(
+			center_x - progress_size.x * 0.5,
+			SESSION_PROGRESS_TOP_MARGIN
+		)
 	inventory_panel.position = Vector2(system_x, gameplay_top_y)
 	dialogue_panel.position = Vector2(dialogue_x, gameplay_top_y)
 	var system_panel_h: float = 20.0
@@ -1172,7 +1293,10 @@ func _update_gameplay_panel_layout() -> void:
 	customer_panel.size = Vector2(dialogue_panel_w, customer_panel_h)
 	customer_panel.position = Vector2(dialogue_x, dialogue_panel.position.y + dialogue_panel_h + 12.0)
 	var centered_x: float = (view_size.x - PLAYER_DIALOGUE_OVERLAY_WIDTH) * 0.5
-	var stack_origin_y: float = gameplay_top_y + PLAYER_DIALOGUE_OVERLAY_Y_OFFSET
+	var stack_origin_y: float = maxf(
+		SESSION_PROGRESS_TOP_MARGIN + SESSION_PROGRESS_PANEL_HEIGHT + 16.0,
+		gameplay_top_y + PLAYER_DIALOGUE_OVERLAY_Y_OFFSET
+	)
 	var stack_y: float = stack_origin_y
 	if help_prompt_stack:
 		var help_prompt_width := GAMEPLAY_BAND_WIDTH * HELP_PROMPT_WIDTH_RATIO
@@ -1180,7 +1304,7 @@ func _update_gameplay_panel_layout() -> void:
 		if help_prompt_stack.visible:
 			var help_h := maxf(help_prompt_stack.size.y, help_prompt_stack.get_combined_minimum_size().y)
 			var help_x := center_x - help_prompt_width * 0.5 + HELP_PROMPT_X_OFFSET
-			var help_y := maxf(72.0, (view_size.y - help_h) * 0.44)
+			var help_y := maxf(SESSION_PROGRESS_TOP_MARGIN + SESSION_PROGRESS_PANEL_HEIGHT + 16.0, (view_size.y - help_h) * 0.44)
 			help_prompt_stack.position = Vector2(help_x, help_y)
 			stack_y += help_h + PLAYER_DIALOGUE_STACK_GAP
 		else:
@@ -2498,6 +2622,8 @@ func _set_gameplay_panels_visible(visible: bool) -> void:
 		dialogue_panel.visible = visible
 	if customer_panel:
 		customer_panel.visible = visible
+	if session_progress_panel:
+		session_progress_panel.visible = visible
 	if help_prompt_stack and not visible:
 		help_prompt_stack.visible = false
 	if player_dialogue_overlay and not visible:
@@ -2633,6 +2759,7 @@ func _start_trial_session() -> void:
 	if _trial_session_active or _formal_session_started:
 		return
 	_trial_session_active = true
+	_set_session_progress(0.0)
 	_trial_step = "intro"
 	_trial_drink_task_id = ""
 	_connect_trial_robot_signals()
@@ -2717,6 +2844,7 @@ func _begin_trial_order_demo() -> void:
 	if not _trial_session_active or _trial_step != "static_customer_orders":
 		return
 	_hide_trial_guide()
+	_set_session_progress(0.02)
 	_spawn_trial_customer()
 	_trial_step = "await_food_order"
 	if _trial_timeout_timer:
@@ -2754,6 +2882,7 @@ func _on_trial_handoff_wait_ready(task_id: String) -> void:
 	var robot = _trial_robot()
 	if robot == null or not (robot is Node2D):
 		return
+	_set_session_progress(0.05)
 	_show_trial_guide(
 		"The robot has picked up the food. Next, you will handle the customer's drink order.",
 		{"type": "world_rect", "center": (robot as Node2D).global_position, "size": Vector2(96.0, 128.0), "offset": Vector2(0.0, -20.0)},
@@ -2769,6 +2898,7 @@ func _begin_trial_drink_demo() -> void:
 		call_deferred("_finish_trial_session", false)
 		return
 	_hide_trial_guide()
+	_set_session_progress(0.06)
 	_trial_step = "await_drink_order"
 	_set_trial_player_input_locked(false)
 	if _trial_customer.has_method("release_deferred_drink_order"):
@@ -2812,6 +2942,7 @@ func _show_trial_guide_for_drink_delivery() -> void:
 func _begin_trial_delete_demo() -> void:
 	if not _trial_session_active:
 		return
+	_set_session_progress(0.075)
 	_trial_step = "await_delete_open"
 	hide_inventory_portal()
 	_clear_actor_inventory("player")
@@ -2882,6 +3013,7 @@ func _activate_trial_handoff_request() -> void:
 		call_deferred("_finish_trial_session", false)
 		return
 	robot.call("start_trial_task_handoff", _trial_handoff_task_id, item_name)
+	_set_session_progress(0.09)
 	_trial_step = "await_handoff_accept"
 
 func _show_trial_guide_for_handoff_accept() -> void:
@@ -2915,6 +3047,7 @@ func _finish_trial_session(success: bool) -> void:
 	if not _trial_session_active:
 		return
 	_trial_session_active = false
+	_set_session_progress(SESSION_PROGRESS_TRIAL_SHARE)
 	_trial_step = "complete"
 	if _trial_timeout_timer:
 		_trial_timeout_timer.stop()
