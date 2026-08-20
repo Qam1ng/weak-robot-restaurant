@@ -1,0 +1,130 @@
+[gd_resource type="SpriteFrames" load_steps=14 format=3]
+
+[ext_resource type="Texture2D" uid="uid://d37uk1dvxmcjp" path="res://data/art/Modern_Interiors_RPG_Maker_Version/RPG_MAKER_MV/Characters/waiter&others.png" id="1_waiter_sheet"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_idle_down"]
+atlas = ExtResource("1_waiter_sheet")
+region = Rect2(336, 0, 48, 96)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_idle_left"]
+atlas = ExtResource("1_waiter_sheet")
+region = Rect2(336, 96, 48, 96)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_idle_right"]
+atlas = ExtResource("1_waiter_sheet")
+region = Rect2(336, 192, 48, 96)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_idle_up"]
+atlas = ExtResource("1_waiter_sheet")
+region = Rect2(336, 288, 48, 96)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_walk_down_a"]
+atlas = ExtResource("1_waiter_sheet")
+region = Rect2(288, 0, 48, 96)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_walk_down_b"]
+atlas = ExtResource("1_waiter_sheet")
+region = Rect2(384, 0, 48, 96)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_walk_left_a"]
+atlas = ExtResource("1_waiter_sheet")
+region = Rect2(288, 96, 48, 96)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_walk_left_b"]
+atlas = ExtResource("1_waiter_sheet")
+region = Rect2(384, 96, 48, 96)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_walk_right_a"]
+atlas = ExtResource("1_waiter_sheet")
+region = Rect2(288, 192, 48, 96)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_walk_right_b"]
+atlas = ExtResource("1_waiter_sheet")
+region = Rect2(384, 192, 48, 96)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_walk_up_a"]
+atlas = ExtResource("1_waiter_sheet")
+region = Rect2(288, 288, 48, 96)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_walk_up_b"]
+atlas = ExtResource("1_waiter_sheet")
+region = Rect2(384, 288, 48, 96)
+
+[resource]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_idle_down")
+}],
+"loop": true,
+"name": &"idle_down",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_idle_left")
+}],
+"loop": true,
+"name": &"idle_left",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_idle_right")
+}],
+"loop": true,
+"name": &"idle_right",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_idle_up")
+}],
+"loop": true,
+"name": &"idle_up",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_walk_down_a")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_walk_down_b")
+}],
+"loop": true,
+"name": &"walk_down",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_walk_left_a")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_walk_left_b")
+}],
+"loop": true,
+"name": &"walk_left",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_walk_right_a")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_walk_right_b")
+}],
+"loop": true,
+"name": &"walk_right",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_walk_up_a")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_walk_up_b")
+}],
+"loop": true,
+"name": &"walk_up",
+"speed": 5.0
+}]

@@ -152,6 +152,13 @@ func set_input_locked(locked: bool) -> void:
 		velocity = Vector2.ZERO
 		_update_animation(Vector2.ZERO)
 
+func set_character_sprite_frames(sprite_frames: SpriteFrames) -> void:
+	if sprite_frames == null:
+		return
+	anim.sprite_frames = sprite_frames
+	last_dir = Vector2.DOWN
+	anim.play("idle_down")
+
 func _handle_kitchen_pick_interact() -> bool:
 	# Kitchen zone only.
 	if global_position.y >= -150.0:

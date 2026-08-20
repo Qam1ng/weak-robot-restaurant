@@ -4,6 +4,17 @@ signal kitchen_pick_selected(item_name: String)
 signal inventory_delete_requested(item_uid: int)
 
 const TrialCustomerScene = preload("res://scenes/Customer.tscn")
+const Character1SpriteFrames = preload("res://resources/player_avatars/character_1/character_1_sprite_frames.tres")
+const Character2SpriteFrames = preload("res://resources/player_avatars/character_2/character_2_sprite_frames.tres")
+const Character3SpriteFrames = preload("res://resources/player_avatars/character_3/character_3_sprite_frames.tres")
+const Character4SpriteFrames = preload("res://resources/player_avatars/character_4/character_4_sprite_frames.tres")
+const CHARACTER_SPRITE_FRAMES := {
+	"character_1": Character1SpriteFrames,
+	"character_2": Character2SpriteFrames,
+	"character_3": Character3SpriteFrames,
+	"character_4": Character4SpriteFrames,
+}
+const CHARACTER_IDS: Array[String] = ["character_1", "character_2", "character_3", "character_4"]
 
 @onready var survey_panel: PanelContainer = $SurveyPanel
 @onready var survey_question_title: RichTextLabel = $SurveyPanel/Margin/VBox/QuestionTitle
@@ -73,6 +84,9 @@ var _tipi_responses := {}
 var _survey_nickname_input: LineEdit
 var _survey_mode: String = "nickname"
 var _survey_scale_buttons: Array[Button] = []
+var _character_selection_grid: GridContainer
+var _character_selection_buttons: Dictionary = {}
+var _selected_character_id: String = ""
 var _player_task_notice_player: AudioStreamPlayer
 var _last_player_live_task_ids: Dictionary = {}
 var _player_task_notice_initialized: bool = false
@@ -125,11 +139,13 @@ const SCORE_FAIL_THRESHOLD := -30
 const SCORE_WIN_THRESHOLD := 0
 const SURVEY_PANEL_BASE_SIZE := Vector2(580.0, 300.0)
 const SURVEY_PANEL_RESULT_HEIGHT := 220.0
+const SURVEY_PANEL_CHARACTER_HEIGHT := 500.0
 const SURVEY_PANEL_MARGIN := 24.0
 const SURVEY_PANEL_OFFSET_X := 20.0
 const SURVEY_QUESTION_Y_OFFSET := -34.0
 const SURVEY_RESULT_Y_OFFSET := -20.0
 const SURVEY_MODE_NICKNAME := "nickname"
+const SURVEY_MODE_CHARACTER := "character"
 const SURVEY_MODE_TIPI := "tipi"
 const SURVEY_MODE_RESULT := "result"
 var _score_game_over: bool = false
@@ -211,6 +227,7 @@ func _ready() -> void:
 	_setup_player_dialogue_overlay_ui()
 	_setup_tutorial_ui()
 	_setup_survey_input_ui()
+	_setup_character_selection_ui()
 	_setup_trial_guide_ui()
 	_setup_player_task_notice_audio()
 	_set_gameplay_panels_visible(false)
@@ -248,6 +265,8 @@ func _recenter_survey_panel() -> void:
 	var panel_base_h := SURVEY_PANEL_BASE_SIZE.y
 	if _survey_mode == SURVEY_MODE_RESULT:
 		panel_base_h = SURVEY_PANEL_RESULT_HEIGHT
+	elif _survey_mode == SURVEY_MODE_CHARACTER:
+		panel_base_h = SURVEY_PANEL_CHARACTER_HEIGHT
 	var target_h := clampf(panel_base_h, 220.0, maxf(220.0, view_size.y - SURVEY_PANEL_MARGIN * 2.0))
 	survey_panel.custom_minimum_size = Vector2(target_w, target_h)
 	survey_panel.size = Vector2(target_w, target_h)
@@ -1910,6 +1929,88 @@ func _setup_survey_input_ui() -> void:
 	)
 	survey_options.add_child(_survey_nickname_input)
 
+func _setup_character_selection_ui() -> void:
+	if survey_options == null:
+		return
+	_character_selection_grid = GridContainer.new()
+	_character_selection_grid.columns = 2
+	_character_selection_grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_character_selection_grid.add_theme_constant_override("h_separation", 10)
+	_character_selection_grid.add_theme_constant_override("v_separation", 10)
+	_character_selection_grid.hide()
+	survey_options.add_child(_character_selection_grid)
+	for character_id in CHARACTER_IDS:
+		var button := _make_character_selection_button(character_id)
+		_character_selection_grid.add_child(button)
+		_character_selection_buttons[character_id] = button
+
+func _make_character_selection_button(character_id: String) -> Button:
+	var button := Button.new()
+	button.custom_minimum_size = Vector2(210.0, 120.0)
+	button.pressed.connect(_on_character_selected.bind(character_id))
+	_apply_character_selection_button_theme(button, false)
+
+	var portrait := TextureRect.new()
+	portrait.texture = _character_idle_texture(character_id)
+	portrait.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	portrait.offset_left = -40.0
+	portrait.offset_top = -60.0
+	portrait.offset_right = 40.0
+	portrait.offset_bottom = 40.0
+	portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(portrait)
+	return button
+
+func _character_idle_texture(character_id: String) -> Texture2D:
+	var sprite_frames = CHARACTER_SPRITE_FRAMES.get(character_id)
+	if sprite_frames is SpriteFrames:
+		return (sprite_frames as SpriteFrames).get_frame_texture(&"idle_down", 0)
+	return null
+
+func _apply_character_selection_button_theme(button: Button, selected: bool) -> void:
+	if not selected:
+		_apply_button_theme(button, "neutral")
+		return
+	var normal := _make_button_style(UI_BTN_NEUTRAL_BG, UI_BTN_FOCUS_BORDER, 10, 3, 8, 6)
+	var hover := _make_button_style(UI_BTN_NEUTRAL_HOVER_BG, UI_BTN_FOCUS_BORDER, 10, 3, 8, 6)
+	var pressed := _make_button_style(UI_BTN_NEUTRAL_PRESSED_BG, UI_BTN_FOCUS_BORDER, 10, 3, 8, 6)
+	button.add_theme_stylebox_override("normal", normal)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("pressed", pressed)
+	button.add_theme_stylebox_override("focus", hover)
+	button.add_theme_color_override("font_color", UI_BTN_TEXT_LIGHT)
+	button.add_theme_color_override("font_hover_color", UI_BTN_TEXT_LIGHT)
+	button.add_theme_color_override("font_pressed_color", UI_BTN_TEXT_LIGHT)
+	button.add_theme_color_override("font_focus_color", UI_BTN_TEXT_LIGHT)
+
+func _on_character_selected(character_id: String) -> void:
+	if not CHARACTER_SPRITE_FRAMES.has(character_id):
+		return
+	_selected_character_id = character_id
+	var profile = get_node_or_null("/root/PlayerProfile")
+	if profile and profile.has_method("set_character"):
+		profile.set_character(character_id)
+	_apply_character_to_player(character_id)
+	for id in _character_selection_buttons:
+		var button = _character_selection_buttons[id]
+		if button is Button:
+			_apply_character_selection_button_theme(button as Button, str(id) == character_id)
+	if survey_confirm:
+		survey_confirm.disabled = false
+
+func _apply_character_to_player(character_id: String) -> void:
+	var sprite_frames = CHARACTER_SPRITE_FRAMES.get(character_id)
+	if not (sprite_frames is SpriteFrames):
+		return
+	var players := get_tree().get_nodes_in_group("player")
+	if players.is_empty():
+		return
+	var player = players[0]
+	if player is Node and player.has_method("set_character_sprite_frames"):
+		player.call("set_character_sprite_frames", sprite_frames)
+
 func _on_tipi_scale_pressed(response_value: int) -> void:
 	_choose_tipi(response_value)
 
@@ -1928,7 +2029,9 @@ func _setup_tipi_survey() -> void:
 	]
 
 	var profile = get_node_or_null("/root/PlayerProfile")
-	if profile and profile.has_method("has_tipi") and bool(profile.has_tipi()) and profile.has_method("has_nickname") and bool(profile.has_nickname()):
+	if profile and profile.has_method("has_tipi") and bool(profile.has_tipi()) and profile.has_method("has_nickname") and bool(profile.has_nickname()) and profile.has_method("has_character") and bool(profile.has_character()):
+		if profile.has_method("get_character"):
+			_apply_character_to_player(str(profile.get_character()))
 		_show_tutorial_before_game()
 		return
 
@@ -1941,6 +2044,7 @@ func _setup_tipi_survey() -> void:
 
 func _show_nickname_prompt() -> void:
 	_survey_mode = SURVEY_MODE_NICKNAME
+	survey_options.alignment = BoxContainer.ALIGNMENT_BEGIN
 	var profile = get_node_or_null("/root/PlayerProfile")
 	var current_nickname := ""
 	if profile and profile.has_method("get_profile"):
@@ -1967,6 +2071,8 @@ func _show_nickname_prompt() -> void:
 		_survey_nickname_input.show()
 		_survey_nickname_input.editable = true
 		_survey_nickname_input.call_deferred("grab_focus")
+	if _character_selection_grid:
+		_character_selection_grid.hide()
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 36)
 	survey_question.text = "What should we call you in the restaurant?"
 	if survey_question_title:
@@ -1978,13 +2084,53 @@ func _show_nickname_prompt() -> void:
 	if survey_scale_hint:
 		survey_scale_hint.text = ""
 	survey_confirm.text = "Continue"
+	survey_confirm.disabled = false
+	survey_confirm.show()
+	_recenter_survey_panel()
+
+func _show_character_selection() -> void:
+	_survey_mode = SURVEY_MODE_CHARACTER
+	survey_options.alignment = BoxContainer.ALIGNMENT_CENTER
+	_selected_character_id = ""
+	if _survey_nickname_input:
+		_survey_nickname_input.hide()
+	for button in _survey_scale_buttons:
+		button.hide()
+	if survey_scale_title:
+		survey_scale_title.hide()
+	if survey_scale_spacer:
+		survey_scale_spacer.hide()
+	if survey_scale_hint:
+		survey_scale_hint.hide()
+	if survey_result_group_spacer:
+		survey_result_group_spacer.hide()
+	if survey_result_group:
+		survey_result_group.hide()
+	if survey_result_spacer:
+		survey_result_spacer.hide()
+	if survey_question_title:
+		survey_question_title.show()
+		survey_question_title.text = "[b]Your Character[/b]"
+	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 28.0)
+	survey_question.text = "Pick the character you want to play."
+	if _character_selection_grid:
+		_character_selection_grid.show()
+	for id in _character_selection_buttons:
+		var button = _character_selection_buttons[id]
+		if button is Button:
+			_apply_character_selection_button_theme(button as Button, false)
+	survey_confirm.text = "Continue"
+	survey_confirm.disabled = true
 	survey_confirm.show()
 	_recenter_survey_panel()
 
 func _begin_tipi_questions() -> void:
 	_survey_mode = SURVEY_MODE_TIPI
+	survey_options.alignment = BoxContainer.ALIGNMENT_CENTER
 	if _survey_nickname_input:
 		_survey_nickname_input.hide()
+	if _character_selection_grid:
+		_character_selection_grid.hide()
 	_tipi_index = 0
 	_tipi_responses.clear()
 	if survey_result_group_spacer:
@@ -1994,6 +2140,7 @@ func _begin_tipi_questions() -> void:
 	if survey_result_spacer:
 		survey_result_spacer.hide()
 	survey_confirm.hide()
+	survey_confirm.disabled = false
 	if survey_question_title:
 		survey_question_title.show()
 	if survey_scale_title:
@@ -2093,6 +2240,7 @@ func _show_tipi_result() -> void:
 	for button in _survey_scale_buttons:
 		button.hide()
 	survey_confirm.text = "Open Tutorial"
+	survey_confirm.disabled = false
 	survey_confirm.show()
 	_recenter_survey_panel()
 
@@ -2110,6 +2258,11 @@ func _finish_survey_and_start() -> void:
 		var profile = get_node_or_null("/root/PlayerProfile")
 		if profile and profile.has_method("set_nickname"):
 			profile.set_nickname(nickname)
+		_show_character_selection()
+		return
+	if _survey_mode == SURVEY_MODE_CHARACTER:
+		if _selected_character_id == "":
+			return
 		_begin_tipi_questions()
 		return
 	survey_panel.hide()
