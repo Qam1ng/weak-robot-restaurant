@@ -18,6 +18,10 @@ const STRATEGIES := [
 
 const OPENER_REPLY_TEXT := "Sure, what do you need?"
 const BRIDGE_REPLY_TEXT := "Alright, tell me what it is."
+const TRIAL_DELEGATION_TEMPLATE := {
+	"template_id": "trial_delegation_1",
+	"template_text": "Please take over the {item} order."
+}
 
 const OPENER_LIBRARY := [
 	{"template_id": "opener_1", "template_text": "Do you have a moment?"},
@@ -82,7 +86,17 @@ static var _rng_seeded := false
 static func reset_assignment_state() -> void:
 	_assignment_counts.clear()
 
-static func assign_strategy_locally(context: Dictionary) -> Dictionary:
+static func pick_unseen_strategy(excluded: Array[String]) -> String:
+	_ensure_rng_seeded()
+	var available: Array[String] = []
+	for strategy in STRATEGIES:
+		if not excluded.has(strategy):
+			available.append(strategy)
+	if available.is_empty():
+		return ""
+	return available[randi_range(0, available.size() - 1)]
+
+static func assign_strategy_locally(context: Dictionary, forced_strategy: String = "") -> Dictionary:
 	_ensure_rng_seeded()
 	var buckets := build_assignment_buckets(context)
 	var assignment_key := _assignment_key_from_buckets(buckets)
@@ -91,7 +105,7 @@ static func assign_strategy_locally(context: Dictionary) -> Dictionary:
 		for strategy in STRATEGIES:
 			counts[strategy] = 0
 
-	var chosen := _weighted_choice_from_counts(counts)
+	var chosen := forced_strategy if STRATEGIES.has(forced_strategy) else _weighted_choice_from_counts(counts)
 	counts[chosen] = int(counts.get(chosen, 0)) + 1
 	_assignment_counts[assignment_key] = counts
 
@@ -126,7 +140,7 @@ static func render_request_dialogue(strategy: String, payload: Dictionary, nickn
 	_ensure_rng_seeded()
 	var opener_entry := _random_template_entry(OPENER_LIBRARY)
 	var bridge_entry := _random_template_entry(BRIDGE_LIBRARY)
-	var delegation_render := pick_template(strategy, payload)
+	var delegation_render := _render_trial_delegation(payload) if bool(payload.get("trial_force_prompt", false)) else pick_template(strategy, payload)
 	var opener_text := _format_opener_with_nickname(str(opener_entry.get("template_text", "")), nickname)
 	return {
 		"opener_template_id": str(opener_entry.get("template_id", "")),
@@ -138,6 +152,16 @@ static func render_request_dialogue(strategy: String, payload: Dictionary, nickn
 		"template_id": str(delegation_render.get("template_id", "")),
 		"template_text": str(delegation_render.get("template_text", "")),
 		"utterance": str(delegation_render.get("utterance", ""))
+	}
+
+static func _render_trial_delegation(payload: Dictionary) -> Dictionary:
+	var item := str(payload.get("item_needed", "item")).strip_edges()
+	if item == "":
+		item = "item"
+	return {
+		"template_id": str(TRIAL_DELEGATION_TEMPLATE.get("template_id", "")),
+		"template_text": str(TRIAL_DELEGATION_TEMPLATE.get("template_text", "")),
+		"utterance": str(TRIAL_DELEGATION_TEMPLATE.get("template_text", "")).replace("{item}", item)
 	}
 
 static func pick_template(strategy: String, payload: Dictionary) -> Dictionary:
@@ -188,6 +212,13 @@ static func get_template_records() -> Array[Dictionary]:
 				"strategy": strategy,
 				"template_text": str(entry.get("template_text", ""))
 			})
+	var trial_template: Dictionary = TRIAL_DELEGATION_TEMPLATE
+	records.append({
+		"template_id": str(trial_template.get("template_id", "")),
+		"template_group": "delegation",
+		"strategy": "",
+		"template_text": str(trial_template.get("template_text", ""))
+	})
 	return records
 
 static func _assignment_key_from_buckets(buckets: Dictionary) -> String:

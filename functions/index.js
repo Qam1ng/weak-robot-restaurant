@@ -21,6 +21,7 @@ const STRATEGIES = [
   "social_proof",
   "scarcity",
 ];
+const STRATEGY_SET = new Set(STRATEGIES);
 const SESSION_SOURCES = new Set([
   "qualtrics",
   "standalone_test",
@@ -219,6 +220,7 @@ function weightedStrategyChoice(counts) {
 async function assignStrategyGlobally(data) {
   const requestId = sanitizeText(data.request_id, "");
   const buckets = sanitizeAssignmentBuckets(data.assignment_buckets);
+  const forcedStrategy = sanitizeEnumText(data.forced_strategy, STRATEGY_SET, "");
   const counterId = assignmentCounterDocId(buckets);
   const counterRef = db.collection("assignment_counters").doc(counterId);
   let chosen = STRATEGIES[0];
@@ -235,7 +237,7 @@ async function assignStrategyGlobally(data) {
         counts[strategy] = asNumber(existing[strategy], 0);
       }
     }
-    chosen = weightedStrategyChoice(counts);
+    chosen = forcedStrategy || weightedStrategyChoice(counts);
     counts[chosen] += 1;
     tx.set(counterRef, {
       urgency_bucket: buckets.urgency_bucket,

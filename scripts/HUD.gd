@@ -3076,6 +3076,9 @@ func _begin_formal_session() -> void:
 	_set_trial_player_input_locked(false)
 	_log_participant_profile_for_formal_session()
 	_formal_session_started = true
+	var help_mgr = get_node_or_null("/root/HelpRequestManager")
+	if help_mgr and help_mgr.has_method("set_formal_session_active"):
+		help_mgr.set_formal_session_active(true)
 	_initial_day_notice_shown = false
 	_pending_day_notice = 1
 	_run_end_active = false

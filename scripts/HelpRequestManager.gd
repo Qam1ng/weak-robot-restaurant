@@ -15,11 +15,15 @@ const STATUS_ACCEPTED := "accepted"
 const STATUS_RESOLVED := "resolved"
 
 const PERSUASION_ENGINE_PATH := "res://scripts/PersuasionEngine.gd"
+const SESSION_STRATEGY_STATE_KEY := "weak_robot_formal_strategy_state"
+const FORMAL_COVERAGE_STRATEGY_COUNT := 6
 
 var _requests_by_id: Dictionary = {}
 var _order: Array[String] = []
 var _next_id: int = 1
 var _request_index_in_session: int = 0
+var _formal_session_active := false
+var _formal_coverage_strategies: Array[String] = []
 
 func _gameplay_now_ms() -> int:
 	var game_mgr = get_node_or_null("/root/GameManager")
@@ -35,9 +39,74 @@ func reset_all() -> void:
 	_order.clear()
 	_next_id = 1
 	_request_index_in_session = 0
+	_formal_session_active = false
+	_formal_coverage_strategies.clear()
+	_clear_persisted_formal_strategy_state()
 	var engine = _persuasion_engine()
 	if engine and engine.has_method("reset_assignment_state"):
 		engine.reset_assignment_state()
+
+func set_formal_session_active(active: bool) -> void:
+	_formal_session_active = active
+	if active:
+		_load_persisted_formal_strategy_state()
+		return
+	_formal_coverage_strategies.clear()
+
+func _is_formal_research_request(req: Dictionary) -> bool:
+	if not _formal_session_active:
+		return false
+	var payload: Dictionary = req.get("payload", {})
+	return str(payload.get("delegation_scenario", "")) != "trial_tutorial"
+
+func _forced_coverage_strategy() -> String:
+	if _formal_coverage_strategies.size() >= FORMAL_COVERAGE_STRATEGY_COUNT:
+		return ""
+	var engine = _persuasion_engine()
+	if engine == null or not engine.has_method("pick_unseen_strategy"):
+		return ""
+	return str(engine.pick_unseen_strategy(_formal_coverage_strategies))
+
+func _confirm_formal_coverage_strategy(req: Dictionary) -> bool:
+	if not _is_formal_research_request(req):
+		return false
+	if str(req.get("assignment_mode", "")) != "session_coverage":
+		return false
+	if bool(req.get("session_coverage_consumed", false)):
+		return false
+	var strategy := str(req.get("strategy", ""))
+	if strategy == "" or _formal_coverage_strategies.has(strategy):
+		return false
+	_formal_coverage_strategies.append(strategy)
+	_persist_formal_strategy_state()
+	return true
+
+func _load_persisted_formal_strategy_state() -> void:
+	_formal_coverage_strategies.clear()
+	if not OS.has_feature("web"):
+		return
+	var value = JavaScriptBridge.eval("window.sessionStorage.getItem('%s') || '[]'" % SESSION_STRATEGY_STATE_KEY, true)
+	var parsed: Variant = JSON.parse_string(str(value))
+	if not (parsed is Array):
+		return
+	var engine = _persuasion_engine()
+	var strategies: Array = engine.get("STRATEGIES") if engine else []
+	for raw_strategy in parsed:
+		var strategy := str(raw_strategy)
+		if strategies.has(strategy) and not _formal_coverage_strategies.has(strategy):
+			_formal_coverage_strategies.append(strategy)
+			if _formal_coverage_strategies.size() >= FORMAL_COVERAGE_STRATEGY_COUNT:
+				break
+
+func _persist_formal_strategy_state() -> void:
+	if not OS.has_feature("web"):
+		return
+	JavaScriptBridge.eval("window.sessionStorage.setItem('%s', %s)" % [SESSION_STRATEGY_STATE_KEY, JSON.stringify(_formal_coverage_strategies)], true)
+
+func _clear_persisted_formal_strategy_state() -> void:
+	if not OS.has_feature("web"):
+		return
+	JavaScriptBridge.eval("window.sessionStorage.removeItem('%s')" % SESSION_STRATEGY_STATE_KEY, true)
 
 func _ready() -> void:
 	var board = get_node_or_null("/root/TaskBoard")
@@ -142,6 +211,8 @@ func mark_prompted(request_id: String) -> void:
 	var req: Dictionary = _requests_by_id.get(request_id, {})
 	if req.is_empty():
 		return
+	if _confirm_formal_coverage_strategy(req):
+		req["session_coverage_consumed"] = true
 	req["last_prompt_ms"] = _gameplay_now_ms()
 	_requests_by_id[request_id] = req
 	_log_help_event(req)
@@ -222,14 +293,25 @@ func _begin_strategy_assignment(request_id: String) -> void:
 	var req: Dictionary = _requests_by_id.get(request_id, {})
 	if req.is_empty():
 		return
+	var engine = _persuasion_engine()
+	if not _is_formal_research_request(req):
+		# Trial prompts demonstrate the interface but must not affect experiment counters.
+		_finalize_strategy_assignment(request_id, {
+			"strategy": "",
+			"buckets": req.get("assignment_buckets", {})
+		})
+		return
+	var forced_strategy := _forced_coverage_strategy()
+	req["forced_strategy"] = forced_strategy
+	req["assignment_mode"] = "session_coverage" if forced_strategy != "" else "condition_weighted"
+	_requests_by_id[request_id] = req
 	if _should_use_backend_assignment():
 		_request_remote_strategy_assignment(req)
 		return
 	var context: Dictionary = req.get("context_snapshot", {})
-	var engine = _persuasion_engine()
 	var assignment: Dictionary = {}
 	if engine and engine.has_method("assign_strategy_locally"):
-		assignment = engine.assign_strategy_locally(context)
+		assignment = engine.assign_strategy_locally(context, forced_strategy)
 	_finalize_strategy_assignment(request_id, assignment)
 
 func _request_remote_strategy_assignment(req: Dictionary) -> void:
@@ -238,7 +320,8 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 		return
 	var body := {
 		"request_id": request_id,
-		"assignment_buckets": req.get("assignment_buckets", {})
+		"assignment_buckets": req.get("assignment_buckets", {}),
+		"forced_strategy": str(req.get("forced_strategy", ""))
 	}
 	var http := HTTPRequest.new()
 	add_child(http)
@@ -264,7 +347,7 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 		var engine = _persuasion_engine()
 		var fallback: Dictionary = {}
 		if engine and engine.has_method("assign_strategy_locally"):
-			fallback = engine.assign_strategy_locally(req.get("context_snapshot", {}))
+			fallback = engine.assign_strategy_locally(req.get("context_snapshot", {}), str(req.get("forced_strategy", "")))
 		_finalize_strategy_assignment(request_id, fallback)
 
 func _on_strategy_assignment_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, request_id: String) -> void:
@@ -289,7 +372,7 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 		var engine = _persuasion_engine()
 		var fallback: Dictionary = {}
 		if engine and engine.has_method("assign_strategy_locally"):
-			fallback = engine.assign_strategy_locally(req.get("context_snapshot", {}))
+			fallback = engine.assign_strategy_locally(req.get("context_snapshot", {}), str(req.get("forced_strategy", "")))
 		_finalize_strategy_assignment(request_id, fallback)
 		return
 	var top: Variant = JSON.parse_string(body.get_string_from_utf8())
@@ -309,7 +392,7 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 		var engine = _persuasion_engine()
 		var fallback_parse: Dictionary = {}
 		if engine and engine.has_method("assign_strategy_locally"):
-			fallback_parse = engine.assign_strategy_locally(req.get("context_snapshot", {}))
+			fallback_parse = engine.assign_strategy_locally(req.get("context_snapshot", {}), str(req.get("forced_strategy", "")))
 		_finalize_strategy_assignment(request_id, fallback_parse)
 		return
 	var assignment: Dictionary = {
@@ -326,7 +409,8 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 		return
 	var strategy := str(assignment.get("strategy", "")).strip_edges()
 	var engine = _persuasion_engine()
-	if strategy == "":
+	var payload: Dictionary = req.get("payload", {})
+	if strategy == "" and not bool(payload.get("trial_force_prompt", false)):
 		strategy = str(engine.get("STRATEGY_AUTHORITY")) if engine else "authority"
 	var buckets: Dictionary = assignment.get("buckets", {})
 	if buckets.is_empty():
