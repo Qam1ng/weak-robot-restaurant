@@ -41,6 +41,8 @@ var player_items_box: VBoxContainer
 var player_tasks_box: VBoxContainer
 var inventory_portal_panel: PanelContainer
 var inventory_portal_list: VBoxContainer
+var _inventory_delete_buttons: Array[Button] = []
+var _inventory_delete_keyboard_focus_index: int = -1
 var customer_tab_buttons: HBoxContainer
 var customer_live_btn: Button
 var customer_history_btn: Button
@@ -86,9 +88,16 @@ var _tipi_responses := {}
 var _survey_nickname_input: LineEdit
 var _survey_mode: String = "nickname"
 var _survey_scale_buttons: Array[Button] = []
+var _tipi_keyboard_focus_index: int = -1
 var _character_selection_grid: GridContainer
 var _character_selection_buttons: Dictionary = {}
 var _selected_character_id: String = ""
+var _character_focus_index: int = 0
+var _overlay_keyboard_focus_index: int = -1
+var _help_keyboard_focus_index: int = -1
+var _gameplay_panel_keyboard_focus_index: int = -1
+var _gameplay_panel_focus_tween: Tween = null
+var _gameplay_panel_focus_token: int = 0
 var _player_task_notice_player: AudioStreamPlayer
 var _last_player_live_task_ids: Dictionary = {}
 var _player_task_notice_initialized: bool = false
@@ -135,7 +144,7 @@ const DIALOGUE_PANEL_WIDTH := 340.0
 const TUTORIAL_PANEL_WIDTH := 620.0
 const TUTORIAL_PANEL_MIN_HEIGHT := 420.0
 const TUTORIAL_TOGGLE_SIZE := 44.0
-const TUTORIAL_TEXT := "[b]Controls[/b]\nWASD / Arrow Keys: move\nE: interact (take orders, pick up items, deliver items)\nI: inventory (delete items)\n\n[b]Goal[/b]\nServe customers' drinks before the deadline\nRespond to robot handoff popups\n\n[b]Win and Loss[/b]\nReach the end of Day 1 with a score of 0 or higher to win\nFinish Day 1 below 0 to lose\nReach -30 at any time and the game ends immediately\n\n[b]Robot Handoffs[/b]\nThe robot may ask you to take over an order when it is overloaded, running out of time, or low on battery.\n\n[b]Player Reminders[/b]\nCheck your assigned tasks\nNotice how the robot asks for help"
+const TUTORIAL_TEXT := "[b]Controls[/b]\nWASD / Arrow Keys: move\nE: interact (take orders, pick up items, deliver items)\nI: inventory (delete items)\nTab: focus interface buttons\nEnter: confirm the focused button\n\n[b]Goal[/b]\nServe customers' drinks before the deadline\nRespond to robot handoff popups\n\n[b]Win and Loss[/b]\nReach the end of Day 1 with a score of 0 or higher to win\nFinish Day 1 below 0 to lose\nReach -30 at any time and the game ends immediately\n\n[b]Robot Handoffs[/b]\nThe robot may ask you to take over an order when it is overloaded, running out of time, or low on battery.\n\n[b]Player Reminders[/b]\nCheck your assigned tasks\nNotice how the robot asks for help"
 var _customer_tab: String = CUSTOMER_TAB_LIVE
 var _score: int = 0
 var _success_count: int = 0
@@ -218,6 +227,7 @@ const UI_BTN_TEXT_LIGHT := Color(0.96, 0.97, 0.99, 1.0)
 const UI_BTN_TEXT_DARK := Color(0.10, 0.08, 0.04, 1.0)
 const UI_BTN_BORDER := Color(0.92, 0.96, 1.0, 0.22)
 const UI_BTN_FOCUS_BORDER := Color(1.0, 0.88, 0.50, 0.95)
+const GAMEPLAY_PANEL_FOCUS_TTL_SEC := 1.2
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -250,6 +260,291 @@ func _ready() -> void:
 	_connect_task_signals()
 	_connect_time_signals()
 	call_deferred("_setup_tipi_survey")
+
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey):
+		return
+	var key_event := event as InputEventKey
+	if not key_event.pressed or key_event.echo:
+		return
+	if key_event.ctrl_pressed or key_event.alt_pressed or key_event.meta_pressed:
+		return
+	if (key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER) and tutorial_panel != null and tutorial_panel.visible and tutorial_start_button != null and tutorial_start_button.visible and not tutorial_start_button.disabled:
+		tutorial_start_button.emit_signal("pressed")
+		get_viewport().set_input_as_handled()
+		return
+	if _survey_mode == SURVEY_MODE_NICKNAME:
+		if (key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER) and _survey_nickname_input != null and _survey_nickname_input.visible:
+			_finish_survey_and_start()
+			get_viewport().set_input_as_handled()
+		elif key_event.keycode == KEY_TAB:
+			get_viewport().set_input_as_handled()
+		return
+	if _survey_mode == SURVEY_MODE_CHARACTER:
+		if _handle_character_selection_key(key_event):
+			get_viewport().set_input_as_handled()
+		return
+	if _survey_mode == SURVEY_MODE_TIPI:
+		if _handle_tipi_keyboard_key(key_event):
+			get_viewport().set_input_as_handled()
+		return
+	if _survey_mode == SURVEY_MODE_RESULT:
+		if (key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER) and survey_panel != null and survey_panel.visible and survey_confirm != null and survey_confirm.visible and not survey_confirm.disabled:
+			_finish_survey_and_start()
+			get_viewport().set_input_as_handled()
+			return
+	if (key_event.keycode == KEY_ESCAPE or key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER) and tutorial_panel != null and tutorial_panel.visible and tutorial_close_button != null and tutorial_close_button.visible and not tutorial_close_button.disabled:
+		_close_tutorial_overlay()
+		get_viewport().set_input_as_handled()
+		return
+	if is_inventory_portal_visible():
+		if _handle_inventory_delete_keyboard_key(key_event):
+			get_viewport().set_input_as_handled()
+		return
+	if (key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER) and _trial_guide_continue_button != null and _trial_guide_continue_button.visible and not _trial_guide_continue_button.disabled:
+		_on_trial_guide_continue_pressed()
+		get_viewport().set_input_as_handled()
+		return
+	if _popup_mode != POPUP_MODE_NONE and player_dialogue_overlay != null and player_dialogue_overlay.visible:
+		if _handle_overlay_keyboard_key(key_event):
+			get_viewport().set_input_as_handled()
+		return
+	if not _help_prompt_cards.is_empty():
+		if _handle_help_prompt_keyboard_key(key_event):
+			get_viewport().set_input_as_handled()
+			return
+	if _tutorial_started and (tutorial_panel == null or not tutorial_panel.visible):
+		if _handle_gameplay_panel_keyboard_key(key_event):
+			get_viewport().set_input_as_handled()
+			return
+
+func _handle_character_selection_key(key_event: InputEventKey) -> bool:
+	var keycode := key_event.keycode
+	var next_index := _character_focus_index
+	match keycode:
+		KEY_LEFT:
+			if _character_focus_index % 2 == 1:
+				next_index -= 1
+		KEY_RIGHT:
+			if _character_focus_index % 2 == 0:
+				next_index += 1
+		KEY_UP:
+			if _character_focus_index >= 2:
+				next_index -= 2
+		KEY_DOWN:
+			if _character_focus_index < CHARACTER_IDS.size() - 2:
+				next_index += 2
+		KEY_TAB:
+			var step := -1 if key_event.shift_pressed else 1
+			next_index = posmod(_character_focus_index + step, CHARACTER_IDS.size())
+		KEY_ENTER, KEY_KP_ENTER:
+			_finish_survey_and_start()
+			return true
+		_:
+			return false
+	if next_index != _character_focus_index:
+		_on_character_selected(CHARACTER_IDS[next_index])
+		_focus_character_option(next_index)
+	return true
+
+func _handle_tipi_keyboard_key(key_event: InputEventKey) -> bool:
+	if key_event.keycode == KEY_TAB:
+		var step := -1 if key_event.shift_pressed else 1
+		if _tipi_keyboard_focus_index < 0:
+			_tipi_keyboard_focus_index = _survey_scale_buttons.size() - 1 if step < 0 else 0
+		else:
+			_tipi_keyboard_focus_index = posmod(_tipi_keyboard_focus_index + step, _survey_scale_buttons.size())
+		_survey_scale_buttons[_tipi_keyboard_focus_index].grab_focus()
+		return true
+	var keycode := key_event.keycode
+	var result := _update_choice_focus(keycode, _survey_scale_buttons, _tipi_keyboard_focus_index)
+	if not bool(result.get("handled", false)):
+		return false
+	_tipi_keyboard_focus_index = int(result.get("focus_index", -1))
+	if bool(result.get("activate", false)) and _tipi_keyboard_focus_index >= 0:
+		_choose_tipi(_tipi_keyboard_focus_index + 1)
+	return true
+
+func _handle_overlay_keyboard_key(key_event: InputEventKey) -> bool:
+	var buttons := _visible_overlay_choice_buttons()
+	var result := _update_tab_choice_focus(key_event, buttons, _overlay_keyboard_focus_index)
+	if not bool(result.get("handled", false)):
+		return false
+	_overlay_keyboard_focus_index = int(result.get("focus_index", -1))
+	if bool(result.get("activate", false)) and _overlay_keyboard_focus_index >= 0:
+		buttons[_overlay_keyboard_focus_index].emit_signal("pressed")
+	return true
+
+func _handle_help_prompt_keyboard_key(key_event: InputEventKey) -> bool:
+	var buttons := _visible_help_prompt_choice_buttons()
+	var result := _update_tab_choice_focus(key_event, buttons, _help_keyboard_focus_index)
+	if not bool(result.get("handled", false)):
+		return false
+	_help_keyboard_focus_index = int(result.get("focus_index", -1))
+	if bool(result.get("activate", false)) and _help_keyboard_focus_index >= 0:
+		buttons[_help_keyboard_focus_index].emit_signal("pressed")
+	return true
+
+func _handle_inventory_delete_keyboard_key(key_event: InputEventKey) -> bool:
+	if _inventory_delete_buttons.is_empty():
+		return false
+	var keycode := key_event.keycode
+	if keycode == KEY_ENTER or keycode == KEY_KP_ENTER:
+		if _inventory_delete_keyboard_focus_index < 0 or _inventory_delete_keyboard_focus_index >= _inventory_delete_buttons.size():
+			return false
+		_inventory_delete_buttons[_inventory_delete_keyboard_focus_index].emit_signal("pressed")
+		return true
+	var result := _update_tab_choice_focus(key_event, _inventory_delete_buttons, _inventory_delete_keyboard_focus_index)
+	if not bool(result.get("handled", false)):
+		return false
+	_inventory_delete_keyboard_focus_index = int(result.get("focus_index", -1))
+	return true
+
+func _reset_inventory_delete_keyboard_focus() -> void:
+	_inventory_delete_keyboard_focus_index = -1
+	_clear_choice_focus(_inventory_delete_buttons)
+
+func _handle_gameplay_panel_keyboard_key(key_event: InputEventKey) -> bool:
+	var buttons := _gameplay_panel_keyboard_buttons()
+	if buttons.is_empty():
+		return false
+	if key_event.keycode == KEY_TAB:
+		var step := -1 if key_event.shift_pressed else 1
+		var next_index := _gameplay_panel_keyboard_focus_index + step
+		if _gameplay_panel_keyboard_focus_index < 0:
+			next_index = buttons.size() - 1 if key_event.shift_pressed else 0
+		if next_index < 0 or next_index >= buttons.size():
+			_reset_gameplay_panel_keyboard_focus()
+			return true
+		_set_gameplay_panel_keyboard_focus(next_index, buttons)
+		return true
+	if (key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER) and _gameplay_panel_keyboard_focus_index >= 0 and _gameplay_panel_keyboard_focus_index < buttons.size():
+		var button := buttons[_gameplay_panel_keyboard_focus_index]
+		_reset_gameplay_panel_keyboard_focus()
+		button.emit_signal("pressed")
+		return true
+	return false
+
+func _gameplay_panel_keyboard_buttons() -> Array[Button]:
+	var buttons: Array[Button] = []
+	for button in [tutorial_toggle_button, customer_live_btn, customer_history_btn]:
+		if button != null and button.visible and not button.disabled:
+			buttons.append(button)
+	return buttons
+
+func _reset_gameplay_panel_keyboard_focus() -> void:
+	_gameplay_panel_focus_token += 1
+	if _gameplay_panel_focus_tween != null:
+		_gameplay_panel_focus_tween.kill()
+		_gameplay_panel_focus_tween = null
+	_gameplay_panel_keyboard_focus_index = -1
+	_clear_choice_focus(_gameplay_panel_keyboard_buttons())
+
+func _set_gameplay_panel_keyboard_focus(index: int, buttons: Array[Button]) -> void:
+	if index < 0 or index >= buttons.size():
+		return
+	_gameplay_panel_focus_token += 1
+	if _gameplay_panel_focus_tween != null:
+		_gameplay_panel_focus_tween.kill()
+	_gameplay_panel_keyboard_focus_index = index
+	buttons[index].grab_focus()
+	var token := _gameplay_panel_focus_token
+	_gameplay_panel_focus_tween = create_tween()
+	_gameplay_panel_focus_tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	_gameplay_panel_focus_tween.tween_interval(GAMEPLAY_PANEL_FOCUS_TTL_SEC)
+	_gameplay_panel_focus_tween.tween_callback(func() -> void:
+		if token == _gameplay_panel_focus_token:
+			_gameplay_panel_focus_tween = null
+			_gameplay_panel_keyboard_focus_index = -1
+			_clear_choice_focus(_gameplay_panel_keyboard_buttons())
+	)
+
+func _update_choice_focus(keycode: Key, buttons: Array[Button], current_index: int) -> Dictionary:
+	if buttons.is_empty():
+		return {"handled": false}
+	if keycode == KEY_ENTER or keycode == KEY_KP_ENTER:
+		if buttons.size() == 1:
+			return {"handled": true, "focus_index": 0, "activate": true}
+		return {
+			"handled": current_index >= 0 and current_index < buttons.size(),
+			"focus_index": current_index,
+			"activate": true,
+		}
+	var next_index := current_index
+	match keycode:
+		KEY_LEFT, KEY_UP:
+			next_index = buttons.size() - 1 if current_index < 0 else max(current_index - 1, 0)
+		KEY_RIGHT, KEY_DOWN:
+			next_index = 0 if current_index < 0 else min(current_index + 1, buttons.size() - 1)
+		_:
+			return {"handled": false}
+	if next_index != current_index:
+		buttons[next_index].grab_focus()
+	return {"handled": true, "focus_index": next_index, "activate": false}
+
+func _update_tab_choice_focus(key_event: InputEventKey, buttons: Array[Button], current_index: int) -> Dictionary:
+	if buttons.is_empty():
+		return {"handled": false}
+	var keycode := key_event.keycode
+	if keycode == KEY_ENTER or keycode == KEY_KP_ENTER:
+		if buttons.size() == 1:
+			return {"handled": true, "focus_index": 0, "activate": true}
+		return {
+			"handled": current_index >= 0 and current_index < buttons.size(),
+			"focus_index": current_index,
+			"activate": true,
+		}
+	if keycode != KEY_TAB:
+		return {"handled": false}
+	var next_index := current_index
+	if current_index < 0:
+		next_index = buttons.size() - 1 if key_event.shift_pressed else 0
+	else:
+		next_index += -1 if key_event.shift_pressed else 1
+	if next_index < 0 or next_index >= buttons.size():
+		_clear_choice_focus(buttons)
+		return {"handled": true, "focus_index": -1, "activate": false}
+	buttons[next_index].grab_focus()
+	return {"handled": true, "focus_index": next_index, "activate": false}
+
+func _visible_overlay_choice_buttons() -> Array[Button]:
+	var buttons: Array[Button] = []
+	for button in _all_overlay_choice_buttons():
+		if button != null and button.visible and not button.disabled:
+			buttons.append(button)
+	return buttons
+
+func _all_overlay_choice_buttons() -> Array[Button]:
+	var buttons: Array[Button] = []
+	for button in [player_dialogue_overlay_accept_btn, player_dialogue_overlay_decline_btn, player_dialogue_overlay_third_btn]:
+		if button != null:
+			buttons.append(button)
+	return buttons
+
+func _visible_help_prompt_choice_buttons() -> Array[Button]:
+	var buttons: Array[Button] = []
+	for button in _all_help_prompt_choice_buttons():
+		if button.visible and not button.disabled:
+			buttons.append(button)
+	return buttons
+
+func _all_help_prompt_choice_buttons() -> Array[Button]:
+	var buttons: Array[Button] = []
+	for entry in _help_prompt_cards:
+		for button_key in ["accept_btn", "decline_btn"]:
+			var button: Button = entry.get(button_key, null)
+			if button != null:
+				buttons.append(button)
+	return buttons
+
+func _clear_choice_focus(buttons: Array[Button]) -> void:
+	for button in buttons:
+		if button != null and button.has_focus():
+			button.release_focus()
+
+func _reset_help_prompt_keyboard_focus() -> void:
+	_help_keyboard_focus_index = -1
+	_clear_choice_focus(_all_help_prompt_choice_buttons())
 
 func _connect_viewport_resize() -> void:
 	var vp := get_viewport()
@@ -1155,6 +1450,8 @@ func _on_player_inventory_changed(items: Array) -> void:
 func _refresh_inventory_portal(items: Array) -> void:
 	if inventory_portal_list == null:
 		return
+	_reset_inventory_delete_keyboard_focus()
+	_inventory_delete_buttons.clear()
 	_clear_dynamic_children(inventory_portal_list)
 	if items.is_empty():
 		var empty := Label.new()
@@ -1178,6 +1475,7 @@ func _refresh_inventory_portal(items: Array) -> void:
 		delete_btn.set_meta("inventory_item_uid", int(item.get("uid", 0)))
 		delete_btn.pressed.connect(_on_inventory_portal_delete_pressed.bind(int(item.get("uid", 0))), CONNECT_DEFERRED)
 		row.add_child(delete_btn)
+		_inventory_delete_buttons.append(delete_btn)
 		inventory_portal_list.add_child(row)
 
 func _on_inventory_portal_delete_pressed(item_uid: int) -> void:
@@ -1215,6 +1513,7 @@ func show_inventory_portal() -> void:
 func hide_inventory_portal() -> void:
 	if inventory_portal_panel == null:
 		return
+	_reset_inventory_delete_keyboard_focus()
 	inventory_portal_panel.visible = false
 	if _trial_session_active and _trial_step == "await_delete_confirm" and _trial_has_delete_item():
 		_trial_step = "await_delete_open"
@@ -1946,7 +2245,7 @@ func show_kitchen_pick_popup(options: Array[String], title: String = "Kitchen Pi
 		_kitchen_pick_options.append(str(options[i]))
 	_show_player_dialogue_prompt(
 		title,
-		"Tap an item to add +1 to your inventory.\nPress E, I, or Esc, or leave the kitchen to close.",
+		"Choose an item to add +1 to your inventory.\nPress E, I, or Esc, or leave the kitchen to close.",
 		[
 			_kitchen_pick_options[0].capitalize(),
 			_kitchen_pick_options[1].capitalize(),
@@ -2112,6 +2411,7 @@ func _apply_character_selection_button_theme(button: Button, selected: bool) -> 
 func _on_character_selected(character_id: String) -> void:
 	if not CHARACTER_SPRITE_FRAMES.has(character_id):
 		return
+	_character_focus_index = CHARACTER_IDS.find(character_id)
 	_selected_character_id = character_id
 	var profile = get_node_or_null("/root/PlayerProfile")
 	if profile and profile.has_method("set_character"):
@@ -2215,7 +2515,7 @@ func _show_nickname_prompt() -> void:
 func _show_character_selection() -> void:
 	_survey_mode = SURVEY_MODE_CHARACTER
 	survey_options.alignment = BoxContainer.ALIGNMENT_CENTER
-	_selected_character_id = ""
+	_character_focus_index = 0
 	if _survey_nickname_input:
 		_survey_nickname_input.hide()
 	for button in _survey_scale_buttons:
@@ -2239,17 +2539,25 @@ func _show_character_selection() -> void:
 	survey_question.text = "Pick the character you want to play."
 	if _character_selection_grid:
 		_character_selection_grid.show()
-	for id in _character_selection_buttons:
-		var button = _character_selection_buttons[id]
-		if button is Button:
-			_apply_character_selection_button_theme(button as Button, false)
 	survey_confirm.text = "Continue"
-	survey_confirm.disabled = true
+	_on_character_selected(CHARACTER_IDS[0])
 	survey_confirm.show()
 	_recenter_survey_panel()
+	call_deferred("_focus_character_option", 0)
+
+func _focus_character_option(index: int) -> void:
+	if index < 0 or index >= CHARACTER_IDS.size():
+		return
+	var button = _character_selection_buttons.get(CHARACTER_IDS[index])
+	if not (button is Button):
+		return
+	_character_focus_index = index
+	(button as Button).grab_focus()
 
 func _begin_tipi_questions() -> void:
 	_survey_mode = SURVEY_MODE_TIPI
+	_tipi_keyboard_focus_index = -1
+	_clear_choice_focus(_survey_scale_buttons)
 	survey_options.alignment = BoxContainer.ALIGNMENT_CENTER
 	if _survey_nickname_input:
 		_survey_nickname_input.hide()
@@ -2329,6 +2637,8 @@ func _choose_tipi(response_value: int) -> void:
 	var item_index := int(q.get("item", 0))
 	if item_index > 0:
 		_tipi_responses[item_index] = clampi(response_value, 1, 7)
+	_tipi_keyboard_focus_index = -1
+	_clear_choice_focus(_survey_scale_buttons)
 	_tipi_index += 1
 
 	if _tipi_index >= _tipi_questions.size():
@@ -3761,6 +4071,8 @@ func _show_player_dialogue_prompt(title: String, body: String, button_texts: Arr
 				player_dialogue_overlay_third_btn.text = button_texts[2]
 				player_dialogue_overlay_third_btn.disabled = false
 				player_dialogue_overlay_third_btn.modulate = Color(1, 1, 1, 1)
+	_overlay_keyboard_focus_index = -1
+	_clear_choice_focus(_all_overlay_choice_buttons())
 	_trim_player_dialogue_info_cards()
 	_update_gameplay_panel_layout()
 
@@ -3875,6 +4187,7 @@ func _show_or_update_help_request_card(request: Dictionary) -> void:
 		_help_prompt_cards.append(created)
 		help_prompt_stack.add_child(created.get("node"))
 	help_prompt_stack.visible = not _help_prompt_cards.is_empty()
+	_reset_help_prompt_keyboard_focus()
 	_update_delegation_pause_state()
 	_update_gameplay_panel_layout()
 
@@ -3918,6 +4231,7 @@ func _on_help_request_primary_pressed(request_id: String) -> void:
 			entry["request"] = refreshed.duplicate(true)
 	_apply_help_request_card_state(entry, request)
 	_help_prompt_cards[idx] = entry
+	_reset_help_prompt_keyboard_focus()
 	if _trial_session_active and request_id == _trial_handoff_request_id and _trial_step == "await_handoff_accept" and stage >= HELP_DIALOGUE_STAGE_DELEGATION:
 		call_deferred("_show_trial_guide_for_handoff_accept")
 
@@ -3941,6 +4255,7 @@ func _remove_help_request_card(request_id: String) -> void:
 		node.queue_free()
 	if help_prompt_stack:
 		help_prompt_stack.visible = not _help_prompt_cards.is_empty()
+	_reset_help_prompt_keyboard_focus()
 	_last_help_bubble_utterance_by_request.erase(request_id)
 	_shown_help_system_notice_by_request.erase(request_id)
 	_update_delegation_pause_state()
@@ -3993,6 +4308,8 @@ func _hide_player_dialogue_overlay() -> void:
 	_hide_player_dialogue_overlay_buttons()
 	if player_dialogue_overlay_backdrop:
 		player_dialogue_overlay_backdrop.visible = false
+	_overlay_keyboard_focus_index = -1
+	_clear_choice_focus(_all_overlay_choice_buttons())
 	player_dialogue_overlay.visible = false
 	player_dialogue_overlay.modulate = Color(1, 1, 1, 1)
 	_update_gameplay_panel_layout()
