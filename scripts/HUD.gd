@@ -99,6 +99,8 @@ var _gameplay_panel_keyboard_focus_index: int = -1
 var _gameplay_panel_focus_tween: Tween = null
 var _gameplay_panel_focus_token: int = 0
 var _player_task_notice_player: AudioStreamPlayer
+var _delegation_voice_player: AudioStreamPlayer
+var _delegation_voice_request_id: String = ""
 var _last_player_live_task_ids: Dictionary = {}
 var _player_task_notice_initialized: bool = false
 var _tutorial_toggle_flash_tween: Tween = null
@@ -252,6 +254,7 @@ func _ready() -> void:
 	_setup_character_selection_ui()
 	_setup_trial_guide_ui()
 	_setup_player_task_notice_audio()
+	_setup_delegation_voice_audio()
 	_set_gameplay_panels_visible(false)
 	_connect_viewport_resize()
 	_connect_help_signals()
@@ -1935,6 +1938,12 @@ func _setup_player_task_notice_audio() -> void:
 	_player_task_notice_player.stream = generator
 	_player_task_notice_player.bus = &"Master"
 	add_child(_player_task_notice_player)
+
+func _setup_delegation_voice_audio() -> void:
+	_delegation_voice_player = AudioStreamPlayer.new()
+	_delegation_voice_player.name = "DelegationVoice"
+	_delegation_voice_player.bus = &"Master"
+	add_child(_delegation_voice_player)
 
 func _add_blank_row(container: Container, min_height: float = 18.0) -> void:
 	if container == null:
@@ -4207,6 +4216,7 @@ func _show_or_update_help_request_card(request: Dictionary) -> void:
 		var created := _create_help_prompt_card(request)
 		_help_prompt_cards.append(created)
 		help_prompt_stack.add_child(created.get("node"))
+		_play_delegation_stage_voice(request, HELP_DIALOGUE_STAGE_OPENER)
 	help_prompt_stack.visible = not _help_prompt_cards.is_empty()
 	_reset_help_prompt_keyboard_focus()
 	_update_delegation_pause_state()
@@ -4252,6 +4262,7 @@ func _on_help_request_primary_pressed(request_id: String) -> void:
 			entry["request"] = refreshed.duplicate(true)
 	_apply_help_request_card_state(entry, request)
 	_help_prompt_cards[idx] = entry
+	_play_delegation_stage_voice(request, stage)
 	_reset_help_prompt_keyboard_focus()
 	if _trial_session_active and request_id == _trial_handoff_request_id and _trial_step == "await_handoff_accept" and stage >= HELP_DIALOGUE_STAGE_DELEGATION:
 		call_deferred("_show_trial_guide_for_handoff_accept")
@@ -4271,6 +4282,7 @@ func _remove_help_request_card(request_id: String) -> void:
 		return
 	var entry: Dictionary = _help_prompt_cards[idx]
 	_help_prompt_cards.remove_at(idx)
+	_stop_delegation_voice_for_request(request_id)
 	var node: Control = entry.get("node", null)
 	if node != null and is_instance_valid(node):
 		node.queue_free()
@@ -4282,6 +4294,49 @@ func _remove_help_request_card(request_id: String) -> void:
 	_update_delegation_pause_state()
 	_update_gameplay_panel_layout()
 	_fill_help_prompt_slots()
+
+func _play_delegation_stage_voice(request: Dictionary, dialogue_stage: int) -> void:
+	if _delegation_voice_player == null:
+		return
+	var template_id := ""
+	var category := ""
+	var item_suffix := ""
+	match dialogue_stage:
+		HELP_DIALOGUE_STAGE_OPENER:
+			template_id = str(request.get("opener_template_id", ""))
+			category = "opener"
+		HELP_DIALOGUE_STAGE_BRIDGE:
+			template_id = str(request.get("bridge_template_id", ""))
+			category = "bridge"
+		_:
+			template_id = str(request.get("template_id", ""))
+			category = "trial" if template_id.begins_with("trial_") else "strategy"
+			var payload: Dictionary = request.get("payload", {})
+			var item_name := str(payload.get("food_item", "")).strip_edges().to_lower()
+			if item_name not in ["pizza", "hotdog", "sandwich"]:
+				push_warning("[DelegationVoice] No audio variant for item: %s" % item_name)
+				return
+			item_suffix = "_" + item_name
+	if template_id == "":
+		return
+	var path := "res://assets/audio/delegation/%s/%s%s.mp3" % [category, template_id, item_suffix]
+	if not ResourceLoader.exists(path):
+		push_warning("[DelegationVoice] Missing audio asset: %s" % path)
+		return
+	var stream := load(path) as AudioStream
+	if stream == null:
+		push_warning("[DelegationVoice] Could not load audio asset: %s" % path)
+		return
+	_delegation_voice_player.stop()
+	_delegation_voice_player.stream = stream
+	_delegation_voice_request_id = str(request.get("id", ""))
+	_delegation_voice_player.play()
+
+func _stop_delegation_voice_for_request(request_id: String) -> void:
+	if _delegation_voice_player == null or _delegation_voice_request_id != request_id:
+		return
+	_delegation_voice_player.stop()
+	_delegation_voice_request_id = ""
 
 func _update_delegation_pause_state() -> void:
 	var should_pause := not _help_prompt_cards.is_empty()
