@@ -1,0 +1,9 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/Restaurant.tscn" id="1_restaurant"]
+[ext_resource type="Script" path="res://scripts/VideoOrientation.gd" id="2_controller"]
+
+[node name="VideoOrientation" type="Node2D"]
+script = ExtResource("2_controller")
+
+[node name="Restaurant" parent="." instance=ExtResource("1_restaurant")]
