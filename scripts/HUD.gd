@@ -169,6 +169,7 @@ const SURVEY_MODE_RESULT := "result"
 var _score_game_over: bool = false
 var _run_end_active: bool = false
 var _game_run_logged: bool = false
+var _embedded_completion_sent: bool = false
 var _tutorial_started: bool = false
 var _customer_history_page: int = 0
 var _pending_day_notice: int = 0
@@ -1360,12 +1361,28 @@ func _show_run_end_prompt(title: String, body: String) -> void:
 	_run_end_active = true
 	_set_global_pause(true)
 	_popup_mode = POPUP_MODE_GAME_OVER
-	_show_player_dialogue_prompt(title, body, ["Play Again"], false)
+	var end_action := "Continue" if _is_embedded_web_session() else "Play Again"
+	_show_player_dialogue_prompt(title, body, [end_action], false)
+
+func _is_embedded_web_session() -> bool:
+	if not OS.has_feature("web"):
+		return false
+	return bool(JavaScriptBridge.eval("Boolean(window.WeakRobotRestaurantEmbed && window.WeakRobotRestaurantEmbed.isEmbedded)", true))
+
+func _complete_embedded_web_session() -> void:
+	if _embedded_completion_sent:
+		return
+	_embedded_completion_sent = true
+	JavaScriptBridge.eval("window.WeakRobotRestaurantEmbed && window.WeakRobotRestaurantEmbed.complete()", true)
+	if player_dialogue_overlay_accept_btn:
+		player_dialogue_overlay_accept_btn.disabled = true
+		player_dialogue_overlay_accept_btn.text = "Returning..."
 
 func _on_game_over_play_again() -> void:
 	_set_global_pause(false)
 	_run_end_active = false
 	_score_game_over = false
+	_embedded_completion_sent = false
 	_popup_mode = POPUP_MODE_NONE
 	var logger = get_node_or_null("/root/EpisodeLogger")
 	if logger and logger.has_method("reset_session"):
@@ -2178,7 +2195,10 @@ func _respond(response: String) -> void:
 
 	if _popup_mode == POPUP_MODE_GAME_OVER:
 		if response == "accept":
-			_on_game_over_play_again()
+			if _is_embedded_web_session():
+				_complete_embedded_web_session()
+			else:
+				_on_game_over_play_again()
 		return
 
 	if _popup_mode == POPUP_MODE_TRIAL_COMPLETE:
@@ -3394,6 +3414,7 @@ func _begin_formal_session() -> void:
 	_run_end_active = false
 	_score_game_over = false
 	_game_run_logged = false
+	_embedded_completion_sent = false
 	var robot = _trial_robot()
 	if robot != null and robot.has_method("set_trial_stationary_pause"):
 		robot.call("set_trial_stationary_pause", false)
