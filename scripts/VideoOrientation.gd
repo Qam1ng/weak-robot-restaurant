@@ -1,7 +1,6 @@
 extends Node2D
 
 const MANIFEST_PATH := "res://data/video/orientation_manifest.json"
-const TTS_AUDIO_ROOT := "res://assets/audio/orientation"
 const UI_PANEL_COLOR := Color(0.04, 0.06, 0.09, 0.92)
 const UI_TEXT_COLOR := Color(0.89, 0.94, 0.98, 1.0)
 const UI_ACCENT_COLOR := Color(0.76, 0.95, 1.0, 1.0)
@@ -14,22 +13,23 @@ var _orders_panel: PanelContainer
 var _message_panel: PanelContainer
 var _progress_panel: PanelContainer
 var _focus_frames: Dictionary = {}
-var _voice_player: AudioStreamPlayer
 
 func _ready() -> void:
+	# The embedded restaurant starts with its survey flow paused.
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	# Hide the game's startup survey before the first rendered frame.
+	var hud := $Restaurant.get_node_or_null("Hud")
+	if hud:
+		hud.hide()
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 	_prepare_restaurant()
 	_build_overlay()
 	await get_tree().process_frame
-	await _play_manifest()
-	get_tree().quit()
+	await _render_requested_cue()
 
 func _prepare_restaurant() -> void:
 	var restaurant := $Restaurant
-	var hud := restaurant.get_node_or_null("Hud")
-	if hud:
-		hud.hide()
 	var spawner := restaurant.get_node_or_null("CustomerSpawner")
 	if spawner:
 		spawner.call("disable")
@@ -86,10 +86,6 @@ func _build_overlay() -> void:
 	_caption_label.add_theme_font_size_override("font_size", 25)
 	_caption_label.add_theme_color_override("font_color", Color(0.98, 0.98, 0.98, 1.0))
 	caption_panel.add_child(_caption_label)
-
-	_voice_player = AudioStreamPlayer.new()
-	_voice_player.bus = &"Master"
-	add_child(_voice_player)
 
 func _make_panel(position_value: Vector2, size_value: Vector2, border_color: Color = UI_ACCENT_COLOR) -> PanelContainer:
 	var panel := PanelContainer.new()
@@ -251,6 +247,9 @@ func _add_message_content(panel: PanelContainer) -> void:
 	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	content.add_child(body)
+	var button_spacer := Control.new()
+	button_spacer.custom_minimum_size = Vector2(0.0, 12.0)
+	content.add_child(button_spacer)
 	var buttons := HBoxContainer.new()
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	buttons.add_theme_constant_override("separation", 16)
@@ -298,20 +297,49 @@ func _add_focus_frame(root: Control, focus_id: String, position_value: Vector2, 
 	root.add_child(frame)
 	_focus_frames[focus_id] = frame
 
-func _play_manifest() -> void:
+func _render_requested_cue() -> void:
+	var cue_id := _user_arg("orientation-cue")
+	var output_path := _user_arg("orientation-output")
+	if cue_id == "" or output_path == "":
+		push_error("[VideoOrientation] Both --orientation-cue and --orientation-output are required")
+		get_tree().quit()
+		return
+	var cue := _find_cue(cue_id)
+	if cue.is_empty():
+		push_error("[VideoOrientation] Unknown cue: %s" % cue_id)
+		get_tree().quit()
+		return
+	_apply_cue(cue)
+	await RenderingServer.frame_post_draw
+	var image := get_viewport().get_texture().get_image()
+	var result := image.save_png(output_path)
+	if result != OK:
+		push_error("[VideoOrientation] Could not write frame: %s" % output_path)
+	get_tree().quit()
+
+func _find_cue(cue_id: String) -> Dictionary:
+	for cue in _read_manifest_cues():
+		if str(cue.get("id", "")) == cue_id:
+			return cue
+	return {}
+
+func _read_manifest_cues() -> Array:
 	var file := FileAccess.open(MANIFEST_PATH, FileAccess.READ)
 	if file == null:
 		push_error("[VideoOrientation] Missing manifest: %s" % MANIFEST_PATH)
-		return
+		return []
 	var parsed = JSON.parse_string(file.get_as_text())
 	if not (parsed is Dictionary):
 		push_error("[VideoOrientation] Invalid manifest JSON")
-		return
-	var cues: Array = parsed.get("cues", [])
-	for index in range(cues.size()):
-		var cue: Dictionary = cues[index]
-		_apply_cue(cue)
-		await get_tree().create_timer(float(cue.get("duration_sec", 8.5))).timeout
+		return []
+	return parsed.get("cues", [])
+
+func _user_arg(name: String) -> String:
+	var prefix := "--%s=" % name
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with(prefix):
+			return arg.trim_prefix(prefix)
+	return ""
 
 func _apply_cue(cue: Dictionary) -> void:
 	_caption_label.text = str(cue.get("text", ""))
@@ -324,17 +352,3 @@ func _apply_cue(cue: Dictionary) -> void:
 	_orders_panel.modulate.a = 1.0 if focus in ["overview", "orders"] else 0.42
 	_progress_panel.modulate.a = 1.0 if focus in ["overview", "progress"] else 0.42
 	_message_panel.visible = focus == "messages"
-	_play_cue_voice(str(cue.get("id", "")))
-
-func _play_cue_voice(cue_id: String) -> void:
-	if cue_id == "" or _voice_player == null:
-		return
-	var path := "%s/%s.mp3" % [TTS_AUDIO_ROOT, cue_id]
-	if not ResourceLoader.exists(path):
-		return
-	var stream := load(path) as AudioStream
-	if stream == null:
-		return
-	_voice_player.stop()
-	_voice_player.stream = stream
-	_voice_player.play()

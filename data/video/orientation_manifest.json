@@ -1,5 +1,4 @@
 {
-  "title": "Robot Delegation Study",
   "cues": [
     {
       "id": "overview",
@@ -41,7 +40,7 @@
       "id": "ready",
       "duration_sec": 4.5,
       "focus": "overview",
-      "text": "That is the main setup. The guided trial starts now."
+      "text": "That is the main setup. You are ready to begin the game!"
     }
   ]
 }
