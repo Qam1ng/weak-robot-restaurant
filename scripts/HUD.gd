@@ -4312,7 +4312,7 @@ func _play_delegation_stage_voice(request: Dictionary, dialogue_stage: int) -> v
 			template_id = str(request.get("template_id", ""))
 			category = "trial" if template_id.begins_with("trial_") else "strategy"
 			var payload: Dictionary = request.get("payload", {})
-			var item_name := str(payload.get("food_item", "")).strip_edges().to_lower()
+			var item_name := str(payload.get("item_needed", "")).strip_edges().to_lower()
 			if item_name not in ["pizza", "hotdog", "sandwich"]:
 				push_warning("[DelegationVoice] No audio variant for item: %s" % item_name)
 				return

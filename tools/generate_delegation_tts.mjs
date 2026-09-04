@@ -2,6 +2,7 @@ import { readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const [scope = "all"] = process.argv.slice(2);
+const force = process.argv.includes("--force");
 if (!["all", "strategy", "opener", "bridge"].includes(scope) && scope !== "trial") {
   console.error("Usage: node tools/generate_delegation_tts.mjs [all|strategy|opener|bridge|trial]");
   process.exit(1);
@@ -46,12 +47,14 @@ for (const template of templates) {
   for (const variant of variants) {
     const suffix = variant ? `_${variant}` : "";
     const outputPath = path.join(outputDir, `${template.id}${suffix}.mp3`);
-    try {
-      await readFile(outputPath);
-      console.log(`Skipped existing ${path.relative(root, outputPath)}`);
-      continue;
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+    if (!force) {
+      try {
+        await readFile(outputPath);
+        console.log(`Skipped existing ${path.relative(root, outputPath)}`);
+        continue;
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
     }
 
     const response = await fetch("https://api.openai.com/v1/audio/speech", {
@@ -64,7 +67,7 @@ for (const template of templates) {
         model: "gpt-4o-mini-tts",
         voice: "onyx",
         input: variant ? template.text.replace("{item}", variant) : template.text,
-        instructions: "Speak in a calm, clear, professional service-robot voice. Keep the delivery neutral and do not add emotional emphasis beyond the wording.",
+        instructions: "Speak in a clear, helpful, attentive service-robot voice. Sound proactive, positive, and warmly engaged when asking for assistance. Keep the delivery professional and consistent across all lines; avoid sounding monotone, gloomy, weary, overly excited, or sales-like.",
         response_format: "mp3",
         speed: 1.0,
       }),
