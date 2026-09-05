@@ -25,6 +25,33 @@ const STRATEGY_SET = new Set(STRATEGIES);
 const SESSION_SOURCES = new Set([
   "qualtrics",
   "standalone_test",
+  "local_test",
+]);
+const HANDOFF_MODES = new Set([
+  "TAKEOVER_TASK",
+  "TAKEOVER_ITEM",
+]);
+const ASSIGNMENT_MODES = new Set([
+  "trial_neutral",
+  "session_coverage",
+  "condition_weighted",
+]);
+const ASSIGNMENT_SOURCES = new Set([
+  "trial_neutral",
+  "backend",
+  "local",
+  "local_fallback",
+]);
+const TASK_TERMINAL_STATES = new Set([
+  "",
+  "completed",
+  "failed",
+]);
+const TASK_STEPS = new Set([
+  "",
+  "TAKE_ORDER",
+  "PICKUP_FROM_KITCHEN",
+  "DELIVER_AND_SERVE",
 ]);
 
 setGlobalOptions({
@@ -274,6 +301,7 @@ async function upsertParticipantLog(sessionId, platform, buildVersion, data) {
         "standalone_test",
     ),
     qualtrics_id: sanitizeText(data.qualtrics_id, ""),
+    experiment_version: sanitizeText(data.experiment_version, ""),
     nickname: sanitizeText(data.nickname, ""),
     platform,
     build_version: buildVersion,
@@ -293,37 +321,54 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
   if (requestId === "") {
     throw new Error("missing_request_id");
   }
-  const requestRef = db.collection("help_requests").doc(requestId);
+  const loggedSessionId = sanitizeText(data.session_id, sessionId);
+  const helpRequestKey = `${encodeURIComponent(loggedSessionId)}__${encodeURIComponent(requestId)}`;
+  const requestRef = db.collection("help_requests").doc(helpRequestKey);
   const doc = {
     participant_id: sanitizeText(data.participant_id, participantId),
-    session_id: sanitizeText(data.session_id, sessionId),
+    session_id: loggedSessionId,
     session_source: sanitizeEnumText(
         data.session_source,
         SESSION_SOURCES,
         "standalone_test",
     ),
-    nickname: sanitizeText(data.nickname, ""),
+    experiment_version: sanitizeText(data.experiment_version, ""),
     episode_id: sanitizeText(data.episode_id, ""),
     request_id: requestId,
+    help_request_key: helpRequestKey,
     delegation_scenario: sanitizeText(data.delegation_scenario, ""),
     request_index_in_session: asNumber(data.request_index_in_session, 0),
+    display_index_in_session: asNumber(data.display_index_in_session, 0),
     status: sanitizeText(data.status, ""),
     created_at_ms: asNumber(data.created_at_ms, 0),
+    prompted_at_ms: asNumber(data.prompted_at_ms, -1),
     task_id: sanitizeText(data.task_id, ""),
     item_needed: sanitizeText(data.item_needed, ""),
-    reason: sanitizeText(data.reason, ""),
+    handoff_mode: sanitizeEnumText(data.handoff_mode, HANDOFF_MODES, ""),
     slack_ms: asNumber(data.slack_ms, 0),
     phase_name: sanitizeText(data.phase_name, ""),
     busyness: asNumber(data.busyness, 0.0),
     urgency: asNumber(data.urgency, 0.0),
     player_active_tasks: asNumber(data.player_active_tasks, 0),
     battery_level: asNumber(data.battery_level, 0.0),
+    prompt_slack_ms: asNumber(data.prompt_slack_ms, -1),
+    prompt_phase_name: sanitizeText(data.prompt_phase_name, ""),
+    prompt_busyness: asNumber(data.prompt_busyness, -1.0),
+    prompt_player_active_tasks: asNumber(data.prompt_player_active_tasks, -1),
+    prompt_battery_level: asNumber(data.prompt_battery_level, -1.0),
+    prompt_task_step: sanitizeEnumText(data.prompt_task_step, TASK_STEPS, ""),
     trait_O: asNumber(data.trait_O, 0.0),
     trait_C: asNumber(data.trait_C, 0.0),
     trait_E: asNumber(data.trait_E, 0.0),
     trait_A: asNumber(data.trait_A, 0.0),
     trait_N: asNumber(data.trait_N, 0.0),
     strategy: sanitizeText(data.strategy, ""),
+    assignment_mode: sanitizeEnumText(data.assignment_mode, ASSIGNMENT_MODES, ""),
+    assignment_source: sanitizeEnumText(
+        data.assignment_source,
+        ASSIGNMENT_SOURCES,
+        "",
+    ),
     assignment_buckets: sanitizeAssignmentBuckets(data.assignment_buckets),
     opener_template_id: sanitizeText(data.opener_template_id, ""),
     bridge_template_id: sanitizeText(data.bridge_template_id, ""),
@@ -331,14 +376,20 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
     utterance: sanitizeText(data.utterance, ""),
     response: sanitizeText(data.response, ""),
     response_latency_ms: asNumber(data.response_latency_ms, -1),
+    dialogue_duration_ms: asNumber(data.dialogue_duration_ms, -1),
     resolution_path: sanitizeText(data.resolution_path, ""),
-    task_completed: asBoolean(data.task_completed, false),
     delivery_actor: sanitizeText(data.delivery_actor, ""),
-    customer_timed_out: asBoolean(data.customer_timed_out, false),
+    task_terminal_state: sanitizeEnumText(
+        data.task_terminal_state,
+        TASK_TERMINAL_STATES,
+        "",
+    ),
+    task_failure_reason: sanitizeText(data.task_failure_reason, ""),
+    task_terminal_at_ms: asNumber(data.task_terminal_at_ms, -1),
     score_delta: asNumber(data.score_delta, 0),
   };
   await requestRef.set(doc, {merge: true});
-  return {request_id: requestId};
+  return {request_id: requestId, help_request_key: helpRequestKey};
 }
 
 async function upsertDelegationTemplate(data) {
@@ -366,23 +417,27 @@ async function upsertEpisodeLog(sessionId, participantId, data) {
   if (episodeId === "") {
     throw new Error("missing_episode_id");
   }
-  const episodeRef = db.collection("episodes").doc(episodeId);
+  const loggedSessionId = sanitizeText(data.session_id, sessionId);
+  const episodeKey = `${encodeURIComponent(loggedSessionId)}__${encodeURIComponent(episodeId)}`;
+  const episodeRef = db.collection("episodes").doc(episodeKey);
   const doc = {
     participant_id: sanitizeText(data.participant_id, participantId),
-    session_id: sanitizeText(data.session_id, sessionId),
+    session_id: loggedSessionId,
     session_source: sanitizeEnumText(
         data.session_source,
         SESSION_SOURCES,
         "standalone_test",
     ),
+    experiment_version: sanitizeText(data.experiment_version, ""),
     episode_id: episodeId,
+    episode_key: episodeKey,
     timestamp: sanitizeText(data.timestamp, ""),
     success: asBoolean(data.success, false),
     duration_ms: asNumber(data.duration_ms, 0),
     failure_reason: sanitizeText(data.failure_reason, ""),
   };
   await episodeRef.set(doc, {merge: true});
-  return {episode_id: episodeId};
+  return {episode_id: episodeId, episode_key: episodeKey};
 }
 
 async function upsertGameRunLog(sessionId, participantId, data) {
@@ -400,6 +455,7 @@ async function upsertGameRunLog(sessionId, participantId, data) {
         SESSION_SOURCES,
         "standalone_test",
     ),
+    experiment_version: sanitizeText(data.experiment_version, ""),
     run_outcome: sanitizeEnumText(data.run_outcome, new Set([
       "win",
       "end_of_day_loss",

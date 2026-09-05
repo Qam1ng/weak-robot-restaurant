@@ -4262,6 +4262,8 @@ func _on_help_request_primary_pressed(request_id: String) -> void:
 			entry["request"] = refreshed.duplicate(true)
 	_apply_help_request_card_state(entry, request)
 	_help_prompt_cards[idx] = entry
+	if stage == HELP_DIALOGUE_STAGE_DELEGATION and help_mgr != null and help_mgr.has_method("mark_decision_presented"):
+		help_mgr.mark_decision_presented(request_id)
 	_play_delegation_stage_voice(request, stage)
 	_reset_help_prompt_keyboard_focus()
 	if _trial_session_active and request_id == _trial_handoff_request_id and _trial_step == "await_handoff_accept" and stage >= HELP_DIALOGUE_STAGE_DELEGATION:

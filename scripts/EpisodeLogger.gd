@@ -57,7 +57,7 @@ const DEBUG_DELEGATION_SCENARIOS := {
 
 # File paths
 const DATA_DIR = "user://data/episodes/"
-const CSV_FILE = "user://data/episodes_summary.csv"
+const CSV_FILE = "user://data/episodes_summary_v2.csv"
 const HELP_DIR = "user://data/help_requests/"
 const HELP_JSONL_FILE = "user://data/help_requests/help_requests.jsonl"
 const REPLAY_DIR = "user://data/replay/"
@@ -74,7 +74,12 @@ func _ready() -> void:
 	_session_id = _generate_session_id()
 	_participant_id = _session_id
 	_qualtrics_id = _read_qualtrics_id_from_url()
-	_session_source = "qualtrics" if _qualtrics_id != "" else "standalone_test"
+	if _qualtrics_id != "":
+		_session_source = "qualtrics"
+	elif OS.has_feature("web"):
+		_session_source = "standalone_test"
+	else:
+		_session_source = "local_test"
 	_log_initial_delegation_templates()
 	if _should_write_local_files():
 		# Ensure data directory exists
@@ -147,6 +152,7 @@ func end_episode(success: bool, failure_reason: String = "") -> Dictionary:
 		"participant_id": _participant_id,
 		"session_id": _session_id,
 		"session_source": _session_source,
+		"experiment_version": _get_experiment_version(),
 		"episode_id": _current_episode.get("episode_id", ""),
 		"timestamp": _current_episode.get("timestamp_start", ""),
 		"success": success,
@@ -185,6 +191,7 @@ func log_participant_profile(profile: Dictionary) -> void:
 		"participant_id": _participant_id,
 		"session_id": _session_id,
 		"session_source": _session_source,
+		"experiment_version": _get_experiment_version(),
 		"qualtrics_id": _qualtrics_id,
 		"nickname": str(profile.get("nickname", "")),
 		"tipi_responses": profile.get("tipi_responses", {}),
@@ -199,6 +206,7 @@ func log_game_run(run_outcome: String, final_score: int) -> void:
 		"participant_id": _participant_id,
 		"session_id": _session_id,
 		"session_source": _session_source,
+		"experiment_version": _get_experiment_version(),
 		"run_outcome": run_outcome,
 		"final_score": final_score
 	}
@@ -280,37 +288,50 @@ func log_help_request_event(request: Dictionary) -> void:
 		return
 	var payload: Dictionary = request.get("payload", {})
 	var context: Dictionary = request.get("context_snapshot", {})
+	var prompt_context: Dictionary = request.get("prompt_context_snapshot", {})
 	var robot: Dictionary = context.get("robot", {})
 	var player: Dictionary = context.get("player", {})
 	var env: Dictionary = context.get("environment", {})
 	var personality: Dictionary = context.get("personality", {})
 	var scores: Dictionary = personality.get("tipi_scores", {})
+	var request_id := str(request.get("id", ""))
 	var record := {
 		"participant_id": _participant_id,
 		"session_id": _session_id,
 		"session_source": _session_source,
-		"nickname": str(request.get("nickname", "")),
-		"episode_id": get_current_episode_id(),
-		"request_id": str(request.get("id", "")),
+		"experiment_version": _get_experiment_version(),
+		"episode_id": str(request.get("episode_id", "")),
+		"request_id": request_id,
+		"help_request_key": "%s__%s" % [_session_id, request_id],
 		"delegation_scenario": str(request.get("delegation_scenario", "")),
 		"request_index_in_session": int(request.get("request_index_in_session", 0)),
+		"display_index_in_session": int(request.get("display_index_in_session", 0)),
 		"status": str(request.get("status", "")),
 		"created_at_ms": int(request.get("created_at_ms", 0)),
+		"prompted_at_ms": int(request.get("prompted_at_ms", -1)),
 		"task_id": str(payload.get("task_id", "")),
 		"item_needed": str(payload.get("item_needed", "")),
-		"reason": str(payload.get("reason", "")),
+		"handoff_mode": str(request.get("handoff_mode", "")),
 		"slack_ms": int(payload.get("slack_ms", 0)),
 		"phase_name": str(env.get("phase_name", "")),
 		"busyness": float(env.get("busyness", 0.0)),
 		"urgency": float(env.get("urgency", 0.0)),
 		"player_active_tasks": int(player.get("active_tasks", 0)),
 		"battery_level": float(robot.get("battery_level", 0.0)),
+		"prompt_slack_ms": int(prompt_context.get("slack_ms", -1)),
+		"prompt_phase_name": str(prompt_context.get("phase_name", "")),
+		"prompt_busyness": float(prompt_context.get("busyness", -1.0)),
+		"prompt_player_active_tasks": int(prompt_context.get("player_active_tasks", -1)),
+		"prompt_battery_level": float(prompt_context.get("battery_level", -1.0)),
+		"prompt_task_step": str(prompt_context.get("task_step", "")),
 		"trait_O": float(scores.get("O", 0.0)),
 		"trait_C": float(scores.get("C", 0.0)),
 		"trait_E": float(scores.get("E", 0.0)),
 		"trait_A": float(scores.get("A", 0.0)),
 		"trait_N": float(scores.get("N", 0.0)),
 		"strategy": str(request.get("strategy", "")),
+		"assignment_mode": str(request.get("assignment_mode", "")),
+		"assignment_source": str(request.get("assignment_source", "")),
 		"assignment_buckets": request.get("assignment_buckets", {}),
 		"opener_template_id": str(request.get("opener_template_id", "")),
 		"bridge_template_id": str(request.get("bridge_template_id", "")),
@@ -318,10 +339,12 @@ func log_help_request_event(request: Dictionary) -> void:
 		"utterance": str(request.get("utterance", "")),
 		"response": str(request.get("last_response", "")),
 		"response_latency_ms": int(request.get("response_latency_ms", -1)),
+		"dialogue_duration_ms": int(request.get("dialogue_duration_ms", -1)),
 		"resolution_path": str(request.get("resolution_path", "")),
-		"task_completed": bool(request.get("task_completed", false)),
 		"delivery_actor": str(request.get("delivery_actor", "")),
-		"customer_timed_out": bool(request.get("customer_timed_out", false)),
+		"task_terminal_state": str(request.get("task_terminal_state", "")),
+		"task_failure_reason": str(request.get("task_failure_reason", "")),
+		"task_terminal_at_ms": int(request.get("task_terminal_at_ms", -1)),
 		"score_delta": int(request.get("score_delta", 0))
 	}
 	if _should_write_local_files():
@@ -507,6 +530,12 @@ func _normalize_debug_value(raw_value: String, allowed: Dictionary) -> String:
 
 func _experiment_config() -> Node:
 	return get_node_or_null("/root/ExperimentConfig")
+
+func _get_experiment_version() -> String:
+	var exp = _experiment_config()
+	if exp and exp.has_method("get_experiment_version"):
+		return str(exp.get_experiment_version())
+	return ""
 
 func _is_replay_logging_enabled() -> bool:
 	var exp = _experiment_config()
