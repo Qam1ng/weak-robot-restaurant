@@ -22,6 +22,7 @@ class ActNavigate extends Core.Task:
 	var _final_target: Vector2 = Vector2.ZERO
 	var _arrival_time: int = 0
 	var _arrival_wait: int = 800
+	var _arrival_distance: float = ARRIVAL_DIST_NORMAL
 
 	const ARRIVAL_DIST_NORMAL := 50.0
 
@@ -33,8 +34,9 @@ class ActNavigate extends Core.Task:
 	const MAX_RETRY_ATTEMPTS := 3
 	const STUCK_TIMEOUT_MS := 5000
 
-	func _init(key: String = "target_pos"):
+	func _init(key: String = "target_pos", arrival_distance: float = ARRIVAL_DIST_NORMAL):
 		target_key = key
+		_arrival_distance = maxf(1.0, arrival_distance)
 
 	func tick(bb: Dictionary, actor: Node) -> int:
 		var agent := actor.get_node_or_null("NavigationAgent2D") as NavigationAgent2D
@@ -78,7 +80,7 @@ class ActNavigate extends Core.Task:
 			})
 
 		var dist_to_target: float = actor.global_position.distance_to(_final_target)
-		if dist_to_target <= ARRIVAL_DIST_NORMAL:
+		if dist_to_target <= _arrival_distance:
 			if _arrival_time == 0:
 				_arrival_time = BT_Actions._gameplay_now_ms(actor)
 				actor.velocity = Vector2.ZERO

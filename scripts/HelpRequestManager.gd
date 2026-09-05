@@ -15,11 +15,16 @@ const STATUS_ACCEPTED := "accepted"
 const STATUS_RESOLVED := "resolved"
 
 const PERSUASION_ENGINE_PATH := "res://scripts/PersuasionEngine.gd"
+const SESSION_STRATEGY_STATE_KEY := "weak_robot_formal_strategy_state"
+const FORMAL_COVERAGE_STRATEGY_COUNT := 6
 
 var _requests_by_id: Dictionary = {}
 var _order: Array[String] = []
 var _next_id: int = 1
 var _request_index_in_session: int = 0
+var _display_index_in_session: int = 0
+var _formal_session_active := false
+var _formal_coverage_strategies: Array[String] = []
 
 func _gameplay_now_ms() -> int:
 	var game_mgr = get_node_or_null("/root/GameManager")
@@ -33,11 +38,77 @@ func _persuasion_engine():
 func reset_all() -> void:
 	_requests_by_id.clear()
 	_order.clear()
-	_next_id = 1
+	# Request IDs remain unique for the lifetime of this game session.
 	_request_index_in_session = 0
+	_display_index_in_session = 0
+	_formal_session_active = false
+	_formal_coverage_strategies.clear()
+	_clear_persisted_formal_strategy_state()
 	var engine = _persuasion_engine()
 	if engine and engine.has_method("reset_assignment_state"):
 		engine.reset_assignment_state()
+
+func set_formal_session_active(active: bool) -> void:
+	_formal_session_active = active
+	if active:
+		_load_persisted_formal_strategy_state()
+		return
+	_formal_coverage_strategies.clear()
+
+func _is_formal_research_request(req: Dictionary) -> bool:
+	if not _formal_session_active:
+		return false
+	var payload: Dictionary = req.get("payload", {})
+	return str(payload.get("delegation_scenario", "")) != "trial_tutorial"
+
+func _forced_coverage_strategy() -> String:
+	if _formal_coverage_strategies.size() >= FORMAL_COVERAGE_STRATEGY_COUNT:
+		return ""
+	var engine = _persuasion_engine()
+	if engine == null or not engine.has_method("pick_unseen_strategy"):
+		return ""
+	return str(engine.pick_unseen_strategy(_formal_coverage_strategies))
+
+func _confirm_formal_coverage_strategy(req: Dictionary) -> bool:
+	if not _is_formal_research_request(req):
+		return false
+	if str(req.get("assignment_mode", "")) != "session_coverage":
+		return false
+	if bool(req.get("session_coverage_consumed", false)):
+		return false
+	var strategy := str(req.get("strategy", ""))
+	if strategy == "" or _formal_coverage_strategies.has(strategy):
+		return false
+	_formal_coverage_strategies.append(strategy)
+	_persist_formal_strategy_state()
+	return true
+
+func _load_persisted_formal_strategy_state() -> void:
+	_formal_coverage_strategies.clear()
+	if not OS.has_feature("web"):
+		return
+	var value = JavaScriptBridge.eval("window.sessionStorage.getItem('%s') || '[]'" % SESSION_STRATEGY_STATE_KEY, true)
+	var parsed: Variant = JSON.parse_string(str(value))
+	if not (parsed is Array):
+		return
+	var engine = _persuasion_engine()
+	var strategies: Array = engine.get("STRATEGIES") if engine else []
+	for raw_strategy in parsed:
+		var strategy := str(raw_strategy)
+		if strategies.has(strategy) and not _formal_coverage_strategies.has(strategy):
+			_formal_coverage_strategies.append(strategy)
+			if _formal_coverage_strategies.size() >= FORMAL_COVERAGE_STRATEGY_COUNT:
+				break
+
+func _persist_formal_strategy_state() -> void:
+	if not OS.has_feature("web"):
+		return
+	JavaScriptBridge.eval("window.sessionStorage.setItem('%s', %s)" % [SESSION_STRATEGY_STATE_KEY, JSON.stringify(_formal_coverage_strategies)], true)
+
+func _clear_persisted_formal_strategy_state() -> void:
+	if not OS.has_feature("web"):
+		return
+	JavaScriptBridge.eval("window.sessionStorage.removeItem('%s')" % SESSION_STRATEGY_STATE_KEY, true)
 
 func _ready() -> void:
 	var board = get_node_or_null("/root/TaskBoard")
@@ -54,6 +125,10 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 	var request_id := "help_%06d" % _next_id
 	_next_id += 1
 	_request_index_in_session += 1
+	var episode_id := ""
+	var logger = _episode_logger()
+	if logger and logger.has_method("get_current_episode_id"):
+		episode_id = str(logger.get_current_episode_id())
 
 	var urgency := float(options.get("urgency", 0.5))
 	var copied_payload := payload.duplicate(true)
@@ -64,13 +139,20 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 		"status": STATUS_PENDING,
 		"robot_instance_id": robot.get_instance_id(),
 		"payload": copied_payload,
+		"episode_id": episode_id,
 		"created_at_ms": now_ms,
-		"last_prompt_ms": 0,
+		"prompted_at_ms": -1,
+		"prompted_at_wall_ms": -1,
+		"decision_presented_at_wall_ms": -1,
 		"urgency": urgency,
 		"resolution_path": "",
 		"context_snapshot": {},
+		"prompt_context_snapshot": {},
 		"strategy": "",
+		"assignment_mode": "pending",
+		"assignment_source": "pending",
 		"assignment_buckets": {},
+		"handoff_mode": str(copied_payload.get("handoff_mode", "")).strip_edges(),
 		"system_notice": "",
 		"nickname": "",
 		"opener_template_id": "",
@@ -82,12 +164,14 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 		"utterance": "",
 		"template_id": "",
 		"last_response": "",
-		"task_completed": false,
 		"delivery_actor": "",
-		"customer_timed_out": false,
+		"task_terminal_state": "",
+		"task_failure_reason": "",
+		"task_terminal_at_ms": -1,
 		"score_delta": 0,
 		"delegation_scenario": delegation_scenario,
 		"request_index_in_session": _request_index_in_session,
+		"display_index_in_session": 0,
 		"assignment_pending": true
 	}
 
@@ -142,7 +226,14 @@ func mark_prompted(request_id: String) -> void:
 	var req: Dictionary = _requests_by_id.get(request_id, {})
 	if req.is_empty():
 		return
-	req["last_prompt_ms"] = _gameplay_now_ms()
+	if _confirm_formal_coverage_strategy(req):
+		req["session_coverage_consumed"] = true
+	if int(req.get("prompted_at_ms", -1)) < 0:
+		_display_index_in_session += 1
+		req["prompted_at_ms"] = _gameplay_now_ms()
+		req["prompted_at_wall_ms"] = Time.get_ticks_msec()
+		req["display_index_in_session"] = _display_index_in_session
+		req["prompt_context_snapshot"] = _build_prompt_context(req)
 	_requests_by_id[request_id] = req
 	_log_help_event(req)
 	request_updated.emit(_copy(req))
@@ -154,11 +245,15 @@ func respond(request_id: String, response: String) -> Dictionary:
 	if str(req.get("status", "")) == STATUS_RESOLVED:
 		return _copy(req)
 
-	var now_ms := _gameplay_now_ms()
-	var prompt_latency_ms := 0
-	if int(req.get("last_prompt_ms", 0)) > 0:
-		prompt_latency_ms = now_ms - int(req.get("last_prompt_ms", 0))
-	req["response_latency_ms"] = prompt_latency_ms
+	var now_wall_ms := Time.get_ticks_msec()
+	var decision_latency_ms := -1
+	if int(req.get("decision_presented_at_wall_ms", -1)) >= 0:
+		decision_latency_ms = now_wall_ms - int(req.get("decision_presented_at_wall_ms", -1))
+	var dialogue_duration_ms := -1
+	if int(req.get("prompted_at_wall_ms", -1)) >= 0:
+		dialogue_duration_ms = now_wall_ms - int(req.get("prompted_at_wall_ms", -1))
+	req["response_latency_ms"] = decision_latency_ms
+	req["dialogue_duration_ms"] = dialogue_duration_ms
 	req["last_response"] = response
 	match response:
 		RESPONSE_ACCEPT:
@@ -177,6 +272,15 @@ func respond(request_id: String, response: String) -> Dictionary:
 	if str(req.get("status", "")) == STATUS_RESOLVED:
 		request_resolved.emit(copied)
 	return copied
+
+func mark_decision_presented(request_id: String) -> void:
+	var req: Dictionary = _requests_by_id.get(request_id, {})
+	if req.is_empty() or int(req.get("decision_presented_at_wall_ms", -1)) >= 0:
+		return
+	req["decision_presented_at_wall_ms"] = Time.get_ticks_msec()
+	_requests_by_id[request_id] = req
+	_log_help_event(req)
+	request_updated.emit(_copy(req))
 
 func complete_request(request_id: String, resolution_path: String = "cooperative_execution") -> Dictionary:
 	var req: Dictionary = _requests_by_id.get(request_id, {})
@@ -222,15 +326,28 @@ func _begin_strategy_assignment(request_id: String) -> void:
 	var req: Dictionary = _requests_by_id.get(request_id, {})
 	if req.is_empty():
 		return
+	var engine = _persuasion_engine()
+	if not _is_formal_research_request(req):
+		# Trial prompts demonstrate the interface but must not affect experiment counters.
+		req["assignment_mode"] = "trial_neutral"
+		_requests_by_id[request_id] = req
+		_finalize_strategy_assignment(request_id, {
+			"strategy": "",
+			"buckets": req.get("assignment_buckets", {})
+		}, "trial_neutral")
+		return
+	var forced_strategy := _forced_coverage_strategy()
+	req["forced_strategy"] = forced_strategy
+	req["assignment_mode"] = "session_coverage" if forced_strategy != "" else "condition_weighted"
+	_requests_by_id[request_id] = req
 	if _should_use_backend_assignment():
 		_request_remote_strategy_assignment(req)
 		return
 	var context: Dictionary = req.get("context_snapshot", {})
-	var engine = _persuasion_engine()
 	var assignment: Dictionary = {}
 	if engine and engine.has_method("assign_strategy_locally"):
-		assignment = engine.assign_strategy_locally(context)
-	_finalize_strategy_assignment(request_id, assignment)
+		assignment = engine.assign_strategy_locally(context, forced_strategy)
+	_finalize_strategy_assignment(request_id, assignment, "local")
 
 func _request_remote_strategy_assignment(req: Dictionary) -> void:
 	var request_id := str(req.get("id", ""))
@@ -238,7 +355,8 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 		return
 	var body := {
 		"request_id": request_id,
-		"assignment_buckets": req.get("assignment_buckets", {})
+		"assignment_buckets": req.get("assignment_buckets", {}),
+		"forced_strategy": str(req.get("forced_strategy", ""))
 	}
 	var http := HTTPRequest.new()
 	add_child(http)
@@ -264,8 +382,8 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 		var engine = _persuasion_engine()
 		var fallback: Dictionary = {}
 		if engine and engine.has_method("assign_strategy_locally"):
-			fallback = engine.assign_strategy_locally(req.get("context_snapshot", {}))
-		_finalize_strategy_assignment(request_id, fallback)
+			fallback = engine.assign_strategy_locally(req.get("context_snapshot", {}), str(req.get("forced_strategy", "")))
+		_finalize_strategy_assignment(request_id, fallback, "local_fallback")
 
 func _on_strategy_assignment_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, request_id: String) -> void:
 	if is_instance_valid(http):
@@ -289,8 +407,8 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 		var engine = _persuasion_engine()
 		var fallback: Dictionary = {}
 		if engine and engine.has_method("assign_strategy_locally"):
-			fallback = engine.assign_strategy_locally(req.get("context_snapshot", {}))
-		_finalize_strategy_assignment(request_id, fallback)
+			fallback = engine.assign_strategy_locally(req.get("context_snapshot", {}), str(req.get("forced_strategy", "")))
+		_finalize_strategy_assignment(request_id, fallback, "local_fallback")
 		return
 	var top: Variant = JSON.parse_string(body.get_string_from_utf8())
 	if not (top is Dictionary):
@@ -309,16 +427,16 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 		var engine = _persuasion_engine()
 		var fallback_parse: Dictionary = {}
 		if engine and engine.has_method("assign_strategy_locally"):
-			fallback_parse = engine.assign_strategy_locally(req.get("context_snapshot", {}))
-		_finalize_strategy_assignment(request_id, fallback_parse)
+			fallback_parse = engine.assign_strategy_locally(req.get("context_snapshot", {}), str(req.get("forced_strategy", "")))
+		_finalize_strategy_assignment(request_id, fallback_parse, "local_fallback")
 		return
 	var assignment: Dictionary = {
 		"strategy": str(top.get("strategy", "")),
 		"buckets": top.get("assignment_buckets", {})
 	}
-	_finalize_strategy_assignment(request_id, assignment)
+	_finalize_strategy_assignment(request_id, assignment, "backend")
 
-func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -> void:
+func _finalize_strategy_assignment(request_id: String, assignment: Dictionary, assignment_source: String) -> void:
 	var req: Dictionary = _requests_by_id.get(request_id, {})
 	if req.is_empty():
 		return
@@ -326,13 +444,15 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary) -
 		return
 	var strategy := str(assignment.get("strategy", "")).strip_edges()
 	var engine = _persuasion_engine()
-	if strategy == "":
+	var payload: Dictionary = req.get("payload", {})
+	if strategy == "" and not bool(payload.get("trial_force_prompt", false)):
 		strategy = str(engine.get("STRATEGY_AUTHORITY")) if engine else "authority"
 	var buckets: Dictionary = assignment.get("buckets", {})
 	if buckets.is_empty():
 		if engine and engine.has_method("build_assignment_buckets"):
 			buckets = engine.build_assignment_buckets(req.get("context_snapshot", {}))
 	req["strategy"] = strategy
+	req["assignment_source"] = assignment_source
 	req["assignment_buckets"] = buckets
 	_refresh_request_surface(req)
 	req["assignment_pending"] = false
@@ -420,6 +540,41 @@ func _sample_player_state() -> Dictionary:
 		"active_tasks": player_active_tasks
 	}
 
+func _build_prompt_context(req: Dictionary) -> Dictionary:
+	var robot := _robot_from_request(req)
+	var battery_level := 100.0
+	if robot != null:
+		battery_level = float(robot.get("battery_level"))
+
+	var board = get_node_or_null("/root/TaskBoard")
+	var payload: Dictionary = req.get("payload", {})
+	var slack_ms := int(payload.get("slack_ms", 0))
+	var task_step := ""
+	if board and board.has_method("get_task_slack_ms"):
+		var task_id := str(payload.get("task_id", ""))
+		if task_id != "":
+			slack_ms = int(board.get_task_slack_ms(task_id))
+			if board.has_method("get_current_step_name"):
+				task_step = str(board.get_current_step_name(task_id))
+
+	var game_mgr = get_node_or_null("/root/GameManager")
+	var busyness := 0.5
+	var phase_name := "unknown"
+	if game_mgr:
+		if game_mgr.has_method("get_busyness"):
+			busyness = float(game_mgr.get_busyness())
+		if game_mgr.has_method("get_period"):
+			phase_name = str(game_mgr.get_period())
+
+	return {
+		"slack_ms": slack_ms,
+		"busyness": busyness,
+		"player_active_tasks": int(_sample_player_state().get("active_tasks", 0)),
+		"battery_level": battery_level,
+		"phase_name": phase_name,
+		"task_step": task_step
+	}
+
 func _sample_personality_profile() -> Dictionary:
 	var profile = get_node_or_null("/root/PlayerProfile")
 	if profile and profile.has_method("get_profile"):
@@ -457,33 +612,24 @@ func _attach_task_outcome(task: Dictionary, completed: bool) -> void:
 	var task_id := str(task.get("id", ""))
 	if task_id == "":
 		return
-	var request_id := _latest_request_id_for_task(task_id)
-	if request_id == "":
-		return
-	var req: Dictionary = _requests_by_id.get(request_id, {})
-	if req.is_empty():
-		return
 	var payload: Dictionary = task.get("payload", {})
 	var order_kind := str(payload.get("order_kind", "food"))
 	var failure_reason := str(task.get("failure_reason", ""))
-	req["task_completed"] = completed
-	req["delivery_actor"] = str(task.get("assigned_to", ""))
-	req["customer_timed_out"] = (not completed) and (failure_reason == "task_deadline_expired" or failure_reason == "customer_drink_timeout")
-	req["score_delta"] = _score_delta_for_outcome(order_kind, completed)
-	_requests_by_id[request_id] = req
-	_log_help_event(req)
-	request_updated.emit(_copy(req))
-
-func _latest_request_id_for_task(task_id: String) -> String:
-	for i in range(_order.size() - 1, -1, -1):
-		var request_id := _order[i]
+	for request_id in _order:
 		var req: Dictionary = _requests_by_id.get(request_id, {})
 		if req.is_empty():
 			continue
-		var payload: Dictionary = req.get("payload", {})
-		if str(payload.get("task_id", "")) == task_id:
-			return request_id
-	return ""
+		var request_payload: Dictionary = req.get("payload", {})
+		if str(request_payload.get("task_id", "")) != task_id:
+			continue
+		req["delivery_actor"] = str(task.get("assigned_to", ""))
+		req["task_terminal_state"] = str(task.get("state", ""))
+		req["task_failure_reason"] = failure_reason
+		req["task_terminal_at_ms"] = int(task.get("completed_at_ms", -1)) if completed else int(task.get("failed_at_ms", -1))
+		req["score_delta"] = _score_delta_for_outcome(order_kind, completed)
+		_requests_by_id[request_id] = req
+		_log_help_event(req)
+		request_updated.emit(_copy(req))
 
 func _score_delta_for_outcome(order_kind: String, completed: bool) -> int:
 	if completed:

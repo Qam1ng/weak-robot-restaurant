@@ -4,6 +4,17 @@ signal kitchen_pick_selected(item_name: String)
 signal inventory_delete_requested(item_uid: int)
 
 const TrialCustomerScene = preload("res://scenes/Customer.tscn")
+const Character1SpriteFrames = preload("res://resources/player_avatars/character_1/character_1_sprite_frames.tres")
+const Character2SpriteFrames = preload("res://resources/player_avatars/character_2/character_2_sprite_frames.tres")
+const Character3SpriteFrames = preload("res://resources/player_avatars/character_3/character_3_sprite_frames.tres")
+const Character4SpriteFrames = preload("res://resources/player_avatars/character_4/character_4_sprite_frames.tres")
+const CHARACTER_SPRITE_FRAMES := {
+	"character_1": Character1SpriteFrames,
+	"character_2": Character2SpriteFrames,
+	"character_3": Character3SpriteFrames,
+	"character_4": Character4SpriteFrames,
+}
+const CHARACTER_IDS: Array[String] = ["character_1", "character_2", "character_3", "character_4"]
 
 @onready var survey_panel: PanelContainer = $SurveyPanel
 @onready var survey_question_title: RichTextLabel = $SurveyPanel/Margin/VBox/QuestionTitle
@@ -30,6 +41,8 @@ var player_items_box: VBoxContainer
 var player_tasks_box: VBoxContainer
 var inventory_portal_panel: PanelContainer
 var inventory_portal_list: VBoxContainer
+var _inventory_delete_buttons: Array[Button] = []
+var _inventory_delete_keyboard_focus_index: int = -1
 var customer_tab_buttons: HBoxContainer
 var customer_live_btn: Button
 var customer_history_btn: Button
@@ -43,6 +56,8 @@ var dialogue_list: VBoxContainer
 var dialogue_log: RichTextLabel
 var customer_panel: PanelContainer
 var customer_panel_list: VBoxContainer
+var session_progress_panel: PanelContainer
+var session_progress_bar: ProgressBar
 var tutorial_panel: PanelContainer
 var tutorial_body: RichTextLabel
 var tutorial_start_button: Button
@@ -73,7 +88,19 @@ var _tipi_responses := {}
 var _survey_nickname_input: LineEdit
 var _survey_mode: String = "nickname"
 var _survey_scale_buttons: Array[Button] = []
+var _tipi_keyboard_focus_index: int = -1
+var _character_selection_grid: GridContainer
+var _character_selection_buttons: Dictionary = {}
+var _selected_character_id: String = ""
+var _character_focus_index: int = 0
+var _overlay_keyboard_focus_index: int = -1
+var _help_keyboard_focus_index: int = -1
+var _gameplay_panel_keyboard_focus_index: int = -1
+var _gameplay_panel_focus_tween: Tween = null
+var _gameplay_panel_focus_token: int = 0
 var _player_task_notice_player: AudioStreamPlayer
+var _delegation_voice_player: AudioStreamPlayer
+var _delegation_voice_request_id: String = ""
 var _last_player_live_task_ids: Dictionary = {}
 var _player_task_notice_initialized: bool = false
 var _tutorial_toggle_flash_tween: Tween = null
@@ -87,9 +114,16 @@ const CUSTOMER_TAB_LIVE := "live"
 const CUSTOMER_TAB_HISTORY := "history"
 const SIDE_PANEL_MARGIN := 20.0
 const GAMEPLAY_REFERENCE_HEIGHT := 720.0
-const GAMEPLAY_TOP_OFFSET := -60.0
+const GAMEPLAY_VERTICAL_SHIFT := 30.0
+const GAMEPLAY_TOP_OFFSET := -30.0 + GAMEPLAY_VERTICAL_SHIFT
 const GAMEPLAY_BAND_WIDTH := 760.0
 const GAMEPLAY_SIDE_GAP := 24.0
+const SESSION_PROGRESS_PANEL_WIDTH := 560.0
+const SESSION_PROGRESS_PANEL_HEIGHT := 62.0
+const SESSION_PROGRESS_BAR_WIDTH := 520.0
+const SESSION_PROGRESS_TOP_MARGIN := 8.0 + GAMEPLAY_VERTICAL_SHIFT
+const SESSION_PROGRESS_TRIAL_SHARE := 0.10
+const SESSION_PROGRESS_FORMAL_MINUTES := 18.0 * 60.0
 const SYSTEM_PANEL_X_OFFSET := 40.0
 const SYSTEM_PANEL_WIDTH_REDUCTION := 28.0
 const PLAYER_DIALOGUE_OVERLAY_Y_OFFSET := 4.0
@@ -112,7 +146,7 @@ const DIALOGUE_PANEL_WIDTH := 340.0
 const TUTORIAL_PANEL_WIDTH := 620.0
 const TUTORIAL_PANEL_MIN_HEIGHT := 420.0
 const TUTORIAL_TOGGLE_SIZE := 44.0
-const TUTORIAL_TEXT := "[b]Controls[/b]\nWASD / Arrow Keys: move\nE: interact (take orders, pick up items, deliver items)\nI: inventory (delete items)\n\n[b]Goal[/b]\nServe customers' drinks before the deadline\nRespond to robot handoff popups\n\n[b]Robot Handoffs[/b]\nThe robot may hand off tasks when it is overloaded, running out of time, or charging.\n\n[b]Player Reminders[/b]\nCheck your assigned tasks\nNotice how the robot asks for help"
+const TUTORIAL_TEXT := "[b]Controls[/b]\nWASD / Arrow Keys: move\nE: interact (take orders, pick up items, deliver items)\nI: inventory (delete items)\nTab: focus interface buttons\nEnter: confirm the focused button\n\n[b]Goal[/b]\nServe customers' drinks before the deadline\nRespond to robot handoff popups\n\n[b]Win and Loss[/b]\nReach the end of Day 1 with a score of 0 or higher to win\nFinish Day 1 below 0 to lose\nReach -30 at any time and the game ends immediately\n\n[b]Robot Handoffs[/b]\nThe robot may ask you to take over an order when it is overloaded, running out of time, or low on battery.\n\n[b]Player Reminders[/b]\nCheck your assigned tasks\nNotice how the robot asks for help"
 var _customer_tab: String = CUSTOMER_TAB_LIVE
 var _score: int = 0
 var _success_count: int = 0
@@ -125,16 +159,19 @@ const SCORE_FAIL_THRESHOLD := -30
 const SCORE_WIN_THRESHOLD := 0
 const SURVEY_PANEL_BASE_SIZE := Vector2(580.0, 300.0)
 const SURVEY_PANEL_RESULT_HEIGHT := 220.0
+const SURVEY_PANEL_CHARACTER_HEIGHT := 500.0
 const SURVEY_PANEL_MARGIN := 24.0
 const SURVEY_PANEL_OFFSET_X := 20.0
 const SURVEY_QUESTION_Y_OFFSET := -34.0
 const SURVEY_RESULT_Y_OFFSET := -20.0
 const SURVEY_MODE_NICKNAME := "nickname"
+const SURVEY_MODE_CHARACTER := "character"
 const SURVEY_MODE_TIPI := "tipi"
 const SURVEY_MODE_RESULT := "result"
 var _score_game_over: bool = false
 var _run_end_active: bool = false
 var _game_run_logged: bool = false
+var _embedded_completion_sent: bool = false
 var _tutorial_started: bool = false
 var _customer_history_page: int = 0
 var _pending_day_notice: int = 0
@@ -150,6 +187,8 @@ var _trial_handoff_task_id: String = ""
 var _trial_handoff_request_id: String = ""
 var _trial_delete_item_uid: int = 0
 var _trial_delete_item_name: String = ""
+var _trial_drink_pickup_area_confirmed: bool = false
+var _session_progress: float = 0.0
 var _trial_timeout_timer: Timer = null
 var _trial_guide_layer: Control = null
 var _trial_guide_dim: ColorRect = null
@@ -161,12 +200,17 @@ var _trial_guide_focus: PanelContainer = null
 var _trial_guide_arrow: TextureRect = null
 var _trial_guide_arrow_direction: String = "→"
 var _trial_guide_message_panel: PanelContainer = null
+var _trial_guide_message_box: VBoxContainer = null
 var _trial_guide_message_label: RichTextLabel = null
+var _trial_guide_continue_button: Button = null
+var _trial_guide_continue_callback: Callable = Callable()
 var _trial_guide_target: Dictionary = {}
 var _player_inventory_holding_label: Label = null
 var _player_inventory_item_labels_by_name: Dictionary = {}
 const CUSTOMER_HISTORY_PAGE_SIZE := 5
-const TRIAL_SESSION_MAX_SEC := 100.0
+const TRIAL_SESSION_MAX_SEC := 210.0
+const TRIAL_FOOD_TASK_WINDOW_MS := 180_000
+const TRIAL_DRINK_TASK_WINDOW_MS := 90_000
 const TRIAL_GUIDE_FOCUS_BORDER := Color(1.0, 0.93, 0.62, 1.0)
 const TRIAL_GUIDE_ARROW_TEXTURE := preload("res://assets/icons/orders/right-arrow.png")
 const TRIAL_GUIDE_ARROW_SIZE := Vector2(24.0, 24.0)
@@ -186,6 +230,7 @@ const UI_BTN_TEXT_LIGHT := Color(0.96, 0.97, 0.99, 1.0)
 const UI_BTN_TEXT_DARK := Color(0.10, 0.08, 0.04, 1.0)
 const UI_BTN_BORDER := Color(0.92, 0.96, 1.0, 0.22)
 const UI_BTN_FOCUS_BORDER := Color(1.0, 0.88, 0.50, 0.95)
+const GAMEPLAY_PANEL_FOCUS_TTL_SEC := 1.2
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -202,11 +247,14 @@ func _ready() -> void:
 	_setup_inventory_portal_ui()
 	_setup_dialogue_feed_ui()
 	_setup_customer_orders_ui()
+	_setup_session_progress_ui()
 	_setup_player_dialogue_overlay_ui()
 	_setup_tutorial_ui()
 	_setup_survey_input_ui()
+	_setup_character_selection_ui()
 	_setup_trial_guide_ui()
 	_setup_player_task_notice_audio()
+	_setup_delegation_voice_audio()
 	_set_gameplay_panels_visible(false)
 	_connect_viewport_resize()
 	_connect_help_signals()
@@ -216,6 +264,291 @@ func _ready() -> void:
 	_connect_task_signals()
 	_connect_time_signals()
 	call_deferred("_setup_tipi_survey")
+
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey):
+		return
+	var key_event := event as InputEventKey
+	if not key_event.pressed or key_event.echo:
+		return
+	if key_event.ctrl_pressed or key_event.alt_pressed or key_event.meta_pressed:
+		return
+	if (key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER) and tutorial_panel != null and tutorial_panel.visible and tutorial_start_button != null and tutorial_start_button.visible and not tutorial_start_button.disabled:
+		tutorial_start_button.emit_signal("pressed")
+		get_viewport().set_input_as_handled()
+		return
+	if _survey_mode == SURVEY_MODE_NICKNAME:
+		if (key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER) and _survey_nickname_input != null and _survey_nickname_input.visible:
+			_finish_survey_and_start()
+			get_viewport().set_input_as_handled()
+		elif key_event.keycode == KEY_TAB:
+			get_viewport().set_input_as_handled()
+		return
+	if _survey_mode == SURVEY_MODE_CHARACTER:
+		if _handle_character_selection_key(key_event):
+			get_viewport().set_input_as_handled()
+		return
+	if _survey_mode == SURVEY_MODE_TIPI:
+		if _handle_tipi_keyboard_key(key_event):
+			get_viewport().set_input_as_handled()
+		return
+	if _survey_mode == SURVEY_MODE_RESULT:
+		if (key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER) and survey_panel != null and survey_panel.visible and survey_confirm != null and survey_confirm.visible and not survey_confirm.disabled:
+			_finish_survey_and_start()
+			get_viewport().set_input_as_handled()
+			return
+	if (key_event.keycode == KEY_ESCAPE or key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER) and tutorial_panel != null and tutorial_panel.visible and tutorial_close_button != null and tutorial_close_button.visible and not tutorial_close_button.disabled:
+		_close_tutorial_overlay()
+		get_viewport().set_input_as_handled()
+		return
+	if is_inventory_portal_visible():
+		if _handle_inventory_delete_keyboard_key(key_event):
+			get_viewport().set_input_as_handled()
+		return
+	if (key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER) and _trial_guide_continue_button != null and _trial_guide_continue_button.visible and not _trial_guide_continue_button.disabled:
+		_on_trial_guide_continue_pressed()
+		get_viewport().set_input_as_handled()
+		return
+	if _popup_mode != POPUP_MODE_NONE and player_dialogue_overlay != null and player_dialogue_overlay.visible:
+		if _handle_overlay_keyboard_key(key_event):
+			get_viewport().set_input_as_handled()
+		return
+	if not _help_prompt_cards.is_empty():
+		if _handle_help_prompt_keyboard_key(key_event):
+			get_viewport().set_input_as_handled()
+			return
+	if _tutorial_started and (tutorial_panel == null or not tutorial_panel.visible):
+		if _handle_gameplay_panel_keyboard_key(key_event):
+			get_viewport().set_input_as_handled()
+			return
+
+func _handle_character_selection_key(key_event: InputEventKey) -> bool:
+	var keycode := key_event.keycode
+	var next_index := _character_focus_index
+	match keycode:
+		KEY_LEFT:
+			if _character_focus_index % 2 == 1:
+				next_index -= 1
+		KEY_RIGHT:
+			if _character_focus_index % 2 == 0:
+				next_index += 1
+		KEY_UP:
+			if _character_focus_index >= 2:
+				next_index -= 2
+		KEY_DOWN:
+			if _character_focus_index < CHARACTER_IDS.size() - 2:
+				next_index += 2
+		KEY_TAB:
+			var step := -1 if key_event.shift_pressed else 1
+			next_index = posmod(_character_focus_index + step, CHARACTER_IDS.size())
+		KEY_ENTER, KEY_KP_ENTER:
+			_finish_survey_and_start()
+			return true
+		_:
+			return false
+	if next_index != _character_focus_index:
+		_on_character_selected(CHARACTER_IDS[next_index])
+		_focus_character_option(next_index)
+	return true
+
+func _handle_tipi_keyboard_key(key_event: InputEventKey) -> bool:
+	if key_event.keycode == KEY_TAB:
+		var step := -1 if key_event.shift_pressed else 1
+		if _tipi_keyboard_focus_index < 0:
+			_tipi_keyboard_focus_index = _survey_scale_buttons.size() - 1 if step < 0 else 0
+		else:
+			_tipi_keyboard_focus_index = posmod(_tipi_keyboard_focus_index + step, _survey_scale_buttons.size())
+		_survey_scale_buttons[_tipi_keyboard_focus_index].grab_focus()
+		return true
+	var keycode := key_event.keycode
+	var result := _update_choice_focus(keycode, _survey_scale_buttons, _tipi_keyboard_focus_index)
+	if not bool(result.get("handled", false)):
+		return false
+	_tipi_keyboard_focus_index = int(result.get("focus_index", -1))
+	if bool(result.get("activate", false)) and _tipi_keyboard_focus_index >= 0:
+		_choose_tipi(_tipi_keyboard_focus_index + 1)
+	return true
+
+func _handle_overlay_keyboard_key(key_event: InputEventKey) -> bool:
+	var buttons := _visible_overlay_choice_buttons()
+	var result := _update_tab_choice_focus(key_event, buttons, _overlay_keyboard_focus_index)
+	if not bool(result.get("handled", false)):
+		return false
+	_overlay_keyboard_focus_index = int(result.get("focus_index", -1))
+	if bool(result.get("activate", false)) and _overlay_keyboard_focus_index >= 0:
+		buttons[_overlay_keyboard_focus_index].emit_signal("pressed")
+	return true
+
+func _handle_help_prompt_keyboard_key(key_event: InputEventKey) -> bool:
+	var buttons := _visible_help_prompt_choice_buttons()
+	var result := _update_tab_choice_focus(key_event, buttons, _help_keyboard_focus_index)
+	if not bool(result.get("handled", false)):
+		return false
+	_help_keyboard_focus_index = int(result.get("focus_index", -1))
+	if bool(result.get("activate", false)) and _help_keyboard_focus_index >= 0:
+		buttons[_help_keyboard_focus_index].emit_signal("pressed")
+	return true
+
+func _handle_inventory_delete_keyboard_key(key_event: InputEventKey) -> bool:
+	if _inventory_delete_buttons.is_empty():
+		return false
+	var keycode := key_event.keycode
+	if keycode == KEY_ENTER or keycode == KEY_KP_ENTER:
+		if _inventory_delete_keyboard_focus_index < 0 or _inventory_delete_keyboard_focus_index >= _inventory_delete_buttons.size():
+			return false
+		_inventory_delete_buttons[_inventory_delete_keyboard_focus_index].emit_signal("pressed")
+		return true
+	var result := _update_tab_choice_focus(key_event, _inventory_delete_buttons, _inventory_delete_keyboard_focus_index)
+	if not bool(result.get("handled", false)):
+		return false
+	_inventory_delete_keyboard_focus_index = int(result.get("focus_index", -1))
+	return true
+
+func _reset_inventory_delete_keyboard_focus() -> void:
+	_inventory_delete_keyboard_focus_index = -1
+	_clear_choice_focus(_inventory_delete_buttons)
+
+func _handle_gameplay_panel_keyboard_key(key_event: InputEventKey) -> bool:
+	var buttons := _gameplay_panel_keyboard_buttons()
+	if buttons.is_empty():
+		return false
+	if key_event.keycode == KEY_TAB:
+		var step := -1 if key_event.shift_pressed else 1
+		var next_index := _gameplay_panel_keyboard_focus_index + step
+		if _gameplay_panel_keyboard_focus_index < 0:
+			next_index = buttons.size() - 1 if key_event.shift_pressed else 0
+		if next_index < 0 or next_index >= buttons.size():
+			_reset_gameplay_panel_keyboard_focus()
+			return true
+		_set_gameplay_panel_keyboard_focus(next_index, buttons)
+		return true
+	if (key_event.keycode == KEY_ENTER or key_event.keycode == KEY_KP_ENTER) and _gameplay_panel_keyboard_focus_index >= 0 and _gameplay_panel_keyboard_focus_index < buttons.size():
+		var button := buttons[_gameplay_panel_keyboard_focus_index]
+		_reset_gameplay_panel_keyboard_focus()
+		button.emit_signal("pressed")
+		return true
+	return false
+
+func _gameplay_panel_keyboard_buttons() -> Array[Button]:
+	var buttons: Array[Button] = []
+	for button in [tutorial_toggle_button, customer_live_btn, customer_history_btn]:
+		if button != null and button.visible and not button.disabled:
+			buttons.append(button)
+	return buttons
+
+func _reset_gameplay_panel_keyboard_focus() -> void:
+	_gameplay_panel_focus_token += 1
+	if _gameplay_panel_focus_tween != null:
+		_gameplay_panel_focus_tween.kill()
+		_gameplay_panel_focus_tween = null
+	_gameplay_panel_keyboard_focus_index = -1
+	_clear_choice_focus(_gameplay_panel_keyboard_buttons())
+
+func _set_gameplay_panel_keyboard_focus(index: int, buttons: Array[Button]) -> void:
+	if index < 0 or index >= buttons.size():
+		return
+	_gameplay_panel_focus_token += 1
+	if _gameplay_panel_focus_tween != null:
+		_gameplay_panel_focus_tween.kill()
+	_gameplay_panel_keyboard_focus_index = index
+	buttons[index].grab_focus()
+	var token := _gameplay_panel_focus_token
+	_gameplay_panel_focus_tween = create_tween()
+	_gameplay_panel_focus_tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	_gameplay_panel_focus_tween.tween_interval(GAMEPLAY_PANEL_FOCUS_TTL_SEC)
+	_gameplay_panel_focus_tween.tween_callback(func() -> void:
+		if token == _gameplay_panel_focus_token:
+			_gameplay_panel_focus_tween = null
+			_gameplay_panel_keyboard_focus_index = -1
+			_clear_choice_focus(_gameplay_panel_keyboard_buttons())
+	)
+
+func _update_choice_focus(keycode: Key, buttons: Array[Button], current_index: int) -> Dictionary:
+	if buttons.is_empty():
+		return {"handled": false}
+	if keycode == KEY_ENTER or keycode == KEY_KP_ENTER:
+		if buttons.size() == 1:
+			return {"handled": true, "focus_index": 0, "activate": true}
+		return {
+			"handled": current_index >= 0 and current_index < buttons.size(),
+			"focus_index": current_index,
+			"activate": true,
+		}
+	var next_index := current_index
+	match keycode:
+		KEY_LEFT, KEY_UP:
+			next_index = buttons.size() - 1 if current_index < 0 else max(current_index - 1, 0)
+		KEY_RIGHT, KEY_DOWN:
+			next_index = 0 if current_index < 0 else min(current_index + 1, buttons.size() - 1)
+		_:
+			return {"handled": false}
+	if next_index != current_index:
+		buttons[next_index].grab_focus()
+	return {"handled": true, "focus_index": next_index, "activate": false}
+
+func _update_tab_choice_focus(key_event: InputEventKey, buttons: Array[Button], current_index: int) -> Dictionary:
+	if buttons.is_empty():
+		return {"handled": false}
+	var keycode := key_event.keycode
+	if keycode == KEY_ENTER or keycode == KEY_KP_ENTER:
+		if buttons.size() == 1:
+			return {"handled": true, "focus_index": 0, "activate": true}
+		return {
+			"handled": current_index >= 0 and current_index < buttons.size(),
+			"focus_index": current_index,
+			"activate": true,
+		}
+	if keycode != KEY_TAB:
+		return {"handled": false}
+	var next_index := current_index
+	if current_index < 0:
+		next_index = buttons.size() - 1 if key_event.shift_pressed else 0
+	else:
+		next_index += -1 if key_event.shift_pressed else 1
+	if next_index < 0 or next_index >= buttons.size():
+		_clear_choice_focus(buttons)
+		return {"handled": true, "focus_index": -1, "activate": false}
+	buttons[next_index].grab_focus()
+	return {"handled": true, "focus_index": next_index, "activate": false}
+
+func _visible_overlay_choice_buttons() -> Array[Button]:
+	var buttons: Array[Button] = []
+	for button in _all_overlay_choice_buttons():
+		if button != null and button.visible and not button.disabled:
+			buttons.append(button)
+	return buttons
+
+func _all_overlay_choice_buttons() -> Array[Button]:
+	var buttons: Array[Button] = []
+	for button in [player_dialogue_overlay_accept_btn, player_dialogue_overlay_decline_btn, player_dialogue_overlay_third_btn]:
+		if button != null:
+			buttons.append(button)
+	return buttons
+
+func _visible_help_prompt_choice_buttons() -> Array[Button]:
+	var buttons: Array[Button] = []
+	for button in _all_help_prompt_choice_buttons():
+		if button.visible and not button.disabled:
+			buttons.append(button)
+	return buttons
+
+func _all_help_prompt_choice_buttons() -> Array[Button]:
+	var buttons: Array[Button] = []
+	for entry in _help_prompt_cards:
+		for button_key in ["accept_btn", "decline_btn"]:
+			var button: Button = entry.get(button_key, null)
+			if button != null:
+				buttons.append(button)
+	return buttons
+
+func _clear_choice_focus(buttons: Array[Button]) -> void:
+	for button in buttons:
+		if button != null and button.has_focus():
+			button.release_focus()
+
+func _reset_help_prompt_keyboard_focus() -> void:
+	_help_keyboard_focus_index = -1
+	_clear_choice_focus(_all_help_prompt_choice_buttons())
 
 func _connect_viewport_resize() -> void:
 	var vp := get_viewport()
@@ -228,6 +561,107 @@ func _connect_viewport_resize() -> void:
 func _on_viewport_size_changed() -> void:
 	_recenter_survey_panel()
 	_update_gameplay_panel_layout()
+
+func _setup_session_progress_ui() -> void:
+	session_progress_panel = PanelContainer.new()
+	session_progress_panel.name = "SessionProgressPanel"
+	session_progress_panel.visible = false
+	session_progress_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(session_progress_panel)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.06, 0.09, 0.96)
+	style.border_width_left = 1
+	style.border_width_top = 1
+	style.border_width_right = 1
+	style.border_width_bottom = 1
+	style.border_color = Color(0.74, 0.58, 0.20, 0.62)
+	style.corner_radius_top_left = 9
+	style.corner_radius_top_right = 9
+	style.corner_radius_bottom_right = 9
+	style.corner_radius_bottom_left = 9
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	session_progress_panel.add_theme_stylebox_override("panel", style)
+	session_progress_panel.custom_minimum_size = Vector2(SESSION_PROGRESS_PANEL_WIDTH, SESSION_PROGRESS_PANEL_HEIGHT)
+
+	var content := Control.new()
+	content.custom_minimum_size = Vector2(SESSION_PROGRESS_BAR_WIDTH, 44.0)
+	session_progress_panel.add_child(content)
+
+	session_progress_bar = ProgressBar.new()
+	session_progress_bar.show_percentage = false
+	session_progress_bar.min_value = 0.0
+	session_progress_bar.max_value = 100.0
+	session_progress_bar.custom_minimum_size = Vector2(SESSION_PROGRESS_BAR_WIDTH, 8.0)
+	session_progress_bar.position = Vector2(0.0, 27.0)
+	var track_style := StyleBoxFlat.new()
+	track_style.bg_color = Color(0.13, 0.16, 0.21, 0.95)
+	track_style.corner_radius_top_left = 4
+	track_style.corner_radius_top_right = 4
+	track_style.corner_radius_bottom_right = 4
+	track_style.corner_radius_bottom_left = 4
+	var fill_style := StyleBoxFlat.new()
+	fill_style.bg_color = Color(0.74, 0.58, 0.20, 0.98)
+	fill_style.corner_radius_top_left = 4
+	fill_style.corner_radius_top_right = 4
+	fill_style.corner_radius_bottom_right = 4
+	fill_style.corner_radius_bottom_left = 4
+	session_progress_bar.add_theme_stylebox_override("background", track_style)
+	session_progress_bar.add_theme_stylebox_override("fill", fill_style)
+	content.add_child(session_progress_bar)
+	_add_session_progress_anchors(content)
+	_set_session_progress(0.0)
+
+func _add_session_progress_anchors(container: Control) -> void:
+	var anchors := [
+		{"label": "Trial", "progress": 0.0},
+		{"label": "Morning", "progress": 0.10},
+		{"label": "Lunch", "progress": 0.30},
+		{"label": "Afternoon", "progress": 0.50},
+		{"label": "Dinner", "progress": 0.65},
+		{"label": "Night", "progress": 0.95},
+	]
+	for anchor in anchors:
+		var progress := float(anchor.get("progress", 0.0))
+		var x := progress * SESSION_PROGRESS_BAR_WIDTH
+		var tick := ColorRect.new()
+		tick.color = Color(0.76, 0.95, 1.0, 0.50)
+		tick.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tick.position = Vector2(roundf(x), 24.0)
+		tick.size = Vector2(1.0, 14.0)
+		container.add_child(tick)
+
+		var label := Label.new()
+		label.text = str(anchor.get("label", ""))
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		label.add_theme_font_size_override("font_size", 10)
+		label.add_theme_color_override("font_color", Color(0.76, 0.95, 1.0, 0.88))
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var label_width := minf(72.0, SESSION_PROGRESS_BAR_WIDTH - x)
+		label.position = Vector2(roundf(x), 0.0)
+		label.size = Vector2(label_width, 18.0)
+		container.add_child(label)
+
+func _set_session_progress(value: float) -> void:
+	_session_progress = clampf(value, 0.0, 1.0)
+	if session_progress_bar:
+		session_progress_bar.value = _session_progress * 100.0
+
+func _refresh_formal_session_progress() -> void:
+	if not _formal_session_started:
+		return
+	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
+	if time_mgr == null:
+		return
+	var clock_minutes := int(time_mgr.get("current_hour")) * 60 + int(time_mgr.get("current_minute"))
+	var elapsed_minutes := float(clock_minutes - 6 * 60)
+	if clock_minutes < 6 * 60:
+		elapsed_minutes += 24.0 * 60.0
+	var day_progress := clampf(elapsed_minutes / SESSION_PROGRESS_FORMAL_MINUTES, 0.0, 1.0)
+	_set_session_progress(SESSION_PROGRESS_TRIAL_SHARE + (1.0 - SESSION_PROGRESS_TRIAL_SHARE) * day_progress)
 
 func _recenter_survey_panel() -> void:
 	if survey_panel == null:
@@ -242,6 +676,8 @@ func _recenter_survey_panel() -> void:
 	var panel_base_h := SURVEY_PANEL_BASE_SIZE.y
 	if _survey_mode == SURVEY_MODE_RESULT:
 		panel_base_h = SURVEY_PANEL_RESULT_HEIGHT
+	elif _survey_mode == SURVEY_MODE_CHARACTER:
+		panel_base_h = SURVEY_PANEL_CHARACTER_HEIGHT
 	var target_h := clampf(panel_base_h, 220.0, maxf(220.0, view_size.y - SURVEY_PANEL_MARGIN * 2.0))
 	survey_panel.custom_minimum_size = Vector2(target_w, target_h)
 	survey_panel.size = Vector2(target_w, target_h)
@@ -763,6 +1199,7 @@ func _refresh_day_phase_label(_hour: int = -1, _minute: int = -1) -> void:
 	var day := int(time_mgr.get("current_day"))
 	var period := str(time_mgr.call("get_period_name")).capitalize()
 	day_phase_label.text = "Day %d | %s" % [maxi(day, 1), period]
+	_refresh_formal_session_progress()
 
 func _on_period_changed_label(_period_name: String, _is_peak: bool) -> void:
 	_refresh_day_phase_label()
@@ -784,6 +1221,7 @@ func _on_day_changed_notice(day: int) -> void:
 func _on_run_day_completed_notice(day: int) -> void:
 	if day <= 0 or not _formal_session_started:
 		return
+	_set_session_progress(1.0)
 	if _score >= SCORE_WIN_THRESHOLD:
 		_log_game_run_once("win")
 		_show_run_end_prompt(
@@ -803,7 +1241,7 @@ func _on_task_created(task: Dictionary) -> void:
 		var order_kind := str(payload.get("order_kind", "food"))
 		if order_kind == "food" and _trial_step == "await_food_order":
 			_trial_food_task_id = str(task.get("id", ""))
-			_trial_step = "await_drink_order"
+			_trial_step = "await_robot_ready"
 		elif order_kind == "drink":
 			_trial_drink_task_id = str(task.get("id", ""))
 			_show_trial_guide_for_drink_request()
@@ -926,12 +1364,28 @@ func _show_run_end_prompt(title: String, body: String) -> void:
 	_run_end_active = true
 	_set_global_pause(true)
 	_popup_mode = POPUP_MODE_GAME_OVER
-	_show_player_dialogue_prompt(title, body, ["Play Again"], false)
+	var end_action := "Continue" if _is_embedded_web_session() else "Play Again"
+	_show_player_dialogue_prompt(title, body, [end_action], false)
+
+func _is_embedded_web_session() -> bool:
+	if not OS.has_feature("web"):
+		return false
+	return bool(JavaScriptBridge.eval("Boolean(window.WeakRobotRestaurantEmbed && window.WeakRobotRestaurantEmbed.isEmbedded)", true))
+
+func _complete_embedded_web_session() -> void:
+	if _embedded_completion_sent:
+		return
+	_embedded_completion_sent = true
+	JavaScriptBridge.eval("window.WeakRobotRestaurantEmbed && window.WeakRobotRestaurantEmbed.complete()", true)
+	if player_dialogue_overlay_accept_btn:
+		player_dialogue_overlay_accept_btn.disabled = true
+		player_dialogue_overlay_accept_btn.text = "Returning..."
 
 func _on_game_over_play_again() -> void:
 	_set_global_pause(false)
 	_run_end_active = false
 	_score_game_over = false
+	_embedded_completion_sent = false
 	_popup_mode = POPUP_MODE_NONE
 	var logger = get_node_or_null("/root/EpisodeLogger")
 	if logger and logger.has_method("reset_session"):
@@ -1016,6 +1470,8 @@ func _on_player_inventory_changed(items: Array) -> void:
 func _refresh_inventory_portal(items: Array) -> void:
 	if inventory_portal_list == null:
 		return
+	_reset_inventory_delete_keyboard_focus()
+	_inventory_delete_buttons.clear()
 	_clear_dynamic_children(inventory_portal_list)
 	if items.is_empty():
 		var empty := Label.new()
@@ -1039,6 +1495,7 @@ func _refresh_inventory_portal(items: Array) -> void:
 		delete_btn.set_meta("inventory_item_uid", int(item.get("uid", 0)))
 		delete_btn.pressed.connect(_on_inventory_portal_delete_pressed.bind(int(item.get("uid", 0))), CONNECT_DEFERRED)
 		row.add_child(delete_btn)
+		_inventory_delete_buttons.append(delete_btn)
 		inventory_portal_list.add_child(row)
 
 func _on_inventory_portal_delete_pressed(item_uid: int) -> void:
@@ -1076,6 +1533,7 @@ func show_inventory_portal() -> void:
 func hide_inventory_portal() -> void:
 	if inventory_portal_panel == null:
 		return
+	_reset_inventory_delete_keyboard_focus()
 	inventory_portal_panel.visible = false
 	if _trial_session_active and _trial_step == "await_delete_confirm" and _trial_has_delete_item():
 		_trial_step = "await_delete_open"
@@ -1125,6 +1583,13 @@ func _update_gameplay_panel_layout() -> void:
 		view_size.x - SIDE_PANEL_MARGIN - dialogue_panel_w,
 		center_x + GAMEPLAY_BAND_WIDTH * 0.5 + GAMEPLAY_SIDE_GAP
 	)
+	if session_progress_panel:
+		var progress_size := Vector2(SESSION_PROGRESS_PANEL_WIDTH, SESSION_PROGRESS_PANEL_HEIGHT)
+		session_progress_panel.size = progress_size
+		session_progress_panel.position = Vector2(
+			center_x - progress_size.x * 0.5,
+			SESSION_PROGRESS_TOP_MARGIN
+		)
 	inventory_panel.position = Vector2(system_x, gameplay_top_y)
 	dialogue_panel.position = Vector2(dialogue_x, gameplay_top_y)
 	var system_panel_h: float = 20.0
@@ -1147,7 +1612,10 @@ func _update_gameplay_panel_layout() -> void:
 	customer_panel.size = Vector2(dialogue_panel_w, customer_panel_h)
 	customer_panel.position = Vector2(dialogue_x, dialogue_panel.position.y + dialogue_panel_h + 12.0)
 	var centered_x: float = (view_size.x - PLAYER_DIALOGUE_OVERLAY_WIDTH) * 0.5
-	var stack_origin_y: float = gameplay_top_y + PLAYER_DIALOGUE_OVERLAY_Y_OFFSET
+	var stack_origin_y: float = maxf(
+		SESSION_PROGRESS_TOP_MARGIN + SESSION_PROGRESS_PANEL_HEIGHT + 16.0,
+		gameplay_top_y + PLAYER_DIALOGUE_OVERLAY_Y_OFFSET
+	)
 	var stack_y: float = stack_origin_y
 	if help_prompt_stack:
 		var help_prompt_width := GAMEPLAY_BAND_WIDTH * HELP_PROMPT_WIDTH_RATIO
@@ -1155,7 +1623,7 @@ func _update_gameplay_panel_layout() -> void:
 		if help_prompt_stack.visible:
 			var help_h := maxf(help_prompt_stack.size.y, help_prompt_stack.get_combined_minimum_size().y)
 			var help_x := center_x - help_prompt_width * 0.5 + HELP_PROMPT_X_OFFSET
-			var help_y := maxf(72.0, (view_size.y - help_h) * 0.44)
+			var help_y := maxf(SESSION_PROGRESS_TOP_MARGIN + SESSION_PROGRESS_PANEL_HEIGHT + 16.0, (view_size.y - help_h) * 0.44)
 			help_prompt_stack.position = Vector2(help_x, help_y)
 			stack_y += help_h + PLAYER_DIALOGUE_STACK_GAP
 		else:
@@ -1471,6 +1939,12 @@ func _setup_player_task_notice_audio() -> void:
 	_player_task_notice_player.bus = &"Master"
 	add_child(_player_task_notice_player)
 
+func _setup_delegation_voice_audio() -> void:
+	_delegation_voice_player = AudioStreamPlayer.new()
+	_delegation_voice_player.name = "DelegationVoice"
+	_delegation_voice_player.bus = &"Master"
+	add_child(_delegation_voice_player)
+
 func _add_blank_row(container: Container, min_height: float = 18.0) -> void:
 	if container == null:
 		return
@@ -1730,7 +2204,10 @@ func _respond(response: String) -> void:
 
 	if _popup_mode == POPUP_MODE_GAME_OVER:
 		if response == "accept":
-			_on_game_over_play_again()
+			if _is_embedded_web_session():
+				_complete_embedded_web_session()
+			else:
+				_on_game_over_play_again()
 		return
 
 	if _popup_mode == POPUP_MODE_TRIAL_COMPLETE:
@@ -1797,7 +2274,7 @@ func show_kitchen_pick_popup(options: Array[String], title: String = "Kitchen Pi
 		_kitchen_pick_options.append(str(options[i]))
 	_show_player_dialogue_prompt(
 		title,
-		"Tap an item to add +1 to your inventory.\nPress E, I, or Esc, or leave the kitchen to close.",
+		"Choose an item to add +1 to your inventory.\nPress E, I, or Esc, or leave the kitchen to close.",
 		[
 			_kitchen_pick_options[0].capitalize(),
 			_kitchen_pick_options[1].capitalize(),
@@ -1904,6 +2381,89 @@ func _setup_survey_input_ui() -> void:
 	)
 	survey_options.add_child(_survey_nickname_input)
 
+func _setup_character_selection_ui() -> void:
+	if survey_options == null:
+		return
+	_character_selection_grid = GridContainer.new()
+	_character_selection_grid.columns = 2
+	_character_selection_grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_character_selection_grid.add_theme_constant_override("h_separation", 10)
+	_character_selection_grid.add_theme_constant_override("v_separation", 10)
+	_character_selection_grid.hide()
+	survey_options.add_child(_character_selection_grid)
+	for character_id in CHARACTER_IDS:
+		var button := _make_character_selection_button(character_id)
+		_character_selection_grid.add_child(button)
+		_character_selection_buttons[character_id] = button
+
+func _make_character_selection_button(character_id: String) -> Button:
+	var button := Button.new()
+	button.custom_minimum_size = Vector2(210.0, 120.0)
+	button.pressed.connect(_on_character_selected.bind(character_id))
+	_apply_character_selection_button_theme(button, false)
+
+	var portrait := TextureRect.new()
+	portrait.texture = _character_idle_texture(character_id)
+	portrait.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	portrait.offset_left = -40.0
+	portrait.offset_top = -60.0
+	portrait.offset_right = 40.0
+	portrait.offset_bottom = 40.0
+	portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(portrait)
+	return button
+
+func _character_idle_texture(character_id: String) -> Texture2D:
+	var sprite_frames = CHARACTER_SPRITE_FRAMES.get(character_id)
+	if sprite_frames is SpriteFrames:
+		return (sprite_frames as SpriteFrames).get_frame_texture(&"idle_down", 0)
+	return null
+
+func _apply_character_selection_button_theme(button: Button, selected: bool) -> void:
+	if not selected:
+		_apply_button_theme(button, "neutral")
+		return
+	var normal := _make_button_style(UI_BTN_NEUTRAL_BG, UI_BTN_FOCUS_BORDER, 10, 3, 8, 6)
+	var hover := _make_button_style(UI_BTN_NEUTRAL_HOVER_BG, UI_BTN_FOCUS_BORDER, 10, 3, 8, 6)
+	var pressed := _make_button_style(UI_BTN_NEUTRAL_PRESSED_BG, UI_BTN_FOCUS_BORDER, 10, 3, 8, 6)
+	button.add_theme_stylebox_override("normal", normal)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("pressed", pressed)
+	button.add_theme_stylebox_override("focus", hover)
+	button.add_theme_color_override("font_color", UI_BTN_TEXT_LIGHT)
+	button.add_theme_color_override("font_hover_color", UI_BTN_TEXT_LIGHT)
+	button.add_theme_color_override("font_pressed_color", UI_BTN_TEXT_LIGHT)
+	button.add_theme_color_override("font_focus_color", UI_BTN_TEXT_LIGHT)
+
+func _on_character_selected(character_id: String) -> void:
+	if not CHARACTER_SPRITE_FRAMES.has(character_id):
+		return
+	_character_focus_index = CHARACTER_IDS.find(character_id)
+	_selected_character_id = character_id
+	var profile = get_node_or_null("/root/PlayerProfile")
+	if profile and profile.has_method("set_character"):
+		profile.set_character(character_id)
+	_apply_character_to_player(character_id)
+	for id in _character_selection_buttons:
+		var button = _character_selection_buttons[id]
+		if button is Button:
+			_apply_character_selection_button_theme(button as Button, str(id) == character_id)
+	if survey_confirm:
+		survey_confirm.disabled = false
+
+func _apply_character_to_player(character_id: String) -> void:
+	var sprite_frames = CHARACTER_SPRITE_FRAMES.get(character_id)
+	if not (sprite_frames is SpriteFrames):
+		return
+	var players := get_tree().get_nodes_in_group("player")
+	if players.is_empty():
+		return
+	var player = players[0]
+	if player is Node and player.has_method("set_character_sprite_frames"):
+		player.call("set_character_sprite_frames", sprite_frames)
+
 func _on_tipi_scale_pressed(response_value: int) -> void:
 	_choose_tipi(response_value)
 
@@ -1922,7 +2482,9 @@ func _setup_tipi_survey() -> void:
 	]
 
 	var profile = get_node_or_null("/root/PlayerProfile")
-	if profile and profile.has_method("has_tipi") and bool(profile.has_tipi()) and profile.has_method("has_nickname") and bool(profile.has_nickname()):
+	if profile and profile.has_method("has_tipi") and bool(profile.has_tipi()) and profile.has_method("has_nickname") and bool(profile.has_nickname()) and profile.has_method("has_character") and bool(profile.has_character()):
+		if profile.has_method("get_character"):
+			_apply_character_to_player(str(profile.get_character()))
 		_show_tutorial_before_game()
 		return
 
@@ -1935,6 +2497,7 @@ func _setup_tipi_survey() -> void:
 
 func _show_nickname_prompt() -> void:
 	_survey_mode = SURVEY_MODE_NICKNAME
+	survey_options.alignment = BoxContainer.ALIGNMENT_BEGIN
 	var profile = get_node_or_null("/root/PlayerProfile")
 	var current_nickname := ""
 	if profile and profile.has_method("get_profile"):
@@ -1961,6 +2524,8 @@ func _show_nickname_prompt() -> void:
 		_survey_nickname_input.show()
 		_survey_nickname_input.editable = true
 		_survey_nickname_input.call_deferred("grab_focus")
+	if _character_selection_grid:
+		_character_selection_grid.hide()
 	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 36)
 	survey_question.text = "What should we call you in the restaurant?"
 	if survey_question_title:
@@ -1972,13 +2537,61 @@ func _show_nickname_prompt() -> void:
 	if survey_scale_hint:
 		survey_scale_hint.text = ""
 	survey_confirm.text = "Continue"
+	survey_confirm.disabled = false
 	survey_confirm.show()
 	_recenter_survey_panel()
 
-func _begin_tipi_questions() -> void:
-	_survey_mode = SURVEY_MODE_TIPI
+func _show_character_selection() -> void:
+	_survey_mode = SURVEY_MODE_CHARACTER
+	survey_options.alignment = BoxContainer.ALIGNMENT_CENTER
+	_character_focus_index = 0
 	if _survey_nickname_input:
 		_survey_nickname_input.hide()
+	for button in _survey_scale_buttons:
+		button.hide()
+	if survey_scale_title:
+		survey_scale_title.hide()
+	if survey_scale_spacer:
+		survey_scale_spacer.hide()
+	if survey_scale_hint:
+		survey_scale_hint.hide()
+	if survey_result_group_spacer:
+		survey_result_group_spacer.hide()
+	if survey_result_group:
+		survey_result_group.hide()
+	if survey_result_spacer:
+		survey_result_spacer.hide()
+	if survey_question_title:
+		survey_question_title.show()
+		survey_question_title.text = "[b]Your Character[/b]"
+	survey_question.custom_minimum_size = Vector2(SURVEY_PANEL_BASE_SIZE.x - 48.0, 28.0)
+	survey_question.text = "Pick the character you want to play."
+	if _character_selection_grid:
+		_character_selection_grid.show()
+	survey_confirm.text = "Continue"
+	_on_character_selected(CHARACTER_IDS[0])
+	survey_confirm.show()
+	_recenter_survey_panel()
+	call_deferred("_focus_character_option", 0)
+
+func _focus_character_option(index: int) -> void:
+	if index < 0 or index >= CHARACTER_IDS.size():
+		return
+	var button = _character_selection_buttons.get(CHARACTER_IDS[index])
+	if not (button is Button):
+		return
+	_character_focus_index = index
+	(button as Button).grab_focus()
+
+func _begin_tipi_questions() -> void:
+	_survey_mode = SURVEY_MODE_TIPI
+	_tipi_keyboard_focus_index = -1
+	_clear_choice_focus(_survey_scale_buttons)
+	survey_options.alignment = BoxContainer.ALIGNMENT_CENTER
+	if _survey_nickname_input:
+		_survey_nickname_input.hide()
+	if _character_selection_grid:
+		_character_selection_grid.hide()
 	_tipi_index = 0
 	_tipi_responses.clear()
 	if survey_result_group_spacer:
@@ -1988,6 +2601,7 @@ func _begin_tipi_questions() -> void:
 	if survey_result_spacer:
 		survey_result_spacer.hide()
 	survey_confirm.hide()
+	survey_confirm.disabled = false
 	if survey_question_title:
 		survey_question_title.show()
 	if survey_scale_title:
@@ -2052,6 +2666,8 @@ func _choose_tipi(response_value: int) -> void:
 	var item_index := int(q.get("item", 0))
 	if item_index > 0:
 		_tipi_responses[item_index] = clampi(response_value, 1, 7)
+	_tipi_keyboard_focus_index = -1
+	_clear_choice_focus(_survey_scale_buttons)
 	_tipi_index += 1
 
 	if _tipi_index >= _tipi_questions.size():
@@ -2087,6 +2703,7 @@ func _show_tipi_result() -> void:
 	for button in _survey_scale_buttons:
 		button.hide()
 	survey_confirm.text = "Open Tutorial"
+	survey_confirm.disabled = false
 	survey_confirm.show()
 	_recenter_survey_panel()
 
@@ -2104,6 +2721,11 @@ func _finish_survey_and_start() -> void:
 		var profile = get_node_or_null("/root/PlayerProfile")
 		if profile and profile.has_method("set_nickname"):
 			profile.set_nickname(nickname)
+		_show_character_selection()
+		return
+	if _survey_mode == SURVEY_MODE_CHARACTER:
+		if _selected_character_id == "":
+			return
 		_begin_tipi_questions()
 		return
 	survey_panel.hide()
@@ -2309,6 +2931,13 @@ func _clear_player_input_state() -> void:
 			Input.action_release(action)
 	Input.flush_buffered_events()
 
+func _set_trial_player_input_locked(locked: bool) -> void:
+	for player in get_tree().get_nodes_in_group("player"):
+		if player and player.has_method("set_input_locked"):
+			player.call("set_input_locked", locked)
+	if not locked:
+		_clear_player_input_state()
+
 func _spotlight_tutorial_toggle() -> void:
 	if tutorial_toggle_button == null or not tutorial_toggle_button.visible:
 		return
@@ -2332,6 +2961,8 @@ func _set_gameplay_panels_visible(visible: bool) -> void:
 		dialogue_panel.visible = visible
 	if customer_panel:
 		customer_panel.visible = visible
+	if session_progress_panel:
+		session_progress_panel.visible = visible
 	if help_prompt_stack and not visible:
 		help_prompt_stack.visible = false
 	if player_dialogue_overlay and not visible:
@@ -2406,7 +3037,7 @@ func _setup_trial_guide_ui() -> void:
 	_trial_guide_layer.add_child(_trial_guide_arrow)
 
 	_trial_guide_message_panel = PanelContainer.new()
-	_trial_guide_message_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trial_guide_message_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	var message_style := StyleBoxFlat.new()
 	message_style.bg_color = Color(0.08, 0.11, 0.16, 0.94)
 	message_style.border_width_left = 2
@@ -2432,7 +3063,23 @@ func _setup_trial_guide_ui() -> void:
 	_trial_guide_message_label.selection_enabled = false
 	_trial_guide_message_label.add_theme_font_size_override("normal_font_size", TRIAL_GUIDE_BODY_FONT_SIZE)
 	_trial_guide_message_label.custom_minimum_size = Vector2(TRIAL_GUIDE_MESSAGE_MIN_WIDTH, 0.0)
-	_trial_guide_message_panel.add_child(_trial_guide_message_label)
+	_trial_guide_message_box = VBoxContainer.new()
+	_trial_guide_message_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trial_guide_message_box.add_theme_constant_override("separation", 12)
+	_trial_guide_message_panel.add_child(_trial_guide_message_box)
+	_trial_guide_message_box.add_child(_trial_guide_message_label)
+
+	var button_row := HBoxContainer.new()
+	button_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_trial_guide_message_box.add_child(button_row)
+
+	_trial_guide_continue_button = Button.new()
+	_trial_guide_continue_button.custom_minimum_size = Vector2(132.0, 40.0)
+	_trial_guide_continue_button.add_theme_font_size_override("font_size", 18)
+	_trial_guide_continue_button.pressed.connect(_on_trial_guide_continue_pressed)
+	_apply_button_theme(_trial_guide_continue_button, "neutral")
+	button_row.add_child(_trial_guide_continue_button)
 
 func _trial_wait(seconds: float) -> bool:
 	if seconds <= 0.0:
@@ -2451,10 +3098,13 @@ func _start_trial_session() -> void:
 	if _trial_session_active or _formal_session_started:
 		return
 	_trial_session_active = true
+	_set_session_progress(0.0)
 	_trial_step = "intro"
 	_trial_drink_task_id = ""
+	_connect_trial_robot_signals()
 	_refresh_day_phase_label()
 	_reset_trial_world_state()
+	_set_trial_player_input_locked(true)
 	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
 	if time_mgr and time_mgr.has_method("pause"):
 		time_mgr.pause()
@@ -2463,8 +3113,6 @@ func _start_trial_session() -> void:
 		var spawner = game_mgr.get_customer_spawner()
 		if spawner and spawner.has_method("disable"):
 			spawner.disable()
-	if _trial_timeout_timer:
-		_trial_timeout_timer.start(TRIAL_SESSION_MAX_SEC)
 	call_deferred("_run_trial_intro")
 
 func _run_trial_intro() -> void:
@@ -2475,13 +3123,71 @@ func _run_trial_intro() -> void:
 	if not _trial_session_active:
 		return
 	_show_player_dialogue_overlay("System", "You are now entering the trial session.", "system")
-	if not await _trial_wait(1.0):
+	if not await _trial_wait(PLAYER_DIALOGUE_OVERLAY_SHOW_SEC + 0.1):
 		return
 	if not _trial_session_active:
 		return
+	_trial_step = "static_system_panel"
+	_show_trial_guide_for_system_panel()
+
+func _show_trial_guide_for_system_panel() -> void:
+	if not _trial_session_active or _trial_step != "static_system_panel":
+		return
+	_show_trial_guide(
+		"This panel keeps track of the current service period, score, items being held, and tasks assigned to you and the robot.",
+		{"type": "control", "id": inventory_panel.get_instance_id()},
+		"→",
+		"Next",
+		Callable(self, "_show_trial_guide_for_dialogue_panel")
+	)
+
+func _show_trial_guide_for_dialogue_panel() -> void:
+	if not _trial_session_active or _trial_step != "static_system_panel":
+		return
+	_trial_step = "static_dialogue_panel"
+	_show_trial_guide(
+		"This panel records what customers, you, and the robot say during service.",
+		{"type": "control", "id": dialogue_panel.get_instance_id()},
+		"←",
+		"Next",
+		Callable(self, "_show_trial_guide_for_customer_orders")
+	)
+
+func _show_trial_guide_for_customer_orders() -> void:
+	if not _trial_session_active or _trial_step != "static_dialogue_panel":
+		return
+	_trial_step = "static_order_history"
+	_set_customer_tab(CUSTOMER_TAB_HISTORY)
+	_show_trial_guide(
+		"History keeps a record of completed and failed orders, including their score changes.",
+		{"type": "control", "id": customer_panel.get_instance_id(), "prefer_below": true, "message_offset_y": -25.0},
+		"←",
+		"Next",
+		Callable(self, "_show_trial_guide_for_live_orders")
+	)
+
+func _show_trial_guide_for_live_orders() -> void:
+	if not _trial_session_active or _trial_step != "static_order_history":
+		return
+	_trial_step = "static_customer_orders"
+	_set_customer_tab(CUSTOMER_TAB_LIVE)
+	_show_trial_guide(
+		"Live shows all active orders. In this trial, the robot handles food orders and you handle drink orders; assigned tasks appear in the System Panel.",
+		{"type": "control", "id": customer_panel.get_instance_id(), "prefer_below": true, "message_offset_y": -25.0},
+		"←",
+		"Next",
+		Callable(self, "_begin_trial_order_demo")
+	)
+
+func _begin_trial_order_demo() -> void:
+	if not _trial_session_active or _trial_step != "static_customer_orders":
+		return
+	_hide_trial_guide()
+	_set_session_progress(0.02)
 	_spawn_trial_customer()
 	_trial_step = "await_food_order"
-	_show_trial_guide_for_customer_orders()
+	if _trial_timeout_timer:
+		_trial_timeout_timer.start(TRIAL_SESSION_MAX_SEC)
 
 func _spawn_trial_customer() -> void:
 	if _trial_customer != null and is_instance_valid(_trial_customer):
@@ -2489,6 +3195,9 @@ func _spawn_trial_customer() -> void:
 	var customer = TrialCustomerScene.instantiate()
 	customer.preset_food_item = "pizza"
 	customer.preset_drink_item = "coffee"
+	customer.defer_drink_order_until_released = true
+	customer.food_task_window_ms = TRIAL_FOOD_TASK_WINDOW_MS
+	customer.drink_task_window_ms = TRIAL_DRINK_TASK_WINDOW_MS
 	customer.start_delay_sec = 0.2
 	var current_scene = get_tree().current_scene
 	if current_scene == null:
@@ -2499,23 +3208,59 @@ func _spawn_trial_customer() -> void:
 		customer.global_position = (spawn_marker as Node2D).global_position
 	_trial_customer = customer as Node2D
 
-func _show_trial_guide_for_customer_orders() -> void:
-	_show_trial_guide(
-		"The robot will handle the food order first, and you will handle the drink order.",
-		{"type": "control", "id": customer_panel.get_instance_id(), "prefer_below": true, "message_offset_y": -25.0},
-		"→"
-	)
-
 func _show_trial_guide_for_drink_request() -> void:
 	_show_trial_guide(
 		"The customer is now requesting a drink. Walk to the customer and press [b]E[/b] to take the drink order.",
-		{"type": "world_customer", "id": _trial_customer.get_instance_id(), "size": Vector2(104.0, 150.0), "offset": Vector2(0.0, -24.0)},
+		{"type": "world_customer", "id": _trial_customer.get_instance_id(), "size": Vector2(104.0, 150.0), "offset": Vector2(0.0, -24.0), "message_min_width": 340.0},
 		"↓"
 	)
 
-func _show_trial_guide_for_drink_pickup() -> void:
+func _on_trial_handoff_wait_ready(task_id: String) -> void:
+	if not _trial_session_active or _trial_step != "await_robot_ready" or task_id != _trial_food_task_id:
+		return
+	var robot = _trial_robot()
+	if robot == null or not (robot is Node2D):
+		return
+	_set_session_progress(0.05)
 	_show_trial_guide(
-		"Next, go to the drink cabinet and press [b]E[/b]. Select the requested drink to pick it up.",
+		"The robot has picked up the food. Next, you will handle the customer's drink order.",
+		{"type": "world_rect", "center": (robot as Node2D).global_position, "size": Vector2(96.0, 128.0), "offset": Vector2(0.0, -20.0)},
+		"↓",
+		"Next",
+		Callable(self, "_begin_trial_drink_demo")
+	)
+
+func _begin_trial_drink_demo() -> void:
+	if not _trial_session_active or _trial_step != "await_robot_ready":
+		return
+	if _trial_customer == null or not is_instance_valid(_trial_customer):
+		call_deferred("_finish_trial_session", false)
+		return
+	_hide_trial_guide()
+	_set_session_progress(0.06)
+	_trial_step = "await_drink_order"
+	_set_trial_player_input_locked(false)
+	if _trial_customer.has_method("release_deferred_drink_order"):
+		_trial_customer.call("release_deferred_drink_order")
+
+func _show_trial_guide_for_drink_pickup() -> void:
+	if _trial_drink_pickup_area_confirmed:
+		_show_trial_guide_for_drink_pickup_action()
+		return
+	_show_trial_guide(
+		"Here's the pickup area: drinks are on the left, and food is on the right. You may use the food counter later if the robot asks for your help.",
+		_pickup_area_trial_target(),
+		"↓",
+		"Got it.",
+		Callable(self, "_show_trial_guide_for_drink_pickup_action")
+	)
+
+func _show_trial_guide_for_drink_pickup_action() -> void:
+	if not _trial_session_active or _trial_step != "await_pickup":
+		return
+	_trial_drink_pickup_area_confirmed = true
+	_show_trial_guide(
+		"Now go to the drink cabinet on the left and press [b]E[/b]. Select the requested drink to pick it up.",
 		_drink_cabinet_trial_target(),
 		"↓"
 	)
@@ -2536,6 +3281,7 @@ func _show_trial_guide_for_drink_delivery() -> void:
 func _begin_trial_delete_demo() -> void:
 	if not _trial_session_active:
 		return
+	_set_session_progress(0.075)
 	_trial_step = "await_delete_open"
 	hide_inventory_portal()
 	_clear_actor_inventory("player")
@@ -2606,6 +3352,7 @@ func _activate_trial_handoff_request() -> void:
 		call_deferred("_finish_trial_session", false)
 		return
 	robot.call("start_trial_task_handoff", _trial_handoff_task_id, item_name)
+	_set_session_progress(0.09)
 	_trial_step = "await_handoff_accept"
 
 func _show_trial_guide_for_handoff_accept() -> void:
@@ -2639,6 +3386,7 @@ func _finish_trial_session(success: bool) -> void:
 	if not _trial_session_active:
 		return
 	_trial_session_active = false
+	_set_session_progress(SESSION_PROGRESS_TRIAL_SHARE)
 	_trial_step = "complete"
 	if _trial_timeout_timer:
 		_trial_timeout_timer.stop()
@@ -2654,27 +3402,28 @@ func _on_trial_timeout() -> void:
 	_finish_trial_session(false)
 
 func _show_trial_completion_prompt(success: bool) -> void:
-	if success:
-		_popup_mode = POPUP_MODE_TRIAL_COMPLETE
-		_show_player_dialogue_prompt(
-			"System",
-			"Congratulations. You have successfully completed the trial session. Are you ready to begin the formal session?\n",
-			["Start Game"],
-			false
-		)
-	else:
-		_show_player_dialogue_overlay("System", "The trial session has ended. The formal session will start now.", "system")
-		await _trial_wait(PLAYER_DIALOGUE_OVERLAY_SHOW_SEC + 0.1)
-		_begin_formal_session()
+	_popup_mode = POPUP_MODE_TRIAL_COMPLETE
+	var body := "Congratulations. You have successfully completed the trial session. Are you ready to begin the formal session?\n" if success else "The trial session has ended. In the formal session, keep an eye on order timers and complete tasks before they expire."
+	_show_player_dialogue_prompt(
+		"System",
+		body,
+		["Start Game"],
+		false
+	)
 
 func _begin_formal_session() -> void:
+	_set_trial_player_input_locked(false)
 	_log_participant_profile_for_formal_session()
 	_formal_session_started = true
+	var help_mgr = get_node_or_null("/root/HelpRequestManager")
+	if help_mgr and help_mgr.has_method("set_formal_session_active"):
+		help_mgr.set_formal_session_active(true)
 	_initial_day_notice_shown = false
 	_pending_day_notice = 1
 	_run_end_active = false
 	_score_game_over = false
 	_game_run_logged = false
+	_embedded_completion_sent = false
 	var robot = _trial_robot()
 	if robot != null and robot.has_method("set_trial_stationary_pause"):
 		robot.call("set_trial_stationary_pause", false)
@@ -2730,6 +3479,7 @@ func _reset_trial_world_state() -> void:
 	_trial_handoff_request_id = ""
 	_trial_delete_item_uid = 0
 	_trial_delete_item_name = ""
+	_trial_drink_pickup_area_confirmed = false
 	_clear_actor_inventory("player")
 	_clear_actor_inventory("robot")
 	var robot = _trial_robot()
@@ -2792,6 +3542,13 @@ func _trial_robot() -> Node:
 	if robots.is_empty():
 		return null
 	return robots[0]
+
+func _connect_trial_robot_signals() -> void:
+	var robot = _trial_robot()
+	if robot == null or not robot.has_signal("trial_handoff_wait_ready"):
+		return
+	if not robot.is_connected("trial_handoff_wait_ready", Callable(self, "_on_trial_handoff_wait_ready")):
+		robot.connect("trial_handoff_wait_ready", Callable(self, "_on_trial_handoff_wait_ready"))
 
 func _trial_item_visual(item_name: String) -> Dictionary:
 	var items_root = get_tree().get_root().find_child("InteractiveItems", true, false)
@@ -2903,10 +3660,11 @@ func _trial_handoff_prompt_target() -> Dictionary:
 		return {}
 	return {"type": "control", "id": card.get_instance_id()}
 
-func _show_trial_guide(text: String, target: Dictionary, arrow: String = "↓") -> void:
+func _show_trial_guide(text: String, target: Dictionary, arrow: String = "↓", continue_text: String = "", continue_callback: Callable = Callable()) -> void:
 	if _trial_guide_layer == null or _trial_guide_message_label == null:
 		return
 	_trial_guide_target = target.duplicate(true)
+	_trial_guide_continue_callback = continue_callback
 	_trial_guide_layer.visible = true
 	_trial_guide_message_label.clear()
 	if text.strip_edges() == "":
@@ -2914,6 +3672,9 @@ func _show_trial_guide(text: String, target: Dictionary, arrow: String = "↓") 
 	else:
 		_trial_guide_message_panel.visible = true
 		_trial_guide_message_label.append_text(text)
+	if _trial_guide_continue_button:
+		_trial_guide_continue_button.text = continue_text
+		_trial_guide_continue_button.visible = not continue_text.strip_edges().is_empty() and continue_callback.is_valid()
 	if _trial_guide_arrow:
 		_trial_guide_arrow.visible = arrow.strip_edges() != ""
 	if arrow.strip_edges() != "":
@@ -2938,8 +3699,18 @@ func _set_trial_guide_arrow_direction(arrow: String) -> void:
 
 func _hide_trial_guide() -> void:
 	_trial_guide_target.clear()
+	_trial_guide_continue_callback = Callable()
+	if _trial_guide_continue_button:
+		_trial_guide_continue_button.visible = false
 	if _trial_guide_layer:
 		_trial_guide_layer.visible = false
+
+func _on_trial_guide_continue_pressed() -> void:
+	if not _trial_guide_continue_callback.is_valid():
+		return
+	var callback := _trial_guide_continue_callback
+	_trial_guide_continue_callback = Callable()
+	callback.call()
 
 func _update_trial_guide_overlay() -> void:
 	if _trial_guide_layer == null or not _trial_guide_layer.visible:
@@ -3081,7 +3852,10 @@ func _world_to_screen(world_pos: Vector2) -> Vector2:
 	return get_viewport().get_canvas_transform() * world_pos
 
 func _drink_cabinet_trial_target() -> Dictionary:
-	return {"type": "world_rect", "center": Vector2(-208.0, -358.0), "size": Vector2(246.0, 130.0)}
+	return {"type": "world_rect", "center": Vector2(-325.0, -358.0), "size": Vector2(72.0, 128.0)}
+
+func _pickup_area_trial_target() -> Dictionary:
+	return {"type": "world_rect", "center": Vector2(-208.0, -358.0), "size": Vector2(246.0, 130.0), "message_min_width": 290.0}
 
 func _player_holding_bar_trial_target() -> Dictionary:
 	var players := get_tree().get_nodes_in_group("player")
@@ -3327,6 +4101,8 @@ func _show_player_dialogue_prompt(title: String, body: String, button_texts: Arr
 				player_dialogue_overlay_third_btn.text = button_texts[2]
 				player_dialogue_overlay_third_btn.disabled = false
 				player_dialogue_overlay_third_btn.modulate = Color(1, 1, 1, 1)
+	_overlay_keyboard_focus_index = -1
+	_clear_choice_focus(_all_overlay_choice_buttons())
 	_trim_player_dialogue_info_cards()
 	_update_gameplay_panel_layout()
 
@@ -3386,7 +4162,7 @@ func _create_help_prompt_card(request: Dictionary) -> Dictionary:
 	primary_btn.pressed.connect(func():
 		_on_help_request_primary_pressed(rid)
 	)
-	_apply_button_theme(primary_btn, "primary")
+	_apply_button_theme(primary_btn, "neutral")
 	buttons.add_child(primary_btn)
 
 	var decline_btn := Button.new()
@@ -3440,7 +4216,9 @@ func _show_or_update_help_request_card(request: Dictionary) -> void:
 		var created := _create_help_prompt_card(request)
 		_help_prompt_cards.append(created)
 		help_prompt_stack.add_child(created.get("node"))
+		_play_delegation_stage_voice(request, HELP_DIALOGUE_STAGE_OPENER)
 	help_prompt_stack.visible = not _help_prompt_cards.is_empty()
+	_reset_help_prompt_keyboard_focus()
 	_update_delegation_pause_state()
 	_update_gameplay_panel_layout()
 
@@ -3484,6 +4262,10 @@ func _on_help_request_primary_pressed(request_id: String) -> void:
 			entry["request"] = refreshed.duplicate(true)
 	_apply_help_request_card_state(entry, request)
 	_help_prompt_cards[idx] = entry
+	if stage == HELP_DIALOGUE_STAGE_DELEGATION and help_mgr != null and help_mgr.has_method("mark_decision_presented"):
+		help_mgr.mark_decision_presented(request_id)
+	_play_delegation_stage_voice(request, stage)
+	_reset_help_prompt_keyboard_focus()
 	if _trial_session_active and request_id == _trial_handoff_request_id and _trial_step == "await_handoff_accept" and stage >= HELP_DIALOGUE_STAGE_DELEGATION:
 		call_deferred("_show_trial_guide_for_handoff_accept")
 
@@ -3502,16 +4284,61 @@ func _remove_help_request_card(request_id: String) -> void:
 		return
 	var entry: Dictionary = _help_prompt_cards[idx]
 	_help_prompt_cards.remove_at(idx)
+	_stop_delegation_voice_for_request(request_id)
 	var node: Control = entry.get("node", null)
 	if node != null and is_instance_valid(node):
 		node.queue_free()
 	if help_prompt_stack:
 		help_prompt_stack.visible = not _help_prompt_cards.is_empty()
+	_reset_help_prompt_keyboard_focus()
 	_last_help_bubble_utterance_by_request.erase(request_id)
 	_shown_help_system_notice_by_request.erase(request_id)
 	_update_delegation_pause_state()
 	_update_gameplay_panel_layout()
 	_fill_help_prompt_slots()
+
+func _play_delegation_stage_voice(request: Dictionary, dialogue_stage: int) -> void:
+	if _delegation_voice_player == null:
+		return
+	var template_id := ""
+	var category := ""
+	var item_suffix := ""
+	match dialogue_stage:
+		HELP_DIALOGUE_STAGE_OPENER:
+			template_id = str(request.get("opener_template_id", ""))
+			category = "opener"
+		HELP_DIALOGUE_STAGE_BRIDGE:
+			template_id = str(request.get("bridge_template_id", ""))
+			category = "bridge"
+		_:
+			template_id = str(request.get("template_id", ""))
+			category = "trial" if template_id.begins_with("trial_") else "strategy"
+			var payload: Dictionary = request.get("payload", {})
+			var item_name := str(payload.get("item_needed", "")).strip_edges().to_lower()
+			if item_name not in ["pizza", "hotdog", "sandwich"]:
+				push_warning("[DelegationVoice] No audio variant for item: %s" % item_name)
+				return
+			item_suffix = "_" + item_name
+	if template_id == "":
+		return
+	var path := "res://assets/audio/delegation/%s/%s%s.mp3" % [category, template_id, item_suffix]
+	if not ResourceLoader.exists(path):
+		push_warning("[DelegationVoice] Missing audio asset: %s" % path)
+		return
+	var stream := load(path) as AudioStream
+	if stream == null:
+		push_warning("[DelegationVoice] Could not load audio asset: %s" % path)
+		return
+	_delegation_voice_player.stop()
+	_delegation_voice_player.stream = stream
+	_delegation_voice_request_id = str(request.get("id", ""))
+	_delegation_voice_player.play()
+
+func _stop_delegation_voice_for_request(request_id: String) -> void:
+	if _delegation_voice_player == null or _delegation_voice_request_id != request_id:
+		return
+	_delegation_voice_player.stop()
+	_delegation_voice_request_id = ""
 
 func _update_delegation_pause_state() -> void:
 	var should_pause := not _help_prompt_cards.is_empty()
@@ -3559,6 +4386,8 @@ func _hide_player_dialogue_overlay() -> void:
 	_hide_player_dialogue_overlay_buttons()
 	if player_dialogue_overlay_backdrop:
 		player_dialogue_overlay_backdrop.visible = false
+	_overlay_keyboard_focus_index = -1
+	_clear_choice_focus(_all_overlay_choice_buttons())
 	player_dialogue_overlay.visible = false
 	player_dialogue_overlay.modulate = Color(1, 1, 1, 1)
 	_update_gameplay_panel_layout()

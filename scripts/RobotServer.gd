@@ -2,6 +2,8 @@
 extends CharacterBody2D
 class_name RobotServer
 
+signal trial_handoff_wait_ready(task_id: String)
+
 # ---------- Movement / spawn ----------
 @export var move_speed: float = 100.0
 @onready var agent: NavigationAgent2D = $NavigationAgent2D
@@ -82,6 +84,7 @@ var _trial_handoff_pending_task_id: String = ""
 var _trial_handoff_item_needed: String = ""
 var _trial_stationary_pause: bool = false
 var _trial_handoff_release_requested: bool = false
+var _trial_handoff_wait_ready_task_id: String = ""
 var _last_debug_step_key: String = ""
 
 func _has_property(obj: Object, prop_name: String) -> bool:
@@ -161,7 +164,8 @@ class ActExecutePlan extends Core.Task:
 						resolved_target = nav_closest
 					var temp_key = "nav_target_" + str(Time.get_ticks_msec()) + "_" + str(randi())
 					bb[temp_key] = resolved_target
-					return Act.ActNavigate.new(temp_key)
+					var arrival_distance := float(params.get("arrival_distance", Act.ActNavigate.ARRIVAL_DIST_NORMAL))
+					return Act.ActNavigate.new(temp_key, arrival_distance)
 				else:
 					return null
 				
@@ -910,6 +914,7 @@ func _clear_current_task_runtime() -> void:
 	_trial_handoff_pending_task_id = ""
 	_trial_handoff_item_needed = ""
 	_trial_handoff_release_requested = false
+	_trial_handoff_wait_ready_task_id = ""
 	if _get_robot_assigned_food_tasks().is_empty():
 		_workload_declined_task_ids.clear()
 		_deadline_declined_task_ids.clear()
@@ -1247,6 +1252,9 @@ func _tick_trial_item_handoff() -> bool:
 			_trial_stationary_pause = true
 			bt_runner.bb["planned_actions"] = []
 			velocity = Vector2.ZERO
+			if _trial_handoff_wait_ready_task_id != _active_task_id:
+				_trial_handoff_wait_ready_task_id = _active_task_id
+				trial_handoff_wait_ready.emit(_active_task_id)
 		_waiting_for_help = false
 		return true
 
@@ -1842,7 +1850,13 @@ func _is_at_trial_handoff_wait_point() -> bool:
 	return global_position.distance_to(_trial_handoff_wait_position()) <= TRIAL_HANDOFF_WAIT_DISTANCE
 
 func _plan_trial_handoff_wait_position() -> void:
-	_plan_navigate_to_location(ROBOT_BASE_MARKER)
+	_set_step_plan([{
+		"action": "navigate",
+		"params": {
+			"target": ROBOT_BASE_MARKER,
+			"arrival_distance": TRIAL_HANDOFF_WAIT_DISTANCE
+		}
+	}])
 
 func snap_to_trial_wait_marker_and_pause() -> void:
 	var target := _trial_handoff_wait_position()

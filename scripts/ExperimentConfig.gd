@@ -5,7 +5,8 @@ const DEFAULTS := {
 	"help_logging_enabled": true,
 	"llm_utterance_enabled": true,
 	"llm_model": "gpt-4o-mini",
-	"llm_temperature": 0.4
+	"llm_temperature": 0.4,
+	"experiment_version": "formal_v1"
 }
 
 var _cached: Dictionary = {}
@@ -32,6 +33,9 @@ func get_llm_model() -> String:
 func get_llm_temperature() -> float:
 	return float(_cached.get("llm_temperature", 0.4))
 
+func get_experiment_version() -> String:
+	return str(_cached.get("experiment_version", DEFAULTS["experiment_version"]))
+
 func _cache_settings() -> void:
 	_cached = DEFAULTS.duplicate(true)
 	_cached["replay_logging_enabled"] = _get_setting("experiment/replay_logging_enabled", DEFAULTS["replay_logging_enabled"])
@@ -39,6 +43,7 @@ func _cache_settings() -> void:
 	_cached["llm_utterance_enabled"] = _get_setting("experiment/llm_utterance_enabled", DEFAULTS["llm_utterance_enabled"])
 	_cached["llm_model"] = str(_get_setting("experiment/llm_model", DEFAULTS["llm_model"]))
 	_cached["llm_temperature"] = float(_get_setting("experiment/llm_temperature", DEFAULTS["llm_temperature"]))
+	_cached["experiment_version"] = str(_get_setting("experiment/experiment_version", DEFAULTS["experiment_version"]))
 
 func _get_setting(key: String, fallback):
 	if ProjectSettings.has_setting(key):

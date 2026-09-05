@@ -1,0 +1,46 @@
+{
+  "cues": [
+    {
+      "id": "overview",
+      "duration_sec": 9.6,
+      "focus": "overview",
+      "text": "Welcome. You and a service robot work together in this restaurant. The robot normally handles food orders, and you handle drink orders."
+    },
+    {
+      "id": "system_panel",
+      "duration_sec": 7.8,
+      "focus": "system",
+      "text": "The System panel tracks your score, both inventories, assigned tasks, and the robot's battery level."
+    },
+    {
+      "id": "dialogue",
+      "duration_sec": 7.4,
+      "focus": "dialogue",
+      "text": "The Dialogue panel records what customers and the robot are saying, so you can follow orders and robot activity."
+    },
+    {
+      "id": "customer_orders",
+      "duration_sec": 8.4,
+      "focus": "orders",
+      "text": "Customer Orders shows active work in Live. History records completed and failed orders, including their score changes."
+    },
+    {
+      "id": "messages",
+      "duration_sec": 7.1,
+      "focus": "messages",
+      "text": "The center pop-up presents customer messages and robot requests. Here is an example of a robot request."
+    },
+    {
+      "id": "progress",
+      "duration_sec": 10.7,
+      "focus": "progress",
+      "text": "The progress bar follows the trial and the service day. Finish Day 1 with a score of zero or higher to win. Reaching minus thirty ends the game immediately."
+    },
+    {
+      "id": "ready",
+      "duration_sec": 4.5,
+      "focus": "overview",
+      "text": "That is the main setup. You are ready to begin the game!"
+    }
+  ]
+}
