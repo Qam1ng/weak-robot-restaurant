@@ -171,7 +171,16 @@ const SURVEY_MODE_RESULT := "result"
 var _score_game_over: bool = false
 var _run_end_active: bool = false
 var _game_run_logged: bool = false
+var _game_run_log_pending: bool = false
+var _game_run_log_failed: bool = false
+var _game_run_retry_started: bool = false
+var _game_run_continue_available: bool = false
+var _game_run_save_grace_token: int = 0
+var _embedded_completion_wait_token: int = 0
 var _embedded_completion_sent: bool = false
+var _embedded_completion_requested: bool = false
+var _run_end_title: String = ""
+var _run_end_body: String = ""
 var _tutorial_started: bool = false
 var _customer_history_page: int = 0
 var _pending_day_notice: int = 0
@@ -1355,8 +1364,36 @@ func _log_game_run_once(run_outcome: String) -> void:
 		return
 	var logger = get_node_or_null("/root/EpisodeLogger")
 	if logger and logger.has_method("log_game_run"):
+		if logger.has_signal("game_run_log_finished") and not logger.game_run_log_finished.is_connected(_on_game_run_log_finished):
+			logger.game_run_log_finished.connect(_on_game_run_log_finished)
+		_game_run_log_pending = _is_embedded_web_session()
+		_game_run_log_failed = false
+		_game_run_retry_started = false
+		_game_run_continue_available = not _is_embedded_web_session()
+		if _is_embedded_web_session():
+			_start_game_run_save_grace_period()
 		logger.log_game_run(run_outcome, _score)
 		_game_run_logged = true
+
+func _on_game_run_log_finished(succeeded: bool) -> void:
+	_game_run_log_pending = false
+	_game_run_log_failed = not succeeded
+	if succeeded:
+		_game_run_continue_available = true
+	_refresh_embedded_run_end_prompt()
+	if _embedded_completion_requested:
+		_complete_embedded_web_session()
+
+func _start_game_run_save_grace_period() -> void:
+	_game_run_save_grace_token += 1
+	var token := _game_run_save_grace_token
+	get_tree().create_timer(5.0, true).timeout.connect(_on_game_run_save_grace_elapsed.bind(token))
+
+func _on_game_run_save_grace_elapsed(token: int) -> void:
+	if token != _game_run_save_grace_token or not _run_end_active or not _is_embedded_web_session():
+		return
+	_game_run_continue_available = true
+	_refresh_embedded_run_end_prompt()
 
 func _show_run_end_prompt(title: String, body: String) -> void:
 	if _run_end_active:
@@ -1364,8 +1401,27 @@ func _show_run_end_prompt(title: String, body: String) -> void:
 	_run_end_active = true
 	_set_global_pause(true)
 	_popup_mode = POPUP_MODE_GAME_OVER
-	var end_action := "Continue" if _is_embedded_web_session() else "Play Again"
-	_show_player_dialogue_prompt(title, body, [end_action], false)
+	_run_end_title = title
+	_run_end_body = body
+	if _is_embedded_web_session():
+		_refresh_embedded_run_end_prompt()
+	else:
+		_show_player_dialogue_prompt(title, body, ["Play Again"], false)
+
+func _refresh_embedded_run_end_prompt() -> void:
+	if not _run_end_active or _popup_mode != POPUP_MODE_GAME_OVER or not _is_embedded_web_session():
+		return
+	var status_text := "Saving your result. Please do not close this page."
+	var buttons: Array[String] = []
+	if _game_run_continue_available:
+		buttons = ["Continue"]
+		status_text = "Your result has been saved."
+	_show_player_dialogue_prompt(
+		_run_end_title,
+		"%s\n\n%s" % [_run_end_body, status_text],
+		buttons,
+		false
+	)
 
 func _is_embedded_web_session() -> bool:
 	if not OS.has_feature("web"):
@@ -1373,6 +1429,47 @@ func _is_embedded_web_session() -> bool:
 	return bool(JavaScriptBridge.eval("Boolean(window.WeakRobotRestaurantEmbed && window.WeakRobotRestaurantEmbed.isEmbedded)", true))
 
 func _complete_embedded_web_session() -> void:
+	if _embedded_completion_sent:
+		return
+	if _game_run_log_pending:
+		_embedded_completion_requested = true
+		if player_dialogue_overlay_accept_btn:
+			player_dialogue_overlay_accept_btn.disabled = true
+			player_dialogue_overlay_accept_btn.text = "Returning..."
+		_start_embedded_completion_wait()
+		return
+	if _game_run_log_failed and not _game_run_retry_started:
+		_retry_game_run_log_before_completion()
+		return
+	_send_embedded_completion()
+
+func _retry_game_run_log_before_completion() -> void:
+	_embedded_completion_requested = true
+	_game_run_retry_started = true
+	if player_dialogue_overlay_accept_btn:
+		player_dialogue_overlay_accept_btn.disabled = true
+		player_dialogue_overlay_accept_btn.text = "Returning..."
+	var logger = get_node_or_null("/root/EpisodeLogger")
+	if logger and logger.has_method("retry_game_run_log"):
+		_game_run_log_pending = true
+		_game_run_log_failed = false
+		if logger.retry_game_run_log():
+			_start_embedded_completion_wait()
+			return
+		_game_run_log_pending = false
+	_send_embedded_completion()
+
+func _start_embedded_completion_wait() -> void:
+	_embedded_completion_wait_token += 1
+	var token := _embedded_completion_wait_token
+	get_tree().create_timer(3.0, true).timeout.connect(_on_embedded_completion_wait_elapsed.bind(token))
+
+func _on_embedded_completion_wait_elapsed(token: int) -> void:
+	if token != _embedded_completion_wait_token or _embedded_completion_sent or not _embedded_completion_requested:
+		return
+	_send_embedded_completion()
+
+func _send_embedded_completion() -> void:
 	if _embedded_completion_sent:
 		return
 	_embedded_completion_sent = true
@@ -1385,7 +1482,16 @@ func _on_game_over_play_again() -> void:
 	_set_global_pause(false)
 	_run_end_active = false
 	_score_game_over = false
+	_game_run_log_pending = false
+	_game_run_log_failed = false
+	_game_run_retry_started = false
+	_game_run_continue_available = false
+	_game_run_save_grace_token += 1
+	_embedded_completion_wait_token += 1
 	_embedded_completion_sent = false
+	_embedded_completion_requested = false
+	_run_end_title = ""
+	_run_end_body = ""
 	_popup_mode = POPUP_MODE_NONE
 	var logger = get_node_or_null("/root/EpisodeLogger")
 	if logger and logger.has_method("reset_session"):
@@ -3426,7 +3532,16 @@ func _begin_formal_session() -> void:
 	_run_end_active = false
 	_score_game_over = false
 	_game_run_logged = false
+	_game_run_log_pending = false
+	_game_run_log_failed = false
+	_game_run_retry_started = false
+	_game_run_continue_available = false
+	_game_run_save_grace_token += 1
+	_embedded_completion_wait_token += 1
 	_embedded_completion_sent = false
+	_embedded_completion_requested = false
+	_run_end_title = ""
+	_run_end_body = ""
 	var robot = _trial_robot()
 	if robot != null and robot.has_method("set_trial_stationary_pause"):
 		robot.call("set_trial_stationary_pause", false)
@@ -3499,6 +3614,15 @@ func _reset_trial_world_state() -> void:
 	_score_game_over = false
 	_run_end_active = false
 	_game_run_logged = false
+	_game_run_log_pending = false
+	_game_run_log_failed = false
+	_game_run_retry_started = false
+	_game_run_continue_available = false
+	_game_run_save_grace_token += 1
+	_embedded_completion_wait_token += 1
+	_embedded_completion_requested = false
+	_run_end_title = ""
+	_run_end_body = ""
 	_customer_history_page = 0
 	_last_player_live_task_ids.clear()
 	_refresh_score_label()

@@ -65,10 +65,15 @@ const REPLAY_JSONL_FILE = "user://data/replay/replay_events.jsonl"
 const PERSUASION_ENGINE_PATH := "res://scripts/PersuasionEngine.gd"
 
 var _session_id: String = ""
+var _last_game_run_payload: Dictionary = {}
 const API_LOG_URL := "https://us-central1-weak-robot-restaurant-web.cloudfunctions.net/apiLog"
 
 signal episode_started(episode_id: String)
 signal episode_ended(episode_data: Dictionary)
+signal game_run_log_finished(success: bool)
+
+const GAME_RUN_LOG_TIMEOUT_SECONDS := 5.0
+const GAME_RUN_RETRY_TIMEOUT_SECONDS := 3.0
 
 func _ready() -> void:
 	_session_id = _generate_session_id()
@@ -210,7 +215,14 @@ func log_game_run(run_outcome: String, final_score: int) -> void:
 		"run_outcome": run_outcome,
 		"final_score": final_score
 	}
-	_post_remote_log("game_run_upsert", payload)
+	_last_game_run_payload = payload.duplicate(true)
+	_post_remote_log("game_run_upsert", payload, true, GAME_RUN_LOG_TIMEOUT_SECONDS)
+
+func retry_game_run_log() -> bool:
+	if _last_game_run_payload.is_empty():
+		return false
+	_post_remote_log("game_run_upsert", _last_game_run_payload, true, GAME_RUN_RETRY_TIMEOUT_SECONDS)
+	return true
 
 func log_api_failure(api_name: String, event_type: String, http_status: int, error_code: String, error_message: String, request_id: String = "", episode_id: String = "", client_timestamp_ms: int = -1) -> void:
 	var failure_id := "fail_%s_%04d" % [_session_id, _remote_failure_counter]
@@ -446,6 +458,7 @@ func reset_session() -> void:
 	_delegation_templates_logged = false
 	_remote_failure_counter = 0
 	_runtime_debug_counter = 0
+	_last_game_run_payload = {}
 
 func _generate_session_id() -> String:
 	var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace("T", "").replace(" ", "")
@@ -459,10 +472,16 @@ func _read_qualtrics_id_from_url() -> String:
 	var value = JavaScriptBridge.eval("new URLSearchParams(window.location.search).get('qualtrics_id') || ''", true)
 	return str(value).strip_edges().left(256)
 
-func _post_remote_log(event_type: String, payload: Dictionary = {}, allow_failure_capture: bool = true) -> void:
+func _post_remote_log(event_type: String, payload: Dictionary = {}, allow_failure_capture: bool = true, timeout_seconds: float = 0.0) -> void:
 	if not _should_post_remote_logs():
+		if event_type == "game_run_upsert":
+			game_run_log_finished.emit(true)
 		return
 	var http := HTTPRequest.new()
+	# End-of-run logging must continue while the result popup pauses gameplay.
+	http.process_mode = Node.PROCESS_MODE_ALWAYS
+	if timeout_seconds > 0.0:
+		http.timeout = timeout_seconds
 	add_child(http)
 	http.request_completed.connect(_on_remote_log_completed.bind(http, event_type, payload, allow_failure_capture))
 	var body := {
@@ -491,11 +510,14 @@ func _post_remote_log(event_type: String, payload: Dictionary = {}, allow_failur
 				str(payload.get("episode_id", "")),
 				int(payload.get("timestamp_ms", _gameplay_now_ms()))
 			)
+		if event_type == "game_run_upsert":
+			game_run_log_finished.emit(false)
 
 func _on_remote_log_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, event_type: String, payload: Dictionary, allow_failure_capture: bool) -> void:
 	if is_instance_valid(http):
 		http.queue_free()
-	if code < 200 or code >= 300:
+	var succeeded := code >= 200 and code < 300
+	if not succeeded:
 		push_warning("[EpisodeLogger] Remote log failed (%s): %d" % [event_type, code])
 		if allow_failure_capture and event_type != "api_failure_upsert":
 			var err_text := body.get_string_from_utf8().strip_edges()
@@ -509,6 +531,8 @@ func _on_remote_log_completed(_result: int, code: int, _headers: PackedStringArr
 				str(payload.get("episode_id", "")),
 				int(payload.get("timestamp_ms", _gameplay_now_ms()))
 			)
+	if event_type == "game_run_upsert":
+		game_run_log_finished.emit(succeeded)
 
 func _should_post_remote_logs() -> bool:
 	return OS.has_feature("web")
