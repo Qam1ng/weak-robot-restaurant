@@ -1547,6 +1547,9 @@ func _process(_dt: float) -> void:
 	_update_robot_task_panel()
 	_update_player_task_panel()
 	_update_customer_panel()
+	# A request can finish strategy assignment while the player is out of range.
+	# Retry presentation as the robot approaches, without creating a new request.
+	_fill_help_prompt_slots()
 	_update_gameplay_panel_layout()
 	_update_trial_guide_overlay()
 

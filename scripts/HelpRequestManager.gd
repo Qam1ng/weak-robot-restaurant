@@ -9,6 +9,7 @@ const RESPONSE_DECLINE := "decline"
 
 const TYPE_HANDOFF := "HANDOFF"
 const API_ASSIGN_STRATEGY_URL := "https://us-central1-weak-robot-restaurant-web.cloudfunctions.net/apiAssignStrategy"
+const STRATEGY_ASSIGNMENT_TIMEOUT_SECONDS := 5.0
 
 const STATUS_PENDING := "pending"
 const STATUS_ACCEPTED := "accepted"
@@ -359,6 +360,7 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 		"forced_strategy": str(req.get("forced_strategy", ""))
 	}
 	var http := HTTPRequest.new()
+	http.timeout = STRATEGY_ASSIGNMENT_TIMEOUT_SECONDS
 	add_child(http)
 	http.request_completed.connect(_on_strategy_assignment_completed.bind(http, request_id))
 	var err := http.request(API_ASSIGN_STRATEGY_URL, PackedStringArray([
@@ -630,6 +632,8 @@ func _attach_task_outcome(task: Dictionary, completed: bool) -> void:
 		_requests_by_id[request_id] = req
 		_log_help_event(req)
 		request_updated.emit(_copy(req))
+		if str(req.get("status", "")) == STATUS_PENDING and str(req.get("last_response", "")) == "":
+			cancel_request(request_id, "task_terminal_before_response")
 
 func _score_delta_for_outcome(order_kind: String, completed: bool) -> int:
 	if completed:

@@ -288,6 +288,11 @@ func _check_episode_completion() -> void:
 	if _tick_trial_item_handoff():
 		return
 
+	# An existing request owns the robot's delegation behavior until it is shown,
+	# resolved, or invalidated. This must not depend on its original trigger.
+	if _tick_active_help_request():
+		return
+
 	# Emergency delegation has highest priority for the active task.
 	if _tick_emergency_delegation():
 		return
@@ -1105,10 +1110,6 @@ func _tick_emergency_delegation() -> bool:
 			_activate_recharge_override("Battery critical. Recharging now.")
 		return true
 
-	# If currently waiting on a help request, keep waiting (highest priority state).
-	if _waiting_for_help:
-		return true
-
 	var help_mgr = _help_manager()
 	if help_mgr == null:
 		return false
@@ -1116,14 +1117,6 @@ func _tick_emergency_delegation() -> bool:
 	var player = _get_primary_player()
 	if player == null:
 		return false
-
-	if _active_help_request_id != "":
-		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
-		if not existing.is_empty():
-			var st := str(existing.get("status", ""))
-			if st == "pending" or st == "accepted":
-				_waiting_for_help = true
-				return true
 
 	var board = _task_board()
 	var item_needed := "item"
@@ -1172,7 +1165,6 @@ func _tick_emergency_delegation() -> bool:
 		}, {
 			"urgency": 1.0
 		})
-	_waiting_for_help = true
 	return true
 
 func _tick_overload_handoff_delegation() -> bool:
@@ -1194,14 +1186,6 @@ func _tick_overload_handoff_delegation() -> bool:
 	var player = _get_primary_player()
 	if player == null:
 		return false
-
-	if _active_help_request_id != "":
-		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
-		if not existing.is_empty():
-			var st := str(existing.get("status", ""))
-			if st == "pending" or st == "accepted":
-				_waiting_for_help = true
-				return true
 
 	var distance_to_player := global_position.distance_to(player.global_position)
 	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
@@ -1235,7 +1219,6 @@ func _tick_overload_handoff_delegation() -> bool:
 	})
 	_overload_handoff_cooldown_until_ms = _gameplay_now_ms() + OVERLOAD_HANDOFF_COOLDOWN_MS
 	_pending_overload_handoff_task_id = ""
-	_waiting_for_help = true
 	speak("Task load is high. Please take over this order.")
 	return true
 
@@ -1306,9 +1289,6 @@ func _tick_trial_item_handoff() -> bool:
 	return true
 
 func _tick_deadline_handoff_delegation() -> bool:
-	if _waiting_for_help:
-		return true
-
 	var task := _deadline_handoff_candidate()
 	if task.is_empty():
 		return false
@@ -1321,14 +1301,6 @@ func _tick_deadline_handoff_delegation() -> bool:
 	var player = _get_primary_player()
 	if player == null:
 		return false
-
-	if _active_help_request_id != "":
-		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
-		if not existing.is_empty():
-			var st := str(existing.get("status", ""))
-			if st == "pending" or st == "accepted":
-				_waiting_for_help = true
-				return true
 
 	var distance_to_player := global_position.distance_to(player.global_position)
 	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
@@ -1358,10 +1330,9 @@ func _tick_deadline_handoff_delegation() -> bool:
 		"reason": "deadline_critical",
 		"slack_ms": slack_ms,
 		"delegation_scenario": DELEGATION_SCENARIO_DEADLINE_PRESSURE
-	}, {
-		"urgency": 1.0
-	})
-	_waiting_for_help = true
+		}, {
+			"urgency": 1.0
+		})
 	speak("This order is about to time out. Please take it now.")
 	return true
 
@@ -1544,7 +1515,62 @@ func _ensure_help_request(payload: Dictionary = {}, options: Dictionary = {}) ->
 		return
 
 	_active_help_request_id = str(req.get("id", ""))
-	_waiting_for_help = true
+	# Strategy assignment is asynchronous. Clear the interrupted task plan, but do
+	# not freeze navigation until the HUD has actually shown the request to the player.
+	_waiting_for_help = false
+	bt_runner.bb["planned_actions"] = []
+	_active_step_started = false
+	velocity = Vector2.ZERO
+
+func _tick_active_help_request() -> bool:
+	if _active_help_request_id == "":
+		return false
+	var help_mgr = _help_manager()
+	if help_mgr == null:
+		_waiting_for_help = false
+		_active_help_request_id = ""
+		return false
+	var request: Dictionary = help_mgr.get_request(_active_help_request_id)
+	if request.is_empty() or str(request.get("status", "")) == "resolved":
+		_waiting_for_help = false
+		_active_help_request_id = ""
+		return false
+	var player := _get_primary_player()
+	if player == null:
+		_waiting_for_help = false
+		return false
+	var approach_reason := "deadline_player"
+	match str(request.get("delegation_scenario", "")):
+		DELEGATION_SCENARIO_BATTERY_PRESSURE:
+			approach_reason = "emergency_player"
+		DELEGATION_SCENARIO_WORKLOAD_OVERLOAD:
+			approach_reason = "overload_player"
+	return _maintain_existing_help_request(request, player, approach_reason)
+
+func _maintain_existing_help_request(request: Dictionary, player: Node2D, approach_reason: String) -> bool:
+	var status := str(request.get("status", ""))
+	if status == "accepted":
+		_waiting_for_help = true
+		return true
+	if status != "pending":
+		_waiting_for_help = false
+		return false
+
+	if int(request.get("prompted_at_ms", -1)) >= 0:
+		_waiting_for_help = true
+		return true
+
+	# A ready request that was not surfaced must not strand the robot. If the
+	# player moved after assignment began, approach again and let the HUD retry.
+	_waiting_for_help = false
+	if global_position.distance_to(player.global_position) > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
+		var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
+		if not has_plan:
+			_plan_navigate_to_position(player.global_position, approach_reason)
+		return true
+	velocity = Vector2.ZERO
+	move_and_slide()
+	return true
 
 func _on_help_request_updated(request: Dictionary) -> void:
 	if request.is_empty():
@@ -1562,26 +1588,29 @@ func _on_help_request_updated(request: Dictionary) -> void:
 	var payload: Dictionary = request.get("payload", {})
 	var reason := str(payload.get("reason", ""))
 	var task_id := str(payload.get("task_id", ""))
-	if status == "accepted":
+	if status == "pending":
+		_waiting_for_help = int(request.get("prompted_at_ms", -1)) >= 0
+	elif status == "accepted":
 		if task_id != "":
 			_clear_task_declined_suppressions(task_id)
 		if reason == "battery_emergency":
 			_battery_pressure_declined_until_recharge = false
 		_apply_handoff_accept(request)
-	elif status == "resolved" and response == "decline":
-		if reason == "robot_over_threshold_post_take_order" and task_id != "":
-			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD)
-		elif reason == "deadline_critical" and task_id != "":
-			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE)
-		elif reason == "battery_emergency":
-			_battery_pressure_declined_until_recharge = true
+	elif status == "resolved":
 		_waiting_for_help = false
-		# A decline must never resume the interrupted task while battery is in an
-		# emergency state, regardless of which scenario produced the request.
-		if _battery_mode == BATTERY_MODE_EMERGENCY:
-			_activate_recharge_override("Battery critical. Recharging now.")
-			return
-		_resume_robot_after_help_decline()
+		if response == "decline":
+			if reason == "robot_over_threshold_post_take_order" and task_id != "":
+				_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD)
+			elif reason == "deadline_critical" and task_id != "":
+				_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE)
+			elif reason == "battery_emergency":
+				_battery_pressure_declined_until_recharge = true
+			# A decline must never resume the interrupted task while battery is in an
+			# emergency state, regardless of which scenario produced the request.
+			if _battery_mode == BATTERY_MODE_EMERGENCY:
+				_activate_recharge_override("Battery critical. Recharging now.")
+				return
+			_resume_robot_after_help_decline()
 
 func _apply_handoff_accept(request: Dictionary) -> void:
 	var payload: Dictionary = request.get("payload", {})
