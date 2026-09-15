@@ -152,7 +152,6 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 		"strategy": "",
 		"assignment_mode": "pending",
 		"assignment_source": "pending",
-		"assignment_buckets": {},
 		"handoff_mode": str(copied_payload.get("handoff_mode", "")).strip_edges(),
 		"system_notice": "",
 		"nickname": "",
@@ -179,11 +178,6 @@ func create_request(robot: Node, payload: Dictionary = {}, options: Dictionary =
 	var context = _build_context(robot, req, options)
 	req["context_snapshot"] = context
 	req["nickname"] = str(context.get("personality", {}).get("nickname", "")).strip_edges()
-	var engine = _persuasion_engine()
-	if engine and engine.has_method("build_assignment_buckets"):
-		req["assignment_buckets"] = engine.build_assignment_buckets(context)
-	else:
-		req["assignment_buckets"] = {}
 	req["system_notice"] = _build_system_notice(payload)
 
 	_requests_by_id[request_id] = req
@@ -333,21 +327,19 @@ func _begin_strategy_assignment(request_id: String) -> void:
 		req["assignment_mode"] = "trial_neutral"
 		_requests_by_id[request_id] = req
 		_finalize_strategy_assignment(request_id, {
-			"strategy": "",
-			"buckets": req.get("assignment_buckets", {})
+			"strategy": ""
 		}, "trial_neutral")
 		return
 	var forced_strategy := _forced_coverage_strategy()
 	req["forced_strategy"] = forced_strategy
-	req["assignment_mode"] = "session_coverage" if forced_strategy != "" else "condition_weighted"
+	req["assignment_mode"] = "session_coverage" if forced_strategy != "" else "global_weighted"
 	_requests_by_id[request_id] = req
 	if _should_use_backend_assignment():
 		_request_remote_strategy_assignment(req)
 		return
-	var context: Dictionary = req.get("context_snapshot", {})
 	var assignment: Dictionary = {}
 	if engine and engine.has_method("assign_strategy_locally"):
-		assignment = engine.assign_strategy_locally(context, forced_strategy)
+		assignment = engine.assign_strategy_locally(forced_strategy)
 	_finalize_strategy_assignment(request_id, assignment, "local")
 
 func _request_remote_strategy_assignment(req: Dictionary) -> void:
@@ -356,7 +348,6 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 		return
 	var body := {
 		"request_id": request_id,
-		"assignment_buckets": req.get("assignment_buckets", {}),
 		"forced_strategy": str(req.get("forced_strategy", ""))
 	}
 	var http := HTTPRequest.new()
@@ -384,7 +375,7 @@ func _request_remote_strategy_assignment(req: Dictionary) -> void:
 		var engine = _persuasion_engine()
 		var fallback: Dictionary = {}
 		if engine and engine.has_method("assign_strategy_locally"):
-			fallback = engine.assign_strategy_locally(req.get("context_snapshot", {}), str(req.get("forced_strategy", "")))
+			fallback = engine.assign_strategy_locally(str(req.get("forced_strategy", "")))
 		_finalize_strategy_assignment(request_id, fallback, "local_fallback")
 
 func _on_strategy_assignment_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, request_id: String) -> void:
@@ -409,7 +400,7 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 		var engine = _persuasion_engine()
 		var fallback: Dictionary = {}
 		if engine and engine.has_method("assign_strategy_locally"):
-			fallback = engine.assign_strategy_locally(req.get("context_snapshot", {}), str(req.get("forced_strategy", "")))
+			fallback = engine.assign_strategy_locally(str(req.get("forced_strategy", "")))
 		_finalize_strategy_assignment(request_id, fallback, "local_fallback")
 		return
 	var top: Variant = JSON.parse_string(body.get_string_from_utf8())
@@ -429,12 +420,11 @@ func _on_strategy_assignment_completed(_result: int, code: int, _headers: Packed
 		var engine = _persuasion_engine()
 		var fallback_parse: Dictionary = {}
 		if engine and engine.has_method("assign_strategy_locally"):
-			fallback_parse = engine.assign_strategy_locally(req.get("context_snapshot", {}), str(req.get("forced_strategy", "")))
+			fallback_parse = engine.assign_strategy_locally(str(req.get("forced_strategy", "")))
 		_finalize_strategy_assignment(request_id, fallback_parse, "local_fallback")
 		return
 	var assignment: Dictionary = {
-		"strategy": str(top.get("strategy", "")),
-		"buckets": top.get("assignment_buckets", {})
+		"strategy": str(top.get("strategy", ""))
 	}
 	_finalize_strategy_assignment(request_id, assignment, "backend")
 
@@ -449,13 +439,8 @@ func _finalize_strategy_assignment(request_id: String, assignment: Dictionary, a
 	var payload: Dictionary = req.get("payload", {})
 	if strategy == "" and not bool(payload.get("trial_force_prompt", false)):
 		strategy = str(engine.get("STRATEGY_AUTHORITY")) if engine else "authority"
-	var buckets: Dictionary = assignment.get("buckets", {})
-	if buckets.is_empty():
-		if engine and engine.has_method("build_assignment_buckets"):
-			buckets = engine.build_assignment_buckets(req.get("context_snapshot", {}))
 	req["strategy"] = strategy
 	req["assignment_source"] = assignment_source
-	req["assignment_buckets"] = buckets
 	_refresh_request_surface(req)
 	req["assignment_pending"] = false
 	_requests_by_id[request_id] = req

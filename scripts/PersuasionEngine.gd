@@ -96,44 +96,19 @@ static func pick_unseen_strategy(excluded: Array[String]) -> String:
 		return ""
 	return available[randi_range(0, available.size() - 1)]
 
-static func assign_strategy_locally(context: Dictionary, forced_strategy: String = "") -> Dictionary:
+static func assign_strategy_locally(forced_strategy: String = "") -> Dictionary:
 	_ensure_rng_seeded()
-	var buckets := build_assignment_buckets(context)
-	var assignment_key := _assignment_key_from_buckets(buckets)
-	var counts: Dictionary = _assignment_counts.get(assignment_key, {})
+	var counts: Dictionary = _assignment_counts
 	if counts.is_empty():
 		for strategy in STRATEGIES:
 			counts[strategy] = 0
 
 	var chosen := forced_strategy if STRATEGIES.has(forced_strategy) else _weighted_choice_from_counts(counts)
 	counts[chosen] = int(counts.get(chosen, 0)) + 1
-	_assignment_counts[assignment_key] = counts
+	_assignment_counts = counts
 
 	return {
-		"strategy": chosen,
-		"buckets": buckets
-	}
-
-static func build_assignment_buckets(context: Dictionary) -> Dictionary:
-	var robot: Dictionary = context.get("robot", {})
-	var player: Dictionary = context.get("player", {})
-	var env: Dictionary = context.get("environment", {})
-
-	var urgency_bucket: String = _urgency_bucket(float(env.get("urgency", 0.5)))
-	var busyness_bucket: String = _busyness_bucket(float(env.get("busyness", 1.0)))
-	var player_active_tasks_bucket: String = _player_active_tasks_bucket(int(player.get("active_tasks", 0)))
-	var battery_level := float(robot.get("battery_level", 100.0))
-	var battery_mode_bucket := "normal"
-	if battery_level <= 20.0:
-		battery_mode_bucket = "emergency"
-	elif battery_level <= 50.0:
-		battery_mode_bucket = "conserve"
-
-	return {
-		"urgency_bucket": urgency_bucket,
-		"busyness_bucket": busyness_bucket,
-		"player_active_tasks_bucket": player_active_tasks_bucket,
-		"battery_mode_bucket": battery_mode_bucket
+		"strategy": chosen
 	}
 
 static func render_request_dialogue(strategy: String, payload: Dictionary, nickname: String = "") -> Dictionary:
@@ -221,14 +196,6 @@ static func get_template_records() -> Array[Dictionary]:
 	})
 	return records
 
-static func _assignment_key_from_buckets(buckets: Dictionary) -> String:
-	return "urgency:%s|busyness:%s|player_active_tasks:%s|battery:%s" % [
-		str(buckets.get("urgency_bucket", "medium")),
-		str(buckets.get("busyness_bucket", "medium")),
-		str(buckets.get("player_active_tasks_bucket", "medium")),
-		str(buckets.get("battery_mode_bucket", "normal"))
-	]
-
 static func _weighted_choice_from_counts(counts: Dictionary) -> String:
 	_ensure_rng_seeded()
 	var total_weight := 0.0
@@ -258,27 +225,6 @@ static func _format_opener_with_nickname(base_text: String, nickname: String) ->
 	if clean_name == "":
 		return base_text
 	return "%s, %s" % [clean_name, base_text]
-
-static func _urgency_bucket(urgency: float) -> String:
-	if urgency >= 0.75:
-		return "high"
-	if urgency <= 0.35:
-		return "low"
-	return "medium"
-
-static func _busyness_bucket(busyness: float) -> String:
-	if busyness >= 0.75:
-		return "high"
-	if busyness < 0.35:
-		return "low"
-	return "medium"
-
-static func _player_active_tasks_bucket(active_tasks: int) -> String:
-	if active_tasks >= 3:
-		return "high"
-	if active_tasks <= 1:
-		return "low"
-	return "medium"
 
 static func _ensure_rng_seeded() -> void:
 	if _rng_seeded:

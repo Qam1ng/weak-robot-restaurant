@@ -34,7 +34,7 @@ const HANDOFF_MODES = new Set([
 const ASSIGNMENT_MODES = new Set([
   "trial_neutral",
   "session_coverage",
-  "condition_weighted",
+  "global_weighted",
 ]);
 const ASSIGNMENT_SOURCES = new Set([
   "trial_neutral",
@@ -128,19 +128,6 @@ function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-function sanitizeAssignmentBuckets(value) {
-  const buckets = asObject(value);
-  return {
-    urgency_bucket: sanitizeText(buckets.urgency_bucket, ""),
-    busyness_bucket: sanitizeText(buckets.busyness_bucket, ""),
-    player_active_tasks_bucket: sanitizeText(
-        buckets.player_active_tasks_bucket,
-        "",
-    ),
-    battery_mode_bucket: sanitizeText(buckets.battery_mode_bucket, ""),
-  };
-}
-
 function sanitizeTipiResponses(value) {
   const raw = asObject(value);
   const cleaned = {};
@@ -216,15 +203,6 @@ function sanitizeEnumText(value, allowed, fallback = "") {
   return allowed.has(cleaned) ? cleaned : fallback;
 }
 
-function assignmentCounterDocId(buckets) {
-  return [
-    sanitizeText(buckets.urgency_bucket, "medium"),
-    sanitizeText(buckets.busyness_bucket, "medium"),
-    sanitizeText(buckets.player_active_tasks_bucket, "medium"),
-    sanitizeText(buckets.battery_mode_bucket, "normal"),
-  ].join("__");
-}
-
 function weightedStrategyChoice(counts) {
   let totalWeight = 0.0;
   const weighted = [];
@@ -246,10 +224,8 @@ function weightedStrategyChoice(counts) {
 
 async function assignStrategyGlobally(data) {
   const requestId = sanitizeText(data.request_id, "");
-  const buckets = sanitizeAssignmentBuckets(data.assignment_buckets);
   const forcedStrategy = sanitizeEnumText(data.forced_strategy, STRATEGY_SET, "");
-  const counterId = assignmentCounterDocId(buckets);
-  const counterRef = db.collection("assignment_counters").doc(counterId);
+  const counterRef = db.collection("assignment_counters").doc("global");
   let chosen = STRATEGIES[0];
 
   await db.runTransaction(async (tx) => {
@@ -267,10 +243,7 @@ async function assignStrategyGlobally(data) {
     chosen = forcedStrategy || weightedStrategyChoice(counts);
     counts[chosen] += 1;
     tx.set(counterRef, {
-      urgency_bucket: buckets.urgency_bucket,
-      busyness_bucket: buckets.busyness_bucket,
-      player_active_tasks_bucket: buckets.player_active_tasks_bucket,
-      battery_mode_bucket: buckets.battery_mode_bucket,
+      scope: "formal_global",
       reciprocity: counts.reciprocity,
       authority: counts.authority,
       liking: counts.liking,
@@ -284,7 +257,6 @@ async function assignStrategyGlobally(data) {
   return {
     request_id: requestId,
     strategy: chosen,
-    assignment_buckets: buckets,
   };
 }
 
@@ -369,7 +341,6 @@ async function upsertHelpRequestLog(sessionId, participantId, data) {
         ASSIGNMENT_SOURCES,
         "",
     ),
-    assignment_buckets: sanitizeAssignmentBuckets(data.assignment_buckets),
     opener_template_id: sanitizeText(data.opener_template_id, ""),
     bridge_template_id: sanitizeText(data.bridge_template_id, ""),
     template_id: sanitizeText(data.template_id, ""),

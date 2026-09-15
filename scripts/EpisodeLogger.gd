@@ -344,7 +344,6 @@ func log_help_request_event(request: Dictionary) -> void:
 		"strategy": str(request.get("strategy", "")),
 		"assignment_mode": str(request.get("assignment_mode", "")),
 		"assignment_source": str(request.get("assignment_source", "")),
-		"assignment_buckets": request.get("assignment_buckets", {}),
 		"opener_template_id": str(request.get("opener_template_id", "")),
 		"bridge_template_id": str(request.get("bridge_template_id", "")),
 		"template_id": str(request.get("template_id", "")),
