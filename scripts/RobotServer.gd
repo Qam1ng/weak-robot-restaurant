@@ -1106,9 +1106,9 @@ func _tick_emergency_delegation() -> bool:
 	if not is_battery_emergency:
 		return false
 	if _battery_pressure_declined_until_recharge:
-		if not _recharge_override_active:
-			_activate_recharge_override("Battery critical. Recharging now.")
-		return true
+		_activate_recharge_override("Battery critical. Recharging now.")
+		var has_recharge_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
+		return _tick_recharge_override(has_recharge_plan)
 
 	var help_mgr = _help_manager()
 	if help_mgr == null:
