@@ -58,6 +58,7 @@ var customer_panel: PanelContainer
 var customer_panel_list: VBoxContainer
 var session_progress_panel: PanelContainer
 var session_progress_bar: ProgressBar
+var session_progress_anchor_layer: Control
 var fullscreen_button: Button
 var tutorial_panel: PanelContainer
 var tutorial_body: RichTextLabel
@@ -124,7 +125,6 @@ const SESSION_PROGRESS_PANEL_HEIGHT := 62.0
 const SESSION_PROGRESS_BAR_WIDTH := 520.0
 const SESSION_PROGRESS_TOP_MARGIN := 8.0 + GAMEPLAY_VERTICAL_SHIFT
 const SESSION_PROGRESS_TRIAL_SHARE := 0.10
-const SESSION_PROGRESS_FORMAL_MINUTES := 18.0 * 60.0
 const SYSTEM_PANEL_X_OFFSET := 40.0
 const SYSTEM_PANEL_WIDTH_REDUCTION := 28.0
 const PLAYER_DIALOGUE_OVERLAY_Y_OFFSET := 4.0
@@ -626,7 +626,10 @@ func _setup_session_progress_ui() -> void:
 	session_progress_bar.add_theme_stylebox_override("background", track_style)
 	session_progress_bar.add_theme_stylebox_override("fill", fill_style)
 	content.add_child(session_progress_bar)
-	_add_session_progress_anchors(content)
+	session_progress_anchor_layer = Control.new()
+	session_progress_anchor_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	session_progress_anchor_layer.size = Vector2(SESSION_PROGRESS_BAR_WIDTH, 44.0)
+	content.add_child(session_progress_anchor_layer)
 	_set_session_progress(0.0)
 
 func _setup_fullscreen_button() -> void:
@@ -655,14 +658,21 @@ func _refresh_fullscreen_button_label() -> void:
 	fullscreen_button.icon = MINIMISE_ICON if is_fullscreen else FULLSCREEN_ICON
 	fullscreen_button.tooltip_text = "Exit fullscreen" if is_fullscreen else "Enter fullscreen"
 
-func _add_session_progress_anchors(container: Control) -> void:
+func _refresh_session_progress_anchors() -> void:
+	if session_progress_anchor_layer == null:
+		return
+	for child in session_progress_anchor_layer.get_children():
+		child.queue_free()
+	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
+	if time_mgr == null or not time_mgr.has_method("get_period_start_progress"):
+		return
 	var anchors := [
 		{"label": "Trial", "progress": 0.0},
-		{"label": "Morning", "progress": 0.10},
-		{"label": "Lunch", "progress": 0.30},
-		{"label": "Afternoon", "progress": 0.50},
-		{"label": "Dinner", "progress": 0.65},
-		{"label": "Night", "progress": 0.95},
+		{"label": "Morning", "progress": _session_progress_position_for_period(TimeManager.Period.MORNING)},
+		{"label": "Lunch", "progress": _session_progress_position_for_period(TimeManager.Period.LUNCH)},
+		{"label": "Afternoon", "progress": _session_progress_position_for_period(TimeManager.Period.AFTERNOON)},
+		{"label": "Dinner", "progress": _session_progress_position_for_period(TimeManager.Period.DINNER)},
+		{"label": "Night", "progress": _session_progress_position_for_period(TimeManager.Period.NIGHT)},
 	]
 	for anchor in anchors:
 		var progress := float(anchor.get("progress", 0.0))
@@ -672,7 +682,7 @@ func _add_session_progress_anchors(container: Control) -> void:
 		tick.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		tick.position = Vector2(roundf(x), 24.0)
 		tick.size = Vector2(1.0, 14.0)
-		container.add_child(tick)
+		session_progress_anchor_layer.add_child(tick)
 
 		var label := Label.new()
 		label.text = str(anchor.get("label", ""))
@@ -683,7 +693,14 @@ func _add_session_progress_anchors(container: Control) -> void:
 		var label_width := minf(72.0, SESSION_PROGRESS_BAR_WIDTH - x)
 		label.position = Vector2(roundf(x), 0.0)
 		label.size = Vector2(label_width, 18.0)
-		container.add_child(label)
+		session_progress_anchor_layer.add_child(label)
+
+func _session_progress_position_for_period(period: TimeManager.Period) -> float:
+	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
+	if time_mgr == null or not time_mgr.has_method("get_period_start_progress"):
+		return 0.0
+	var formal_progress := float(time_mgr.call("get_period_start_progress", period))
+	return SESSION_PROGRESS_TRIAL_SHARE + (1.0 - SESSION_PROGRESS_TRIAL_SHARE) * formal_progress
 
 func _set_session_progress(value: float) -> void:
 	_session_progress = clampf(value, 0.0, 1.0)
@@ -694,13 +711,9 @@ func _refresh_formal_session_progress() -> void:
 	if not _formal_session_started:
 		return
 	var time_mgr = get_node_or_null("/root/GameManager/TimeManager")
-	if time_mgr == null:
+	if time_mgr == null or not time_mgr.has_method("get_formal_day_progress"):
 		return
-	var clock_minutes := int(time_mgr.get("current_hour")) * 60 + int(time_mgr.get("current_minute"))
-	var elapsed_minutes := float(clock_minutes - 6 * 60)
-	if clock_minutes < 6 * 60:
-		elapsed_minutes += 24.0 * 60.0
-	var day_progress := clampf(elapsed_minutes / SESSION_PROGRESS_FORMAL_MINUTES, 0.0, 1.0)
+	var day_progress := float(time_mgr.call("get_formal_day_progress"))
 	_set_session_progress(SESSION_PROGRESS_TRIAL_SHARE + (1.0 - SESSION_PROGRESS_TRIAL_SHARE) * day_progress)
 
 func _recenter_survey_panel() -> void:
@@ -1218,6 +1231,7 @@ func _connect_time_signals() -> void:
 		time_mgr.time_changed.connect(_refresh_day_phase_label)
 	if time_mgr.has_signal("period_changed") and not time_mgr.period_changed.is_connected(_on_period_changed_label):
 		time_mgr.period_changed.connect(_on_period_changed_label)
+	_refresh_session_progress_anchors()
 	call_deferred("_cache_initial_day_notice")
 	call_deferred("_refresh_day_phase_label")
 
