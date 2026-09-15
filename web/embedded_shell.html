@@ -74,6 +74,22 @@
 
 			window.WeakRobotRestaurantEmbed = {
 				isEmbedded: isEmbedded,
+				toggleFullscreen: function () {
+					const target = document.documentElement;
+					if (!document.fullscreenEnabled || !target.requestFullscreen) {
+						return false;
+					}
+					const operation = document.fullscreenElement
+						? document.exitFullscreen()
+						: target.requestFullscreen();
+					operation.catch(function (error) {
+						console.warn('Unable to change fullscreen mode.', error);
+					});
+					return true;
+				},
+				isFullscreen: function () {
+					return Boolean(document.fullscreenElement);
+				},
 				complete: function () {
 					if (!isEmbedded) {
 						return false;

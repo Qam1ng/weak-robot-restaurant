@@ -58,6 +58,7 @@ var customer_panel: PanelContainer
 var customer_panel_list: VBoxContainer
 var session_progress_panel: PanelContainer
 var session_progress_bar: ProgressBar
+var fullscreen_button: Button
 var tutorial_panel: PanelContainer
 var tutorial_body: RichTextLabel
 var tutorial_start_button: Button
@@ -222,6 +223,8 @@ const TRIAL_FOOD_TASK_WINDOW_MS := 180_000
 const TRIAL_DRINK_TASK_WINDOW_MS := 90_000
 const TRIAL_GUIDE_FOCUS_BORDER := Color(1.0, 0.93, 0.62, 1.0)
 const TRIAL_GUIDE_ARROW_TEXTURE := preload("res://assets/icons/orders/right-arrow.png")
+const FULLSCREEN_ICON := preload("res://assets/icons/orders/fullscreen.png")
+const MINIMISE_ICON := preload("res://assets/icons/orders/minimise.png")
 const TRIAL_GUIDE_ARROW_SIZE := Vector2(24.0, 24.0)
 const UI_BTN_NEUTRAL_BG := Color(0.18, 0.21, 0.27, 0.96)
 const UI_BTN_NEUTRAL_HOVER_BG := Color(0.25, 0.29, 0.36, 0.98)
@@ -257,6 +260,7 @@ func _ready() -> void:
 	_setup_dialogue_feed_ui()
 	_setup_customer_orders_ui()
 	_setup_session_progress_ui()
+	_setup_fullscreen_button()
 	_setup_player_dialogue_overlay_ui()
 	_setup_tutorial_ui()
 	_setup_survey_input_ui()
@@ -570,6 +574,7 @@ func _connect_viewport_resize() -> void:
 func _on_viewport_size_changed() -> void:
 	_recenter_survey_panel()
 	_update_gameplay_panel_layout()
+	_refresh_fullscreen_button_label()
 
 func _setup_session_progress_ui() -> void:
 	session_progress_panel = PanelContainer.new()
@@ -623,6 +628,32 @@ func _setup_session_progress_ui() -> void:
 	content.add_child(session_progress_bar)
 	_add_session_progress_anchors(content)
 	_set_session_progress(0.0)
+
+func _setup_fullscreen_button() -> void:
+	if not _is_embedded_web_session():
+		return
+	fullscreen_button = Button.new()
+	fullscreen_button.name = "FullscreenButton"
+	fullscreen_button.icon = FULLSCREEN_ICON
+	fullscreen_button.expand_icon = true
+	fullscreen_button.icon_max_width = 20
+	fullscreen_button.tooltip_text = "Enter fullscreen"
+	fullscreen_button.custom_minimum_size = Vector2(42.0, 38.0)
+	fullscreen_button.focus_mode = Control.FOCUS_NONE
+	_apply_button_theme(fullscreen_button, "tab")
+	fullscreen_button.pressed.connect(_toggle_embedded_fullscreen)
+	add_child(fullscreen_button)
+
+func _toggle_embedded_fullscreen() -> void:
+	JavaScriptBridge.eval("window.WeakRobotRestaurantEmbed && window.WeakRobotRestaurantEmbed.toggleFullscreen()", true)
+	get_tree().create_timer(0.15, true).timeout.connect(_refresh_fullscreen_button_label)
+
+func _refresh_fullscreen_button_label() -> void:
+	if fullscreen_button == null or not _is_embedded_web_session():
+		return
+	var is_fullscreen := bool(JavaScriptBridge.eval("window.WeakRobotRestaurantEmbed && window.WeakRobotRestaurantEmbed.isFullscreen()", true))
+	fullscreen_button.icon = MINIMISE_ICON if is_fullscreen else FULLSCREEN_ICON
+	fullscreen_button.tooltip_text = "Exit fullscreen" if is_fullscreen else "Enter fullscreen"
 
 func _add_session_progress_anchors(container: Control) -> void:
 	var anchors := [
@@ -1698,6 +1729,12 @@ func _update_gameplay_panel_layout() -> void:
 		session_progress_panel.position = Vector2(
 			center_x - progress_size.x * 0.5,
 			SESSION_PROGRESS_TOP_MARGIN
+		)
+	if fullscreen_button:
+		var fullscreen_size := fullscreen_button.get_combined_minimum_size()
+		fullscreen_button.position = Vector2(
+			view_size.x - fullscreen_size.x - SIDE_PANEL_MARGIN,
+			view_size.y - fullscreen_size.y - SIDE_PANEL_MARGIN
 		)
 	inventory_panel.position = Vector2(system_x, gameplay_top_y)
 	dialogue_panel.position = Vector2(dialogue_x, gameplay_top_y)
