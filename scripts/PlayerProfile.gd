@@ -9,6 +9,7 @@ const TRAIT_N := "N"
 const TIPI_ITEM_COUNT := 10
 
 var nickname: String = ""
+var character_id: String = ""
 var tipi_responses := {}
 var tipi_scores := {
 	TRAIT_O: 4.0,
@@ -25,11 +26,21 @@ func has_tipi() -> bool:
 func has_nickname() -> bool:
 	return nickname.strip_edges() != ""
 
+func has_character() -> bool:
+	return character_id != ""
+
 func set_nickname(value: String) -> void:
 	nickname = value.strip_edges()
 
+func set_character(value: String) -> void:
+	character_id = value
+
+func get_character() -> String:
+	return character_id
+
 func reset_profile() -> void:
 	nickname = ""
+	character_id = ""
 	question_count = 0
 	tipi_responses.clear()
 	tipi_scores = {

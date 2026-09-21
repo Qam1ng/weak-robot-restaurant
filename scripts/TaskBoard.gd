@@ -49,6 +49,8 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 
 	var task_id := _new_task_id()
 	var now_ms := _gameplay_now_ms()
+	var serve_window_ms := _task_window_ms(customer, "get_food_task_window_ms", SERVE_WINDOW_MS)
+	var deadline_ms := now_ms + serve_window_ms
 	var food_item := _extract_food_from_request(request_text)
 	var steps := [
 		{"name": STEP_TAKE_ORDER, "state": "pending"},
@@ -61,7 +63,7 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 		"type": TASK_FULFILL_ORDER,
 		"state": STATE_UNASSIGNED,
 		"created_at_ms": now_ms,
-		"deadline_ms": now_ms + SERVE_WINDOW_MS,
+		"deadline_ms": deadline_ms,
 		"claimed_at_ms": 0,
 		"completed_at_ms": 0,
 		"assigned_to": "",
@@ -74,7 +76,7 @@ func create_fulfill_order(customer: Node) -> Dictionary:
 			"display_item": food_item,
 			"seat": seat,
 			"customer_instance_id": customer.get_instance_id(),
-			"serve_deadline_ms": now_ms + SERVE_WINDOW_MS
+			"serve_deadline_ms": deadline_ms
 		}
 	}
 
@@ -97,6 +99,7 @@ func create_drink_order(customer: Node, drink_item: String, assignee: String = "
 		seat = str(customer.current_seat)
 	var task_id := _new_task_id()
 	var now_ms := _gameplay_now_ms()
+	var drink_window_ms := _task_window_ms(customer, "get_drink_task_window_ms", DRINK_WINDOW_MS)
 	var steps := [
 		{"name": STEP_TAKE_ORDER, "state": "pending"},
 		{"name": STEP_PICKUP_FROM_KITCHEN, "state": "pending"},
@@ -104,7 +107,7 @@ func create_drink_order(customer: Node, drink_item: String, assignee: String = "
 	]
 	var initial_state := STATE_UNASSIGNED if assignee == "" else STATE_IN_PROGRESS
 	var claimed_at_ms := 0 if assignee == "" else now_ms
-	var deadline_ms := now_ms + DRINK_WINDOW_MS
+	var deadline_ms := now_ms + drink_window_ms
 	var task := {
 		"id": task_id,
 		"type": TASK_DRINK_ORDER,
@@ -132,6 +135,13 @@ func create_drink_order(customer: Node, drink_item: String, assignee: String = "
 	task_created.emit(copied)
 	task_updated.emit(copied)
 	return copied
+
+func _task_window_ms(customer: Node, method_name: String, fallback_ms: int) -> int:
+	if customer != null and customer.has_method(method_name):
+		var custom_window_ms := int(customer.call(method_name))
+		if custom_window_ms > 0:
+			return custom_window_ms
+	return fallback_ms
 
 func get_next_unassigned_task(task_type: String = "") -> Dictionary:
 	for task_id in _task_order:

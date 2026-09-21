@@ -18,6 +18,10 @@ const STRATEGIES := [
 
 const OPENER_REPLY_TEXT := "Sure, what do you need?"
 const BRIDGE_REPLY_TEXT := "Alright, tell me what it is."
+const TRIAL_DELEGATION_TEMPLATE := {
+	"template_id": "trial_delegation_1",
+	"template_text": "Please take over the {item} order."
+}
 
 const OPENER_LIBRARY := [
 	{"template_id": "opener_1", "template_text": "Do you have a moment?"},
@@ -82,51 +86,36 @@ static var _rng_seeded := false
 static func reset_assignment_state() -> void:
 	_assignment_counts.clear()
 
-static func assign_strategy_locally(context: Dictionary) -> Dictionary:
+static func pick_unseen_strategy(excluded: Array[String]) -> String:
 	_ensure_rng_seeded()
-	var buckets := build_assignment_buckets(context)
-	var assignment_key := _assignment_key_from_buckets(buckets)
-	var counts: Dictionary = _assignment_counts.get(assignment_key, {})
+	var available: Array[String] = []
+	for strategy in STRATEGIES:
+		if not excluded.has(strategy):
+			available.append(strategy)
+	if available.is_empty():
+		return ""
+	return available[randi_range(0, available.size() - 1)]
+
+static func assign_strategy_locally(forced_strategy: String = "") -> Dictionary:
+	_ensure_rng_seeded()
+	var counts: Dictionary = _assignment_counts
 	if counts.is_empty():
 		for strategy in STRATEGIES:
 			counts[strategy] = 0
 
-	var chosen := _weighted_choice_from_counts(counts)
+	var chosen := forced_strategy if STRATEGIES.has(forced_strategy) else _weighted_choice_from_counts(counts)
 	counts[chosen] = int(counts.get(chosen, 0)) + 1
-	_assignment_counts[assignment_key] = counts
+	_assignment_counts = counts
 
 	return {
-		"strategy": chosen,
-		"buckets": buckets
-	}
-
-static func build_assignment_buckets(context: Dictionary) -> Dictionary:
-	var robot: Dictionary = context.get("robot", {})
-	var player: Dictionary = context.get("player", {})
-	var env: Dictionary = context.get("environment", {})
-
-	var urgency_bucket: String = _urgency_bucket(float(env.get("urgency", 0.5)))
-	var busyness_bucket: String = _busyness_bucket(float(env.get("busyness", 1.0)))
-	var player_active_tasks_bucket: String = _player_active_tasks_bucket(int(player.get("active_tasks", 0)))
-	var battery_level := float(robot.get("battery_level", 100.0))
-	var battery_mode_bucket := "normal"
-	if battery_level <= 20.0:
-		battery_mode_bucket = "emergency"
-	elif battery_level <= 50.0:
-		battery_mode_bucket = "conserve"
-
-	return {
-		"urgency_bucket": urgency_bucket,
-		"busyness_bucket": busyness_bucket,
-		"player_active_tasks_bucket": player_active_tasks_bucket,
-		"battery_mode_bucket": battery_mode_bucket
+		"strategy": chosen
 	}
 
 static func render_request_dialogue(strategy: String, payload: Dictionary, nickname: String = "") -> Dictionary:
 	_ensure_rng_seeded()
 	var opener_entry := _random_template_entry(OPENER_LIBRARY)
 	var bridge_entry := _random_template_entry(BRIDGE_LIBRARY)
-	var delegation_render := pick_template(strategy, payload)
+	var delegation_render := _render_trial_delegation(payload) if bool(payload.get("trial_force_prompt", false)) else pick_template(strategy, payload)
 	var opener_text := _format_opener_with_nickname(str(opener_entry.get("template_text", "")), nickname)
 	return {
 		"opener_template_id": str(opener_entry.get("template_id", "")),
@@ -138,6 +127,16 @@ static func render_request_dialogue(strategy: String, payload: Dictionary, nickn
 		"template_id": str(delegation_render.get("template_id", "")),
 		"template_text": str(delegation_render.get("template_text", "")),
 		"utterance": str(delegation_render.get("utterance", ""))
+	}
+
+static func _render_trial_delegation(payload: Dictionary) -> Dictionary:
+	var item := str(payload.get("item_needed", "item")).strip_edges()
+	if item == "":
+		item = "item"
+	return {
+		"template_id": str(TRIAL_DELEGATION_TEMPLATE.get("template_id", "")),
+		"template_text": str(TRIAL_DELEGATION_TEMPLATE.get("template_text", "")),
+		"utterance": str(TRIAL_DELEGATION_TEMPLATE.get("template_text", "")).replace("{item}", item)
 	}
 
 static func pick_template(strategy: String, payload: Dictionary) -> Dictionary:
@@ -188,15 +187,14 @@ static func get_template_records() -> Array[Dictionary]:
 				"strategy": strategy,
 				"template_text": str(entry.get("template_text", ""))
 			})
+	var trial_template: Dictionary = TRIAL_DELEGATION_TEMPLATE
+	records.append({
+		"template_id": str(trial_template.get("template_id", "")),
+		"template_group": "delegation",
+		"strategy": "",
+		"template_text": str(trial_template.get("template_text", ""))
+	})
 	return records
-
-static func _assignment_key_from_buckets(buckets: Dictionary) -> String:
-	return "urgency:%s|busyness:%s|player_active_tasks:%s|battery:%s" % [
-		str(buckets.get("urgency_bucket", "medium")),
-		str(buckets.get("busyness_bucket", "medium")),
-		str(buckets.get("player_active_tasks_bucket", "medium")),
-		str(buckets.get("battery_mode_bucket", "normal"))
-	]
 
 static func _weighted_choice_from_counts(counts: Dictionary) -> String:
 	_ensure_rng_seeded()
@@ -227,27 +225,6 @@ static func _format_opener_with_nickname(base_text: String, nickname: String) ->
 	if clean_name == "":
 		return base_text
 	return "%s, %s" % [clean_name, base_text]
-
-static func _urgency_bucket(urgency: float) -> String:
-	if urgency >= 0.75:
-		return "high"
-	if urgency <= 0.35:
-		return "low"
-	return "medium"
-
-static func _busyness_bucket(busyness: float) -> String:
-	if busyness >= 0.75:
-		return "high"
-	if busyness < 0.35:
-		return "low"
-	return "medium"
-
-static func _player_active_tasks_bucket(active_tasks: int) -> String:
-	if active_tasks >= 3:
-		return "high"
-	if active_tasks <= 1:
-		return "low"
-	return "medium"
 
 static func _ensure_rng_seeded() -> void:
 	if _rng_seeded:

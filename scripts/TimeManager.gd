@@ -13,9 +13,12 @@ signal run_day_completed(day: int)
 
 @export var real_to_game_ratio: float = 2.0
 
-@export var morning_time_multiplier: float = 1.0
-@export var afternoon_time_multiplier: float = 1.0
-@export var night_time_multiplier: float = 1.0
+# The full day remains 12 minutes while preserving more time for active service.
+@export var morning_time_multiplier: float = 0.8
+@export var lunch_time_multiplier: float = 0.8
+@export var afternoon_time_multiplier: float = 0.75
+@export var dinner_time_multiplier: float = 6.0 / 7.0
+@export var night_time_multiplier: float = 7.0 / 3.0
 
 @export var start_hour: int = 6
 
@@ -41,6 +44,8 @@ const PERIOD_CONFIG = {
 	Period.DINNER: [17, 23, true],
 	Period.NIGHT: [23, 6, false]
 }
+
+const PERIOD_ORDER := [Period.MORNING, Period.LUNCH, Period.AFTERNOON, Period.DINNER, Period.NIGHT]
 
 
 var current_hour: int = 8
@@ -85,17 +90,68 @@ func _process(delta: float) -> void:
 		_advance_time(1)
 
 func _get_minutes_per_second() -> float:
+	return _get_minutes_per_second_for_period(current_period)
+
+func _get_minutes_per_second_for_period(period: Period) -> float:
 	var minutes_per_second := real_to_game_ratio
-	match current_period:
+	match period:
 		Period.MORNING:
 			minutes_per_second *= morning_time_multiplier
+		Period.LUNCH:
+			minutes_per_second *= lunch_time_multiplier
 		Period.AFTERNOON:
 			minutes_per_second *= afternoon_time_multiplier
+		Period.DINNER:
+			minutes_per_second *= dinner_time_multiplier
 		Period.NIGHT:
 			minutes_per_second *= night_time_multiplier
 		_:
 			pass
 	return maxf(0.01, minutes_per_second)
+
+func get_formal_day_duration_seconds() -> float:
+	var total_seconds := 0.0
+	for period in PERIOD_ORDER:
+		total_seconds += float(_get_period_duration_minutes(period)) / _get_minutes_per_second_for_period(period)
+	return total_seconds
+
+func get_formal_day_progress() -> float:
+	var remaining_minutes := _elapsed_minutes_since_start()
+	var elapsed_seconds := 0.0
+	for period in PERIOD_ORDER:
+		var period_minutes := _get_period_duration_minutes(period)
+		var elapsed_in_period := mini(remaining_minutes, period_minutes)
+		if elapsed_in_period > 0:
+			elapsed_seconds += float(elapsed_in_period) / _get_minutes_per_second_for_period(period)
+		remaining_minutes -= elapsed_in_period
+		if remaining_minutes <= 0:
+			break
+	var total_seconds := get_formal_day_duration_seconds()
+	return clampf(elapsed_seconds / maxf(total_seconds, 0.01), 0.0, 1.0)
+
+func get_period_start_progress(period: Period) -> float:
+	var elapsed_seconds := 0.0
+	for ordered_period in PERIOD_ORDER:
+		if ordered_period == period:
+			break
+		elapsed_seconds += float(_get_period_duration_minutes(ordered_period)) / _get_minutes_per_second_for_period(ordered_period)
+	var total_seconds := get_formal_day_duration_seconds()
+	return clampf(elapsed_seconds / maxf(total_seconds, 0.01), 0.0, 1.0)
+
+func _elapsed_minutes_since_start() -> int:
+	var now_minutes := current_hour * 60 + current_minute
+	var start_minutes := start_hour * 60 + start_minute
+	return posmod(now_minutes - start_minutes, 24 * 60)
+
+func _get_period_duration_minutes(period: Period) -> int:
+	var config: Array = PERIOD_CONFIG.get(period, [])
+	if config.size() < 2:
+		return 0
+	var period_start_hour := int(config[0])
+	var period_end_hour := int(config[1])
+	if period_end_hour <= period_start_hour:
+		period_end_hour += 24
+	return (period_end_hour - period_start_hour) * 60
 
 
 func _advance_time(minutes: int) -> void:

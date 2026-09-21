@@ -57,7 +57,7 @@ const DEBUG_DELEGATION_SCENARIOS := {
 
 # File paths
 const DATA_DIR = "user://data/episodes/"
-const CSV_FILE = "user://data/episodes_summary.csv"
+const CSV_FILE = "user://data/episodes_summary_v2.csv"
 const HELP_DIR = "user://data/help_requests/"
 const HELP_JSONL_FILE = "user://data/help_requests/help_requests.jsonl"
 const REPLAY_DIR = "user://data/replay/"
@@ -65,16 +65,26 @@ const REPLAY_JSONL_FILE = "user://data/replay/replay_events.jsonl"
 const PERSUASION_ENGINE_PATH := "res://scripts/PersuasionEngine.gd"
 
 var _session_id: String = ""
+var _last_game_run_payload: Dictionary = {}
 const API_LOG_URL := "https://us-central1-weak-robot-restaurant-web.cloudfunctions.net/apiLog"
 
 signal episode_started(episode_id: String)
 signal episode_ended(episode_data: Dictionary)
+signal game_run_log_finished(success: bool)
+
+const GAME_RUN_LOG_TIMEOUT_SECONDS := 5.0
+const GAME_RUN_RETRY_TIMEOUT_SECONDS := 3.0
 
 func _ready() -> void:
 	_session_id = _generate_session_id()
 	_participant_id = _session_id
 	_qualtrics_id = _read_qualtrics_id_from_url()
-	_session_source = "qualtrics" if _qualtrics_id != "" else "standalone_test"
+	if _qualtrics_id != "":
+		_session_source = "qualtrics"
+	elif OS.has_feature("web"):
+		_session_source = "standalone_test"
+	else:
+		_session_source = "local_test"
 	_log_initial_delegation_templates()
 	if _should_write_local_files():
 		# Ensure data directory exists
@@ -147,6 +157,7 @@ func end_episode(success: bool, failure_reason: String = "") -> Dictionary:
 		"participant_id": _participant_id,
 		"session_id": _session_id,
 		"session_source": _session_source,
+		"experiment_version": _get_experiment_version(),
 		"episode_id": _current_episode.get("episode_id", ""),
 		"timestamp": _current_episode.get("timestamp_start", ""),
 		"success": success,
@@ -185,6 +196,7 @@ func log_participant_profile(profile: Dictionary) -> void:
 		"participant_id": _participant_id,
 		"session_id": _session_id,
 		"session_source": _session_source,
+		"experiment_version": _get_experiment_version(),
 		"qualtrics_id": _qualtrics_id,
 		"nickname": str(profile.get("nickname", "")),
 		"tipi_responses": profile.get("tipi_responses", {}),
@@ -199,10 +211,18 @@ func log_game_run(run_outcome: String, final_score: int) -> void:
 		"participant_id": _participant_id,
 		"session_id": _session_id,
 		"session_source": _session_source,
+		"experiment_version": _get_experiment_version(),
 		"run_outcome": run_outcome,
 		"final_score": final_score
 	}
-	_post_remote_log("game_run_upsert", payload)
+	_last_game_run_payload = payload.duplicate(true)
+	_post_remote_log("game_run_upsert", payload, true, GAME_RUN_LOG_TIMEOUT_SECONDS)
+
+func retry_game_run_log() -> bool:
+	if _last_game_run_payload.is_empty():
+		return false
+	_post_remote_log("game_run_upsert", _last_game_run_payload, true, GAME_RUN_RETRY_TIMEOUT_SECONDS)
+	return true
 
 func log_api_failure(api_name: String, event_type: String, http_status: int, error_code: String, error_message: String, request_id: String = "", episode_id: String = "", client_timestamp_ms: int = -1) -> void:
 	var failure_id := "fail_%s_%04d" % [_session_id, _remote_failure_counter]
@@ -280,48 +300,62 @@ func log_help_request_event(request: Dictionary) -> void:
 		return
 	var payload: Dictionary = request.get("payload", {})
 	var context: Dictionary = request.get("context_snapshot", {})
+	var prompt_context: Dictionary = request.get("prompt_context_snapshot", {})
 	var robot: Dictionary = context.get("robot", {})
 	var player: Dictionary = context.get("player", {})
 	var env: Dictionary = context.get("environment", {})
 	var personality: Dictionary = context.get("personality", {})
 	var scores: Dictionary = personality.get("tipi_scores", {})
+	var request_id := str(request.get("id", ""))
 	var record := {
 		"participant_id": _participant_id,
 		"session_id": _session_id,
 		"session_source": _session_source,
-		"nickname": str(request.get("nickname", "")),
-		"episode_id": get_current_episode_id(),
-		"request_id": str(request.get("id", "")),
+		"experiment_version": _get_experiment_version(),
+		"episode_id": str(request.get("episode_id", "")),
+		"request_id": request_id,
+		"help_request_key": "%s__%s" % [_session_id, request_id],
 		"delegation_scenario": str(request.get("delegation_scenario", "")),
 		"request_index_in_session": int(request.get("request_index_in_session", 0)),
+		"display_index_in_session": int(request.get("display_index_in_session", 0)),
 		"status": str(request.get("status", "")),
 		"created_at_ms": int(request.get("created_at_ms", 0)),
+		"prompted_at_ms": int(request.get("prompted_at_ms", -1)),
 		"task_id": str(payload.get("task_id", "")),
 		"item_needed": str(payload.get("item_needed", "")),
-		"reason": str(payload.get("reason", "")),
+		"handoff_mode": str(request.get("handoff_mode", "")),
 		"slack_ms": int(payload.get("slack_ms", 0)),
 		"phase_name": str(env.get("phase_name", "")),
 		"busyness": float(env.get("busyness", 0.0)),
 		"urgency": float(env.get("urgency", 0.0)),
 		"player_active_tasks": int(player.get("active_tasks", 0)),
 		"battery_level": float(robot.get("battery_level", 0.0)),
+		"prompt_slack_ms": int(prompt_context.get("slack_ms", -1)),
+		"prompt_phase_name": str(prompt_context.get("phase_name", "")),
+		"prompt_busyness": float(prompt_context.get("busyness", -1.0)),
+		"prompt_player_active_tasks": int(prompt_context.get("player_active_tasks", -1)),
+		"prompt_battery_level": float(prompt_context.get("battery_level", -1.0)),
+		"prompt_task_step": str(prompt_context.get("task_step", "")),
 		"trait_O": float(scores.get("O", 0.0)),
 		"trait_C": float(scores.get("C", 0.0)),
 		"trait_E": float(scores.get("E", 0.0)),
 		"trait_A": float(scores.get("A", 0.0)),
 		"trait_N": float(scores.get("N", 0.0)),
 		"strategy": str(request.get("strategy", "")),
-		"assignment_buckets": request.get("assignment_buckets", {}),
+		"assignment_mode": str(request.get("assignment_mode", "")),
+		"assignment_source": str(request.get("assignment_source", "")),
 		"opener_template_id": str(request.get("opener_template_id", "")),
 		"bridge_template_id": str(request.get("bridge_template_id", "")),
 		"template_id": str(request.get("template_id", "")),
 		"utterance": str(request.get("utterance", "")),
 		"response": str(request.get("last_response", "")),
 		"response_latency_ms": int(request.get("response_latency_ms", -1)),
+		"dialogue_duration_ms": int(request.get("dialogue_duration_ms", -1)),
 		"resolution_path": str(request.get("resolution_path", "")),
-		"task_completed": bool(request.get("task_completed", false)),
 		"delivery_actor": str(request.get("delivery_actor", "")),
-		"customer_timed_out": bool(request.get("customer_timed_out", false)),
+		"task_terminal_state": str(request.get("task_terminal_state", "")),
+		"task_failure_reason": str(request.get("task_failure_reason", "")),
+		"task_terminal_at_ms": int(request.get("task_terminal_at_ms", -1)),
 		"score_delta": int(request.get("score_delta", 0))
 	}
 	if _should_write_local_files():
@@ -423,6 +457,7 @@ func reset_session() -> void:
 	_delegation_templates_logged = false
 	_remote_failure_counter = 0
 	_runtime_debug_counter = 0
+	_last_game_run_payload = {}
 
 func _generate_session_id() -> String:
 	var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace("T", "").replace(" ", "")
@@ -436,10 +471,16 @@ func _read_qualtrics_id_from_url() -> String:
 	var value = JavaScriptBridge.eval("new URLSearchParams(window.location.search).get('qualtrics_id') || ''", true)
 	return str(value).strip_edges().left(256)
 
-func _post_remote_log(event_type: String, payload: Dictionary = {}, allow_failure_capture: bool = true) -> void:
+func _post_remote_log(event_type: String, payload: Dictionary = {}, allow_failure_capture: bool = true, timeout_seconds: float = 0.0) -> void:
 	if not _should_post_remote_logs():
+		if event_type == "game_run_upsert":
+			game_run_log_finished.emit(true)
 		return
 	var http := HTTPRequest.new()
+	# End-of-run logging must continue while the result popup pauses gameplay.
+	http.process_mode = Node.PROCESS_MODE_ALWAYS
+	if timeout_seconds > 0.0:
+		http.timeout = timeout_seconds
 	add_child(http)
 	http.request_completed.connect(_on_remote_log_completed.bind(http, event_type, payload, allow_failure_capture))
 	var body := {
@@ -468,11 +509,14 @@ func _post_remote_log(event_type: String, payload: Dictionary = {}, allow_failur
 				str(payload.get("episode_id", "")),
 				int(payload.get("timestamp_ms", _gameplay_now_ms()))
 			)
+		if event_type == "game_run_upsert":
+			game_run_log_finished.emit(false)
 
 func _on_remote_log_completed(_result: int, code: int, _headers: PackedStringArray, body: PackedByteArray, http: HTTPRequest, event_type: String, payload: Dictionary, allow_failure_capture: bool) -> void:
 	if is_instance_valid(http):
 		http.queue_free()
-	if code < 200 or code >= 300:
+	var succeeded := code >= 200 and code < 300
+	if not succeeded:
 		push_warning("[EpisodeLogger] Remote log failed (%s): %d" % [event_type, code])
 		if allow_failure_capture and event_type != "api_failure_upsert":
 			var err_text := body.get_string_from_utf8().strip_edges()
@@ -486,6 +530,8 @@ func _on_remote_log_completed(_result: int, code: int, _headers: PackedStringArr
 				str(payload.get("episode_id", "")),
 				int(payload.get("timestamp_ms", _gameplay_now_ms()))
 			)
+	if event_type == "game_run_upsert":
+		game_run_log_finished.emit(succeeded)
 
 func _should_post_remote_logs() -> bool:
 	return OS.has_feature("web")
@@ -507,6 +553,12 @@ func _normalize_debug_value(raw_value: String, allowed: Dictionary) -> String:
 
 func _experiment_config() -> Node:
 	return get_node_or_null("/root/ExperimentConfig")
+
+func _get_experiment_version() -> String:
+	var exp = _experiment_config()
+	if exp and exp.has_method("get_experiment_version"):
+		return str(exp.get_experiment_version())
+	return ""
 
 func _is_replay_logging_enabled() -> bool:
 	var exp = _experiment_config()

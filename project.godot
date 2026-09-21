@@ -15,6 +15,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 [application]
 
 config/name="WeakRobotRestaurant"
+config/version="1.0.0"
 run/main_scene="res://scenes/Restaurant.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://icon.svg"
@@ -45,6 +46,7 @@ help_logging_enabled=true
 llm_utterance_enabled=true
 llm_model="gpt-4o-mini"
 llm_temperature=0.4
+experiment_version="formal_v1"
 
 [input]
 

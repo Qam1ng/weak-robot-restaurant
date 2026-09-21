@@ -2,6 +2,8 @@
 extends CharacterBody2D
 class_name RobotServer
 
+signal trial_handoff_wait_ready(task_id: String)
+
 # ---------- Movement / spawn ----------
 @export var move_speed: float = 100.0
 @onready var agent: NavigationAgent2D = $NavigationAgent2D
@@ -82,6 +84,7 @@ var _trial_handoff_pending_task_id: String = ""
 var _trial_handoff_item_needed: String = ""
 var _trial_stationary_pause: bool = false
 var _trial_handoff_release_requested: bool = false
+var _trial_handoff_wait_ready_task_id: String = ""
 var _last_debug_step_key: String = ""
 
 func _has_property(obj: Object, prop_name: String) -> bool:
@@ -161,7 +164,8 @@ class ActExecutePlan extends Core.Task:
 						resolved_target = nav_closest
 					var temp_key = "nav_target_" + str(Time.get_ticks_msec()) + "_" + str(randi())
 					bb[temp_key] = resolved_target
-					return Act.ActNavigate.new(temp_key)
+					var arrival_distance := float(params.get("arrival_distance", Act.ActNavigate.ARRIVAL_DIST_NORMAL))
+					return Act.ActNavigate.new(temp_key, arrival_distance)
 				else:
 					return null
 				
@@ -282,6 +286,11 @@ func _check_episode_completion() -> void:
 		return
 
 	if _tick_trial_item_handoff():
+		return
+
+	# An existing request owns the robot's delegation behavior until it is shown,
+	# resolved, or invalidated. This must not depend on its original trigger.
+	if _tick_active_help_request():
 		return
 
 	# Emergency delegation has highest priority for the active task.
@@ -910,6 +919,7 @@ func _clear_current_task_runtime() -> void:
 	_trial_handoff_pending_task_id = ""
 	_trial_handoff_item_needed = ""
 	_trial_handoff_release_requested = false
+	_trial_handoff_wait_ready_task_id = ""
 	if _get_robot_assigned_food_tasks().is_empty():
 		_workload_declined_task_ids.clear()
 		_deadline_declined_task_ids.clear()
@@ -1096,13 +1106,9 @@ func _tick_emergency_delegation() -> bool:
 	if not is_battery_emergency:
 		return false
 	if _battery_pressure_declined_until_recharge:
-		if not _recharge_override_active:
-			_activate_recharge_override("Battery critical. Recharging now.")
-		return true
-
-	# If currently waiting on a help request, keep waiting (highest priority state).
-	if _waiting_for_help:
-		return true
+		_activate_recharge_override("Battery critical. Recharging now.")
+		var has_recharge_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
+		return _tick_recharge_override(has_recharge_plan)
 
 	var help_mgr = _help_manager()
 	if help_mgr == null:
@@ -1111,14 +1117,6 @@ func _tick_emergency_delegation() -> bool:
 	var player = _get_primary_player()
 	if player == null:
 		return false
-
-	if _active_help_request_id != "":
-		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
-		if not existing.is_empty():
-			var st := str(existing.get("status", ""))
-			if st == "pending" or st == "accepted":
-				_waiting_for_help = true
-				return true
 
 	var board = _task_board()
 	var item_needed := "item"
@@ -1167,7 +1165,6 @@ func _tick_emergency_delegation() -> bool:
 		}, {
 			"urgency": 1.0
 		})
-	_waiting_for_help = true
 	return true
 
 func _tick_overload_handoff_delegation() -> bool:
@@ -1189,14 +1186,6 @@ func _tick_overload_handoff_delegation() -> bool:
 	var player = _get_primary_player()
 	if player == null:
 		return false
-
-	if _active_help_request_id != "":
-		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
-		if not existing.is_empty():
-			var st := str(existing.get("status", ""))
-			if st == "pending" or st == "accepted":
-				_waiting_for_help = true
-				return true
 
 	var distance_to_player := global_position.distance_to(player.global_position)
 	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
@@ -1230,7 +1219,6 @@ func _tick_overload_handoff_delegation() -> bool:
 	})
 	_overload_handoff_cooldown_until_ms = _gameplay_now_ms() + OVERLOAD_HANDOFF_COOLDOWN_MS
 	_pending_overload_handoff_task_id = ""
-	_waiting_for_help = true
 	speak("Task load is high. Please take over this order.")
 	return true
 
@@ -1247,6 +1235,9 @@ func _tick_trial_item_handoff() -> bool:
 			_trial_stationary_pause = true
 			bt_runner.bb["planned_actions"] = []
 			velocity = Vector2.ZERO
+			if _trial_handoff_wait_ready_task_id != _active_task_id:
+				_trial_handoff_wait_ready_task_id = _active_task_id
+				trial_handoff_wait_ready.emit(_active_task_id)
 		_waiting_for_help = false
 		return true
 
@@ -1298,9 +1289,6 @@ func _tick_trial_item_handoff() -> bool:
 	return true
 
 func _tick_deadline_handoff_delegation() -> bool:
-	if _waiting_for_help:
-		return true
-
 	var task := _deadline_handoff_candidate()
 	if task.is_empty():
 		return false
@@ -1313,14 +1301,6 @@ func _tick_deadline_handoff_delegation() -> bool:
 	var player = _get_primary_player()
 	if player == null:
 		return false
-
-	if _active_help_request_id != "":
-		var existing: Dictionary = help_mgr.get_request(_active_help_request_id)
-		if not existing.is_empty():
-			var st := str(existing.get("status", ""))
-			if st == "pending" or st == "accepted":
-				_waiting_for_help = true
-				return true
 
 	var distance_to_player := global_position.distance_to(player.global_position)
 	if distance_to_player > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
@@ -1350,10 +1330,9 @@ func _tick_deadline_handoff_delegation() -> bool:
 		"reason": "deadline_critical",
 		"slack_ms": slack_ms,
 		"delegation_scenario": DELEGATION_SCENARIO_DEADLINE_PRESSURE
-	}, {
-		"urgency": 1.0
-	})
-	_waiting_for_help = true
+		}, {
+			"urgency": 1.0
+		})
 	speak("This order is about to time out. Please take it now.")
 	return true
 
@@ -1536,7 +1515,62 @@ func _ensure_help_request(payload: Dictionary = {}, options: Dictionary = {}) ->
 		return
 
 	_active_help_request_id = str(req.get("id", ""))
-	_waiting_for_help = true
+	# Strategy assignment is asynchronous. Clear the interrupted task plan, but do
+	# not freeze navigation until the HUD has actually shown the request to the player.
+	_waiting_for_help = false
+	bt_runner.bb["planned_actions"] = []
+	_active_step_started = false
+	velocity = Vector2.ZERO
+
+func _tick_active_help_request() -> bool:
+	if _active_help_request_id == "":
+		return false
+	var help_mgr = _help_manager()
+	if help_mgr == null:
+		_waiting_for_help = false
+		_active_help_request_id = ""
+		return false
+	var request: Dictionary = help_mgr.get_request(_active_help_request_id)
+	if request.is_empty() or str(request.get("status", "")) == "resolved":
+		_waiting_for_help = false
+		_active_help_request_id = ""
+		return false
+	var player := _get_primary_player()
+	if player == null:
+		_waiting_for_help = false
+		return false
+	var approach_reason := "deadline_player"
+	match str(request.get("delegation_scenario", "")):
+		DELEGATION_SCENARIO_BATTERY_PRESSURE:
+			approach_reason = "emergency_player"
+		DELEGATION_SCENARIO_WORKLOAD_OVERLOAD:
+			approach_reason = "overload_player"
+	return _maintain_existing_help_request(request, player, approach_reason)
+
+func _maintain_existing_help_request(request: Dictionary, player: Node2D, approach_reason: String) -> bool:
+	var status := str(request.get("status", ""))
+	if status == "accepted":
+		_waiting_for_help = true
+		return true
+	if status != "pending":
+		_waiting_for_help = false
+		return false
+
+	if int(request.get("prompted_at_ms", -1)) >= 0:
+		_waiting_for_help = true
+		return true
+
+	# A ready request that was not surfaced must not strand the robot. If the
+	# player moved after assignment began, approach again and let the HUD retry.
+	_waiting_for_help = false
+	if global_position.distance_to(player.global_position) > EMERGENCY_HANDOFF_APPROACH_DISTANCE:
+		var has_plan: bool = bt_runner.bb.has("planned_actions") and not bt_runner.bb["planned_actions"].is_empty()
+		if not has_plan:
+			_plan_navigate_to_position(player.global_position, approach_reason)
+		return true
+	velocity = Vector2.ZERO
+	move_and_slide()
+	return true
 
 func _on_help_request_updated(request: Dictionary) -> void:
 	if request.is_empty():
@@ -1554,26 +1588,29 @@ func _on_help_request_updated(request: Dictionary) -> void:
 	var payload: Dictionary = request.get("payload", {})
 	var reason := str(payload.get("reason", ""))
 	var task_id := str(payload.get("task_id", ""))
-	if status == "accepted":
+	if status == "pending":
+		_waiting_for_help = int(request.get("prompted_at_ms", -1)) >= 0
+	elif status == "accepted":
 		if task_id != "":
 			_clear_task_declined_suppressions(task_id)
 		if reason == "battery_emergency":
 			_battery_pressure_declined_until_recharge = false
 		_apply_handoff_accept(request)
-	elif status == "resolved" and response == "decline":
-		if reason == "robot_over_threshold_post_take_order" and task_id != "":
-			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD)
-		elif reason == "deadline_critical" and task_id != "":
-			_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE)
-		elif reason == "battery_emergency":
-			_battery_pressure_declined_until_recharge = true
+	elif status == "resolved":
 		_waiting_for_help = false
-		# A decline must never resume the interrupted task while battery is in an
-		# emergency state, regardless of which scenario produced the request.
-		if _battery_mode == BATTERY_MODE_EMERGENCY:
-			_activate_recharge_override("Battery critical. Recharging now.")
-			return
-		_resume_robot_after_help_decline()
+		if response == "decline":
+			if reason == "robot_over_threshold_post_take_order" and task_id != "":
+				_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_WORKLOAD_OVERLOAD)
+			elif reason == "deadline_critical" and task_id != "":
+				_set_task_declined_for_scenario(task_id, DELEGATION_SCENARIO_DEADLINE_PRESSURE)
+			elif reason == "battery_emergency":
+				_battery_pressure_declined_until_recharge = true
+			# A decline must never resume the interrupted task while battery is in an
+			# emergency state, regardless of which scenario produced the request.
+			if _battery_mode == BATTERY_MODE_EMERGENCY:
+				_activate_recharge_override("Battery critical. Recharging now.")
+				return
+			_resume_robot_after_help_decline()
 
 func _apply_handoff_accept(request: Dictionary) -> void:
 	var payload: Dictionary = request.get("payload", {})
@@ -1842,7 +1879,13 @@ func _is_at_trial_handoff_wait_point() -> bool:
 	return global_position.distance_to(_trial_handoff_wait_position()) <= TRIAL_HANDOFF_WAIT_DISTANCE
 
 func _plan_trial_handoff_wait_position() -> void:
-	_plan_navigate_to_location(ROBOT_BASE_MARKER)
+	_set_step_plan([{
+		"action": "navigate",
+		"params": {
+			"target": ROBOT_BASE_MARKER,
+			"arrival_distance": TRIAL_HANDOFF_WAIT_DISTANCE
+		}
+	}])
 
 func snap_to_trial_wait_marker_and_pause() -> void:
 	var target := _trial_handoff_wait_position()

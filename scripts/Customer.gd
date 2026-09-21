@@ -17,6 +17,7 @@ signal customer_left(customer: Node)
 @export var force_drink_order: bool = false
 @export var preset_food_item: String = ""
 @export var preset_drink_item: String = ""
+@export var defer_drink_order_until_released: bool = false
 const MIN_PATIENCE_SECONDS := 90.0
 const DRINK_CHOICES := ["cola", "tea", "coffee"]
 const PLAYER_DELIVERY_FEEDBACK_BUBBLE_SHOW_SEC := 0.8
@@ -49,6 +50,8 @@ var _drink_item: String = ""
 var _drink_required: bool = false
 var _drink_order_activated: bool = false
 var _drink_timeout_handled: bool = false
+var food_task_window_ms: int = 0
+var drink_task_window_ms: int = 0
 var _order_bubble_root: Node2D = null
 var _order_bubble_panel: PanelContainer = null
 var _order_bubble_icon: TextureRect = null
@@ -455,6 +458,9 @@ func _physics_process(dt: float) -> void:
 			_stuck_timer = 0.0
 		_last_pos = global_position
 		if _stuck_timer >= ENTERING_STUCK_TIMEOUT_SEC:
+			if global_position.distance_to(_final_target) <= ARRIVAL_DIST_STUCK:
+				_on_reached()
+				return
 			_stuck_timer = 0.0
 			_path_initialized = false
 			_target_set = false
@@ -569,6 +575,12 @@ func _post_taskboard_request() -> void:
 	print("[Customer] Task created: ", task.get("id", "unknown"), " | state=", task.get("state", "unknown"))
 	_refresh_order_bubble()
 
+func get_food_task_window_ms() -> int:
+	return food_task_window_ms
+
+func get_drink_task_window_ms() -> int:
+	return drink_task_window_ms
+
 func _gameplay_now_ms() -> int:
 	var game_mgr = get_node_or_null("/root/GameManager")
 	if game_mgr and game_mgr.has_method("get_gameplay_time_ms"):
@@ -680,6 +692,16 @@ func _notify_player(text: String) -> void:
 		hud.call("show_quick_notice", text)
 
 func on_food_order_taken() -> void:
+	if defer_drink_order_until_released:
+		_refresh_order_bubble()
+		return
+	_activate_drink_order_if_needed(true)
+	_refresh_order_bubble()
+
+func release_deferred_drink_order() -> void:
+	if not defer_drink_order_until_released:
+		return
+	defer_drink_order_until_released = false
 	_activate_drink_order_if_needed(true)
 	_refresh_order_bubble()
 

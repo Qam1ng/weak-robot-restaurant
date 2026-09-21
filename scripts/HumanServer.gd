@@ -28,6 +28,7 @@ var _holding_bar_root: Node2D = null
 var _holding_bar_panel: PanelContainer = null
 var _holding_bar_icons: HBoxContainer = null
 var _holding_bar_textures: Dictionary = {}
+var _input_locked: bool = false
 
 func _ready() -> void:
 	add_to_group("player")
@@ -67,6 +68,10 @@ func _ensure_camera_current() -> void:
 		camera.force_update_scroll()
 
 func _physics_process(_dt: float) -> void:
+	if _input_locked:
+		velocity = Vector2.ZERO
+		_update_animation(Vector2.ZERO)
+		return
 	var vx: float = Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
 	var vy: float = Input.get_action_strength("move_down")  - Input.get_action_strength("move_up")
 	var v: Vector2 = Vector2(vx, vy)
@@ -116,6 +121,8 @@ func _update_animation(input_dir: Vector2) -> void:
 		anim.play(anim_name)
 
 func _input(event: InputEvent) -> void:
+	if _input_locked:
+		return
 	if event is InputEventKey:
 		var key_event := event as InputEventKey
 		var hud := _get_hud()
@@ -138,6 +145,19 @@ func _input(event: InputEvent) -> void:
 			return
 		# E key is reserved for world interactions (door/items) only.
 		get_tree().call_group("interaction", "on_player_interact", self)
+
+func set_input_locked(locked: bool) -> void:
+	_input_locked = locked
+	if _input_locked:
+		velocity = Vector2.ZERO
+		_update_animation(Vector2.ZERO)
+
+func set_character_sprite_frames(sprite_frames: SpriteFrames) -> void:
+	if sprite_frames == null:
+		return
+	anim.sprite_frames = sprite_frames
+	last_dir = Vector2.DOWN
+	anim.play("idle_down")
 
 func _handle_kitchen_pick_interact() -> bool:
 	# Kitchen zone only.
